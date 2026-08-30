@@ -23,20 +23,31 @@ AURA places low-cost ESP32 nodes around a collapsed structure. One node transmit
 3. Record 3 s CSI while filming the scene
 4. Run the simulation viewer
 
-### Simulation
+### Simulation (with your .mp4 + .npy / .mat files)
 
 ```bash
 cd simulation
 pip install -r requirements.txt
 
-# Validate your real CSI recording
-python ../tools/validate_csi.py session.csv
+# Validate CSI
+python ../tools/validate_csi.py ../my_data/rescue.npy
 
-# Live matplotlib viewer synced to your 3-second video
-python run_simulation.py --video rescue.mp4 --csi session.csv
+# Run video-synced viewer
+python run_simulation.py --video ../my_data/rescue.mp4 --csi ../my_data/rescue.npy
+
+# Or auto-detect from folder
+python run_simulation.py --data-dir ../my_data
 ```
 
-**Important:** AURA processes **real CSI only**. Record data with `tools/record_session.py` from ESP32 hardware. The system does not ship pre-recorded or synthetic survivor data.
+### Wireless live results (all nodes, no USB cables)
+
+```bash
+# 1. Start laptop hotspot: SSID=AURA_HUB, password=aura2026
+# 2. Power on all ESP32 RX nodes
+python tools/wireless_hub.py
+```
+
+See **[docs/WIRELESS_AND_SIMULATION.md](docs/WIRELESS_AND_SIMULATION.md)** for full setup.
 
 ---
 

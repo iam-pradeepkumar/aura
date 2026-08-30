@@ -2,14 +2,13 @@
 """
 AURA Live Simulation Viewer
 
-Sync a 3-second (or any length) video with your real ESP32 CSI recording.
+Sync video (.mp4) with CSI dataset (.npy, .mat, .csv, .bin).
 Displays: survivor count, XY localization, trajectories, vital signs, motion.
 
 Usage:
+  python run_simulation.py --video rescue.mp4 --csi session.npy
+  python run_simulation.py --video rescue.mp4 --csi session.mat --fs 1000
   python run_simulation.py --video rescue.mp4 --csi session.csv
-  python run_simulation.py --video rescue.mp4 --csi session.bin --config config.yaml
-
-Requires REAL CSI data recorded from AURA ESP32 nodes — no synthetic detection.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from aura_processor import load_csi_csv, load_csi_binary, AURAPipeline
+from aura_processor import load_csi, AURAPipeline
 
 
 def load_config(path: str | None) -> dict:
@@ -52,7 +51,6 @@ def align_results_to_video(
     video_duration_sec: float,
     n_frames: int,
 ) -> list:
-    """Map CSI sensing results to video frame indices."""
     if not results:
         return [None] * n_frames
     t_max = max(r.timestamp_sec for r in results)
@@ -66,28 +64,54 @@ def align_results_to_video(
     return aligned
 
 
+def resolve_paths(video: str, csi: str | None, data_dir: str | None) -> tuple[Path, Path]:
+    """Resolve --video + --csi, or auto-find matching .npy/.mat in --data-dir."""
+    if data_dir:
+        d = Path(data_dir)
+        videos = list(d.glob("*.mp4"))
+        if not videos:
+            sys.exit(f"No .mp4 found in {d}")
+        video_path = videos[0]
+        stem = video_path.stem
+        for ext in (".npy", ".mat", ".npz", ".csv", ".bin"):
+            candidate = d / f"{stem}{ext}"
+            if candidate.exists():
+                return video_path, candidate
+        # any csi file in folder
+        for ext in (".npy", ".mat", ".npz", ".csv", ".bin"):
+            files = list(d.glob(f"*{ext}"))
+            if files:
+                return video_path, files[0]
+        sys.exit(f"No CSI file (.npy/.mat/.csv) found in {d}")
+    if not video or not csi:
+        sys.exit("Provide --video and --csi, or use --data-dir with your .mp4 + .npy/.mat")
+    return Path(video), Path(csi)
+
+
 def main():
     parser = argparse.ArgumentParser(description="AURA video + CSI live viewer")
-    parser.add_argument("--video", required=True, help="Path to scene video (e.g. 3 sec)")
-    parser.add_argument("--csi", required=True, help="CSI CSV or binary from ESP32 recorder")
+    parser.add_argument("--video", help="Scene video (.mp4)")
+    parser.add_argument("--csi", help="CSI dataset (.npy, .mat, .npz, .csv, .bin)")
+    parser.add_argument("--data-dir", help="Folder containing matching .mp4 and .npy/.mat")
+    parser.add_argument("--fs", type=float, default=None, help="CSI sample rate Hz (for .npy/.mat without timestamps)")
     parser.add_argument("--config", default="config.yaml", help="Node layout config")
     parser.add_argument("--save", default=None, help="Save animation to MP4/GIF")
     args = parser.parse_args()
 
-    video_path = Path(args.video)
-    csi_path = Path(args.csi)
+    video_path, csi_path = resolve_paths(args.video, args.csi, args.data_dir)
     if not video_path.exists():
         sys.exit(f"Video not found: {video_path}")
     if not csi_path.exists():
-        sys.exit(f"CSI file not found: {csi_path}. Record real data with tools/record_session.py")
+        sys.exit(f"CSI not found: {csi_path}")
+
+    print(f"Video: {video_path}")
+    print(f"CSI:   {csi_path}")
 
     cfg = load_config(args.config)
     node_pos = {int(k): tuple(v) for k, v in cfg.get("node_positions", {}).items()}
 
-    if csi_path.suffix.lower() == ".bin":
-        data = load_csi_binary(csi_path)
-    else:
-        data = load_csi_csv(csi_path)
+    data = load_csi(csi_path, sample_rate_hz=args.fs)
+    print(f"Loaded {len(data['csi'])} CSI frames, {data['csi'].shape[1]} subcarriers, fs={data['sample_rate_hz']:.1f} Hz")
 
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -126,15 +150,11 @@ def main():
     ax_map.grid(True, alpha=0.3)
 
     for nid, (nx, ny) in node_pos.items():
-        ax_map.plot(nx, ny, "s", color="#2563eb", markersize=10, label=f"Node {nid}" if nid == 1 else "")
+        ax_map.plot(nx, ny, "s", color="#2563eb", markersize=10)
     ax_map.plot([], [], "s", color="#2563eb", label="ESP32 Node")
-    ax_map.legend(loc="upper right", fontsize=8)
 
-    scatter_mov = ax_map.scatter([], [], c="#ef4444", s=120, marker="o", label="Moving", zorder=5)
-    scatter_static = ax_map.scatter([], [], c="#f59e0b", s=120, marker="^", label="Static", zorder=5)
-    traj_lines: list = []
-    ax_map.plot([], [], "o", color="#ef4444", label="Moving target")
-    ax_map.plot([], [], "^", color="#f59e0b", label="Static target")
+    scatter_mov = ax_map.scatter([], [], c="#ef4444", s=120, marker="o", zorder=5)
+    scatter_static = ax_map.scatter([], [], c="#f59e0b", s=120, marker="^", zorder=5)
 
     ax_count.set_title("People Count")
     count_text = ax_count.text(0.5, 0.55, "0", ha="center", va="center", fontsize=48, fontweight="bold")
@@ -151,8 +171,13 @@ def main():
     ax_hr.set_xlabel("Time (s)")
 
     status_text = fig.text(0.02, 0.02, "", fontsize=9, family="monospace")
+    drawn_trajs: list = []
 
     def update(frame_idx):
+        for ln in drawn_trajs:
+            ln.remove()
+        drawn_trajs.clear()
+
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = cap.read()
         if ret:
@@ -179,7 +204,8 @@ def main():
                 stat_y.append(t.y_m)
             if len(t.trajectory) > 1:
                 tx, ty = zip(*t.trajectory[-30:])
-                ax_map.plot(tx, ty, "-", alpha=0.4, linewidth=1, color="#94a3b8")
+                ln, = ax_map.plot(tx, ty, "-", alpha=0.4, linewidth=1, color="#94a3b8")
+                drawn_trajs.append(ln)
 
         scatter_mov.set_offsets(np.c_[mov_x, mov_y] if mov_x else np.empty((0, 2)))
         scatter_static.set_offsets(np.c_[stat_x, stat_y] if stat_x else np.empty((0, 2)))

@@ -11,23 +11,28 @@
 #define AURA_WIFI_CHANNEL 6
 #define AURA_PROBE_INTERVAL_MS 50 /* ~20 Hz CSI sampling */
 
-/* CSI frame header streamed over UART / SD card */
+/* Local laptop hub — nodes join this WiFi hotspot (no internet) for wireless CSI upload */
+#define AURA_HUB_SSID "AURA_HUB"
+#define AURA_HUB_PASS "aura2026"
+#define AURA_HUB_IP "192.168.4.1"
+#define AURA_UDP_PORT 5555
+
+/* CSI frame header streamed over UART / UDP */
 typedef struct __attribute__((packed)) {
     uint32_t magic;
     uint8_t version;
     uint8_t node_id;
-    uint8_t link_id; /* TX-RX pair identifier */
+    uint8_t link_id;
     uint8_t reserved;
     uint32_t timestamp_ms;
     int8_t rssi;
     uint8_t channel;
     uint16_t subcarrier_count;
-    uint16_t payload_bytes; /* I/Q pairs: 2 bytes per subcarrier */
+    uint16_t payload_bytes;
 } aura_csi_header_t;
 
-/* ESP-NOW vitals summary broadcast between nodes (no cloud) */
 typedef struct __attribute__((packed)) {
-    uint32_t magic; /* 0xC511AURA */
+    uint32_t magic;
     uint8_t node_id;
     uint8_t target_count;
     uint8_t motion_detected;
