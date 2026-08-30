@@ -24,7 +24,9 @@ pip install -r simulation/requirements.txt
 python dashboard/run.py
 ```
 
-Open **http://127.0.0.1:8847** in your browser:
+If port 8847 is busy: `python dashboard/run.py --port 5683`
+
+Open **http://127.0.0.1:8847** (or your chosen port) in your browser:
 
 | Tab | What it does |
 |-----|----------------|
