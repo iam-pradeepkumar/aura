@@ -16,6 +16,21 @@ AURA places low-cost ESP32 nodes around a collapsed structure. One node transmit
 
 ## Quick Start
 
+### Web Dashboard (recommended)
+
+```bash
+cd /workspace   # project root
+pip install -r simulation/requirements.txt
+python dashboard/run.py
+```
+
+Open **http://127.0.0.1:8847** in your browser:
+
+| Tab | What it does |
+|-----|----------------|
+| **Simulation** | Upload `.mp4` video + CSI (`.npy`, `.mat`, `.csv`, `.bin`) → live plots synced to video |
+| **Live Hardware** | Connect all ESP32 nodes wirelessly → real-time sensing dashboard |
+
 ### Hardware (see [docs/HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md))
 
 1. Flash **1× TX** + **4× RX** ESP32 nodes (ESP32-C6 recommended)
@@ -55,6 +70,10 @@ See **[docs/WIRELESS_AND_SIMULATION.md](docs/WIRELESS_AND_SIMULATION.md)** for f
 
 ```
 AURA/
+├── dashboard/            # Web UI — simulation upload + live hardware
+│   ├── app.py
+│   ├── run.py            # python dashboard/run.py → :8847
+│   └── static/
 ├── firmware/
 │   ├── aura_tx/          # Offline CSI probe transmitter
 │   ├── aura_rx/          # CSI receiver + UART stream
