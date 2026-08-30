@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# ESP-IDF
+firmware/**/build/
+firmware/**/sdkconfig
+firmware/**/sdkconfig.old
+firmware/**/dependencies.lock
+
+# Recordings (user data — do not commit real survivor sessions)
+*.bin
+session*.csv
+rescue*.mp4
+demo*.mp4
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+agent-tools/

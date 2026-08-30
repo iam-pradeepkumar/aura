@@ -1,0 +1,17 @@
+# AURA node layout — adjust to match your physical deployment (meters)
+area_size_m: 10.0
+motion_threshold: 0.02
+
+# ESP32 RX node positions around disaster search area (X, Y in meters)
+# Place nodes at corners of the collapsed structure perimeter
+node_positions:
+  1: [0.0, 0.0]      # Node 1 — southwest corner
+  2: [10.0, 0.0]     # Node 2 — southeast
+  3: [10.0, 10.0]    # Node 3 — northeast
+  4: [0.0, 10.0]     # Node 4 — northwest
+
+# TX probe position (informational — firmware uses broadcast)
+tx_position: [5.0, -2.0]
+
+# WiFi channel (must match firmware AURA_WIFI_CHANNEL)
+wifi_channel: 6
