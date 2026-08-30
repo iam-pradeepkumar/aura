@@ -13,8 +13,11 @@ firmware/**/dependencies.lock
 
 # Recordings (user data — do not commit real survivor sessions)
 *.bin
-dashboard/
-  uploads/
+session*.csv
+rescue*.mp4
+demo*.mp4
+dashboard/uploads/*
+!dashboard/uploads/.gitkeep
 
 # IDE
 .idea/

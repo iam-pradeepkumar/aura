@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AURA Dashboard — Adaptive Urban Rescue Array</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div>
+        <h1 class="text-xl font-bold tracking-tight text-white">AURA</h1>
+        <p class="text-xs text-slate-400">Adaptive Urban Rescue Array — CSI Sensing Dashboard</p>
+      </div>
+      <nav class="flex gap-2">
+        <button id="tab-simulation" class="tab-btn active">Simulation</button>
+        <button id="tab-hardware" class="tab-btn">Live Hardware</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-4 py-6">
+    <!-- SIMULATION PANEL -->
+    <section id="panel-simulation" class="panel">
+      <div class="grid lg:grid-cols-3 gap-6 mb-6">
+        <div class="card lg:col-span-1">
+          <h2 class="card-title">Upload Session</h2>
+          <p class="text-sm text-slate-400 mb-4">Upload your scene video (.mp4) and CSI dataset (.npy, .mat, .csv, .bin)</p>
+          <label class="upload-label">Video (.mp4)</label>
+          <input type="file" id="sim-video" accept="video/mp4,video/*" class="file-input mb-3" />
+          <label class="upload-label">CSI Dataset</label>
+          <input type="file" id="sim-csi" accept=".npy,.mat,.npz,.csv,.bin" class="file-input mb-3" />
+          <label class="upload-label">Sample rate (Hz, optional)</label>
+          <input type="number" id="sim-fs" placeholder="auto" class="file-input mb-4" step="0.1" />
+          <button id="btn-run-simulation" class="btn-primary w-full">Run Simulation</button>
+          <p id="sim-status" class="text-sm mt-3 text-slate-400"></p>
+        </div>
+        <div class="card lg:col-span-2">
+          <h2 class="card-title">Scene Video</h2>
+          <div class="video-wrap">
+            <video id="sim-video-player" controls class="w-full rounded-lg bg-black max-h-80"></video>
+          </div>
+          <div class="flex items-center gap-3 mt-3 text-sm text-slate-400">
+            <span id="sim-time">0.00s</span>
+            <span>·</span>
+            <span id="sim-meta"></span>
+          </div>
+        </div>
+      </div>
+      <div id="sim-results" class="hidden">
+        <div class="grid md:grid-cols-4 gap-4 mb-4">
+          <div class="stat-card"><span class="stat-label">People Count</span><span id="sim-count" class="stat-value">0</span></div>
+          <div class="stat-card"><span class="stat-label">Motion</span><span id="sim-motion" class="stat-value text-emerald-400">—</span></div>
+          <div class="stat-card"><span class="stat-label">Respiration</span><span id="sim-resp" class="stat-value">— BPM</span></div>
+          <div class="stat-card"><span class="stat-label">Heartbeat</span><span id="sim-hr" class="stat-value">— BPM</span></div>
+        </div>
+        <div class="grid lg:grid-cols-2 gap-4">
+          <div class="card"><h3 class="card-title">Survivor Map (XY Localization)</h3><div id="sim-map" class="chart-h"></div></div>
+          <div class="card"><h3 class="card-title">Tracking &amp; Targets</h3><div id="sim-targets" class="text-sm text-slate-300 min-h-[200px]"></div></div>
+          <div class="card"><h3 class="card-title">Respiration Waveform</h3><div id="sim-resp-chart" class="chart-h"></div></div>
+          <div class="card"><h3 class="card-title">Heartbeat Waveform</h3><div id="sim-hr-chart" class="chart-h"></div></div>
+        </div>
+        <div class="card mt-4"><h3 class="card-title">Events (Entry / Exit)</h3><ul id="sim-events" class="text-sm text-slate-400 font-mono"></ul></div>
+      </div>
+    </section>
+
+    <!-- HARDWARE PANEL -->
+    <section id="panel-hardware" class="panel hidden">
+      <div class="grid lg:grid-cols-3 gap-6 mb-6">
+        <div class="card">
+          <h2 class="card-title">Wireless Nodes</h2>
+          <p class="text-sm text-slate-400 mb-4">
+            1. Start laptop hotspot: <strong class="text-white">AURA_HUB</strong> / <strong class="text-white">aura2026</strong><br/>
+            2. Power on all ESP32 RX nodes (no USB cables)<br/>
+            3. Click Start Live Sensing below
+          </p>
+          <button id="btn-start-hardware" class="btn-primary w-full mb-2">Start Live Sensing</button>
+          <button id="btn-stop-hardware" class="btn-secondary w-full">Stop</button>
+          <p id="hw-status" class="text-sm mt-3 text-slate-400">Disconnected</p>
+          <ul id="hw-nodes" class="mt-4 space-y-2 text-sm"></ul>
+        </div>
+        <div class="card lg:col-span-2">
+          <div class="grid grid-cols-4 gap-3 mb-4">
+            <div class="stat-card"><span class="stat-label">Active Nodes</span><span id="hw-nodes-count" class="stat-value">0</span></div>
+            <div class="stat-card"><span class="stat-label">People Count</span><span id="hw-count" class="stat-value">0</span></div>
+            <div class="stat-card"><span class="stat-label">Respiration</span><span id="hw-resp" class="stat-value">—</span></div>
+            <div class="stat-card"><span class="stat-label">Heartbeat</span><span id="hw-hr" class="stat-value">—</span></div>
+          </div>
+          <div class="stat-card inline-block mb-4">
+            <span class="stat-label">Motion Detection</span>
+            <span id="hw-motion" class="stat-value text-slate-500">WAITING</span>
+          </div>
+        </div>
+      </div>
+      <div class="grid lg:grid-cols-2 gap-4">
+        <div class="card"><h3 class="card-title">Live Survivor Map</h3><div id="hw-map" class="chart-h"></div></div>
+        <div class="card"><h3 class="card-title">Live Targets</h3><div id="hw-targets" class="text-sm text-slate-300 min-h-[200px]"></div></div>
+        <div class="card"><h3 class="card-title">Respiration (live)</h3><div id="hw-resp-chart" class="chart-h"></div></div>
+        <div class="card"><h3 class="card-title">Heartbeat (live)</h3><div id="hw-hr-chart" class="chart-h"></div></div>
+      </div>
+      <div class="card mt-4"><h3 class="card-title">Tracking Events</h3><ul id="hw-events" class="text-sm text-slate-400 font-mono"></ul></div>
+    </section>
+  </main>
+
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
