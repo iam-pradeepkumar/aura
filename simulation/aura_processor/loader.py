@@ -9,7 +9,7 @@ from typing import Iterator
 import numpy as np
 import pandas as pd
 
-from .csi_orient import combine_amplitude_phase, orient_csi
+from .csi_orient import combine_amplitude_phase, orient_csi, COMMON_SUBCARRIERS
 
 AURA_MAGIC = 0x41555241
 HEADER_FMT = "<IBBBBIIbBHHI"
@@ -225,6 +225,24 @@ def _packet_from_object_grid(cell: np.ndarray) -> np.ndarray | None:
     return _coerce_complex_1d(vals.reshape(cell.shape), depth=1)
 
 
+def _flatten_mimo_packet(arr: np.ndarray) -> np.ndarray | None:
+    """Flatten WiMANS 3×3×30 (or similar) MIMO CSI to one subcarrier vector."""
+    arr = np.squeeze(np.asarray(arr))
+    if arr.ndim == 0:
+        return None
+    if arr.ndim == 1:
+        return arr.astype(np.complex64) if arr.size >= 10 else None
+    sc_axis = arr.shape[-1]
+    if sc_axis in COMMON_SUBCARRIERS or 20 <= sc_axis <= 64:
+        flat = arr.reshape(-1, sc_axis)
+        return flat.mean(axis=0).astype(np.complex64)
+    if arr.size >= 30:
+        vec = arr.reshape(-1)
+        if vec.size >= 30:
+            return vec[:30].astype(np.complex64)
+    return None
+
+
 def _coerce_complex_1d(pkt: object, depth: int = 0) -> np.ndarray | None:
     """Reduce a WiMANS / Intel CSI packet to 1-D complex subcarriers."""
     if pkt is None or depth > 16:
@@ -248,7 +266,9 @@ def _coerce_complex_1d(pkt: object, depth: int = 0) -> np.ndarray | None:
     if arr.dtype == object:
         grid_pkt = _packet_from_object_grid(arr)
         if grid_pkt is not None:
-            return grid_pkt
+            flat = _flatten_mimo_packet(grid_pkt)
+            if flat is not None:
+                return flat
         if arr.size == 0:
             return None
         return _coerce_complex_1d(arr.item() if arr.ndim == 0 else arr.ravel()[0], depth=depth + 1)
@@ -258,26 +278,42 @@ def _coerce_complex_1d(pkt: object, depth: int = 0) -> np.ndarray | None:
     except (TypeError, ValueError):
         return None
 
+    flat = _flatten_mimo_packet(arr)
+    if flat is not None:
+        return flat
+
     arr = np.squeeze(arr)
     if arr.ndim == 0:
         return None
-    while arr.ndim > 1:
-        if arr.shape[-1] <= 128:
-            arr = arr[-1]
-        else:
-            arr = arr.reshape(-1, arr.shape[-1])[-1]
-    if arr.size == 0:
-        return None
-    return arr.astype(np.complex64)
+    if arr.ndim == 1:
+        return arr.astype(np.complex64) if arr.size >= 10 else None
+    return None
 
 
 def _wimans_packet_from_cell(cell: object) -> np.ndarray | None:
-    """Extract one packet using WiMANS preprocess path trace[t][0][0][0][-1]."""
+    """Extract one WiMANS packet (30 subcarriers) using official preprocess path."""
     if cell is None:
         return None
 
+    # Official WiMANS: trace[t][0][0][0][-1] → (30,) complex
+    for accessor in (
+        lambda c: c[0][0][0][-1],
+        lambda c: c[0][0][0],
+        lambda c: c[0][0],
+    ):
+        try:
+            raw = accessor(cell)
+            pkt = _coerce_complex_1d(raw)
+            if pkt is not None and pkt.size >= 10:
+                return pkt
+            flat = _flatten_mimo_packet(raw)
+            if flat is not None and flat.size >= 10:
+                return flat
+        except (IndexError, TypeError, ValueError):
+            continue
+
     direct = _coerce_complex_1d(cell)
-    if direct is not None:
+    if direct is not None and direct.size >= 10:
         return direct
 
     try:
@@ -286,24 +322,22 @@ def _wimans_packet_from_cell(cell: object) -> np.ndarray | None:
         if isinstance(cell, mat_struct):
             for fname in getattr(cell, "_fieldnames", []) or []:
                 pkt = _wimans_packet_from_cell(getattr(cell, fname, None))
-                if pkt is not None:
+                if pkt is not None and pkt.size >= 10:
                     return pkt
     except ImportError:
-        pass
-
-    # WiMANS benchmark/wifi_csi/preprocess.py access pattern
-    try:
-        return _coerce_complex_1d(cell[0][0][0][-1])
-    except (IndexError, TypeError, ValueError):
         pass
 
     cur = cell
     for _ in range(12):
         if isinstance(cur, np.ndarray):
             if cur.dtype.names:
-                return _coerce_complex_1d(cur)
+                pkt = _coerce_complex_1d(cur)
+                if pkt is not None and pkt.size >= 10:
+                    return pkt
             if cur.dtype != object:
-                return _coerce_complex_1d(cur)
+                pkt = _coerce_complex_1d(cur)
+                if pkt is not None and pkt.size >= 10:
+                    return pkt
             if cur.size == 0:
                 return None
             if cur.ndim == 0:
@@ -324,7 +358,8 @@ def _wimans_packet_from_cell(cell: object) -> np.ndarray | None:
             continue
         break
 
-    return _coerce_complex_1d(cur)
+    pkt = _coerce_complex_1d(cur)
+    return pkt if pkt is not None and pkt.size >= 10 else None
 
 
 def _iter_trace_cells(trace_raw: object) -> list[object]:
@@ -394,17 +429,41 @@ def _load_wimans_trace(meta: dict) -> tuple[np.ndarray | None, dict]:
     return csi, info
 
 
+def amplitude_to_complex(amp: np.ndarray) -> np.ndarray:
+    """
+    Build complex CSI from amplitude-only WiMANS .npy using analytic signal (Hilbert).
+    Enables phase-based sensing when .mat phase is missing or misaligned.
+    """
+    from scipy.signal import hilbert
+
+    a = _normalize_amplitude_csi(amp)
+    if a.size == 0:
+        return a.astype(np.complex64)
+    analytic = hilbert(a.astype(np.float64), axis=0)
+    return analytic.astype(np.complex64)
+
+
 def _align_csi_pair(
     mat_csi: np.ndarray,
     npy_amp: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Trim/pad mat and npy amplitude arrays to a common (frames, subcarriers) shape."""
+) -> tuple[np.ndarray, np.ndarray, bool]:
+    """
+    Trim mat and npy to common frame count.
+    Returns (mat_slice, npy_slice, use_npy_only) when .mat has too few subcarriers.
+    """
     mat_csi = np.asarray(mat_csi)
     npy_amp = _normalize_amplitude_csi(npy_amp)
 
     n_frames = min(mat_csi.shape[0], npy_amp.shape[0])
-    sc = min(mat_csi.shape[1], npy_amp.shape[1])
-    return mat_csi[:n_frames, :sc], npy_amp[:n_frames, :sc]
+    mat_sc = int(mat_csi.shape[1]) if mat_csi.ndim > 1 else 0
+    npy_sc = int(npy_amp.shape[1])
+
+    mat_slice = mat_csi[:n_frames]
+    npy_slice = npy_amp[:n_frames]
+
+    mat_has_phase = mat_sc > 0 and float(np.std(np.angle(mat_slice))) > 1e-4
+    use_npy_only = npy_sc >= 10 and (mat_sc < 10 or not mat_has_phase or mat_sc < npy_sc // 2)
+    return mat_slice, npy_slice, use_npy_only
 
 
 def merge_csi_mat_npy(
@@ -415,18 +474,26 @@ def merge_csi_mat_npy(
     """
     Fuse one dataset's .mat (complex CSI with phase) and .npy (amplitude-only).
 
-    Phase comes from .mat; magnitude is taken from the preprocessed .npy so motion
-    energy matches the lab pipeline while localization/vitals keep phase information.
+    When .mat phase is missing or has too few subcarriers, uses the .npy amplitude
+  with Hilbert-derived phase so all sensing functions still work.
     """
     mat_csi = mat_data["csi"]
     npy_raw = npy_data["csi"]
-    mat_csi, npy_amp = _align_csi_pair(mat_csi, npy_raw)
+    mat_slice, npy_amp, use_npy_only = _align_csi_pair(mat_csi, npy_raw)
 
-    if mat_csi.size == 0 or npy_amp.size == 0:
-        raise ValueError("Empty CSI after aligning .mat and .npy shapes")
+    if npy_amp.size == 0:
+        raise ValueError("Empty amplitude CSI in .npy file")
 
-    phase = np.angle(mat_csi)
-    fused = (npy_amp * np.exp(1j * phase)).astype(np.complex64)
+    if use_npy_only:
+        fused = amplitude_to_complex(npy_amp)
+        phase_source = "hilbert_npy"
+        has_phase = True
+    else:
+        sc = min(mat_slice.shape[1], npy_amp.shape[1])
+        phase = np.angle(mat_slice[:, :sc])
+        fused = (npy_amp[:, :sc] * np.exp(1j * phase)).astype(np.complex64)
+        phase_source = "mat"
+        has_phase = bool(float(np.std(phase)) > 1e-4)
 
     n = len(fused)
     mat_ts = np.asarray(mat_data.get("timestamps_ms", []), dtype=np.float64).ravel()
@@ -456,12 +523,15 @@ def merge_csi_mat_npy(
         "merged_with_npy": True,
         "mat_frames": int(mat_data["csi"].shape[0]),
         "npy_frames": int(npy_data["csi"].shape[0]),
+        "mat_subcarriers": int(mat_data["csi"].shape[1]) if mat_data["csi"].ndim > 1 else 0,
+        "npy_subcarriers": int(_normalize_amplitude_csi(npy_data["csi"]).shape[1]),
         "fused_frames": n,
         "fused_subcarriers": int(fused.shape[1]),
         "amplitude_source": "npy",
-        "phase_source": "mat",
+        "phase_source": phase_source,
+        "npy_only_fusion": use_npy_only,
         "npy_source_field": npy_info.get("source_field", ""),
-        "has_phase": bool(np.std(phase) > 1e-4),
+        "has_phase": has_phase,
         "n_frames": n,
         "n_subcarriers": int(fused.shape[1]),
         "output_shape": fused.shape,
@@ -474,7 +544,7 @@ def merge_csi_mat_npy(
         "sample_rate_hz": fs,
         "source": f"{mat_data.get('source', 'mat')}+{npy_data.get('source', 'npy')}",
         "load_info": orient_info,
-        "mat_csi": mat_csi,
+        "mat_csi": mat_slice,
         "npy_amplitude": npy_amp,
     }
 

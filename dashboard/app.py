@@ -31,7 +31,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-20"
+PROCESSOR_VERSION = "2026.08.31-21"
 
 
 def load_config() -> dict:
@@ -273,6 +273,9 @@ async def upload_simulation(
             "subcarriers": load_info.get("fused_subcarriers", int(csi.shape[1])),
             "has_phase": load_info.get("has_phase", True),
             "merged_with_npy": load_info.get("merged_with_npy", True),
+            "npy_only_fusion": load_info.get("npy_only_fusion", False),
+            "mat_subcarriers": load_info.get("mat_subcarriers"),
+            "npy_subcarriers": load_info.get("npy_subcarriers"),
             "mat_frames": load_info.get("mat_frames"),
             "npy_frames": load_info.get("npy_frames"),
             "combined_antennas": load_info.get("combined_antennas"),

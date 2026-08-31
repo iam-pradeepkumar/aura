@@ -291,7 +291,8 @@ document.getElementById("btn-run-simulation").onclick = async () => {
       `${json.duration_sec}s · ${json.n_frames} frames · count ${json.target_count ?? 0}` +
       (json.csi_load?.frames ? ` · CSI ${json.csi_load.frames}×${json.csi_load.subcarriers}` : "") +
       (json.csi_load?.merged_with_npy ? " · mat+npy fused" : "") +
-      (json.csi_load?.has_phase === false ? " · ⚠ no phase" : "") +
+      (json.csi_load?.npy_only_fusion ? " · amp+Hilbert phase" : "") +
+      (json.csi_load?.has_phase === false && !json.csi_load?.npy_only_fusion ? " · ⚠ no phase" : "") +
       (json.confidence != null ? ` · conf ${(json.confidence * 100).toFixed(0)}%` : "") +
       (json.reliable === false ? " · ⚠ low confidence" : "");
     document.getElementById("sim-events").innerHTML =

@@ -408,11 +408,12 @@ def estimate_person_count(
         return 0
 
     quality = _motion_signal_quality(cleaned, motion_threshold)
-    if quality < 0.12:
+    min_quality = 0.06 if motion_level >= motion_threshold * 2.0 else 0.10
+    if quality < min_quality and motion_level < motion_threshold * 1.5:
         return 0
 
     t_len, n_sc = cleaned.shape
-    if t_len < 16 or n_sc < 4:
+    if t_len < 16 or n_sc < 3:
         return 0
 
     gates = _narrow_sc_gates(_adaptive_gates(motion_level, motion_threshold), n_sc)
@@ -1169,7 +1170,7 @@ def localize_motion_sources(
         cleaned = np.nan_to_num(csi)
     else:
         cleaned = np.nan_to_num(srcc(preprocess_csi(csi)))
-    if cleaned.shape[0] < 16 or cleaned.shape[1] < 4:
+    if cleaned.shape[0] < 16 or cleaned.shape[1] < 3:
         return []
     if motion_level < motion_threshold * 0.65:
         return []
@@ -1345,7 +1346,8 @@ def detect_session_targets(
         return []
 
     quality = _motion_signal_quality(cleaned, motion_threshold)
-    if quality < 0.10:
+    min_quality = 0.05 if m_level >= motion_threshold * 1.5 else 0.08
+    if quality < min_quality and m_level < motion_threshold:
         return []
 
     estimated = expected_count if expected_count and expected_count > 0 else estimate_person_count(

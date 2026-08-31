@@ -89,6 +89,22 @@ class AURAPipeline:
             node_positions=self.node_positions,
             amplitude_count=amplitude_count,
         )
+        if not self._session_targets and raw_motion >= self.motion_threshold * 0.65:
+            from .loader import amplitude_to_complex
+
+            amp = np.abs(csi) if not np.iscomplexobj(csi) else np.abs(csi)
+            if amp.ndim == 2 and amp.shape[1] >= 10:
+                pseudo = amplitude_to_complex(amp)
+                self._session_targets = detect_session_targets(
+                    pseudo,
+                    self.fs_hz,
+                    self.area_size_m,
+                    self.max_targets,
+                    xy,
+                    motion_threshold=self.motion_threshold,
+                    node_positions=self.node_positions,
+                    amplitude_count=amplitude_count,
+                )
         self.estimated_person_count = len(self._session_targets)
         self.session_confidence = detection_confidence(
             self._session_targets, raw_motion, self.motion_threshold
@@ -139,7 +155,7 @@ class AURAPipeline:
         detections = self._merge_session_and_window(window_dets)
         conf = detection_confidence(detections, m_energy, self.motion_threshold)
 
-        if conf < 0.12 and not self._session_targets:
+        if conf < 0.12 and not self._session_targets and m_energy < self.motion_threshold * 0.8:
             detections = []
 
         per_vitals = extract_vitals_for_detections(cleaned, self.fs_hz, detections)
@@ -245,10 +261,20 @@ class AURAPipeline:
             self.motion_threshold,
         )
 
-        if not self.session_assessment.get("reliable", True):
+        if (
+            not self.session_assessment.get("reliable", True)
+            and raw_motion < self.motion_threshold * 0.85
+            and not self._session_targets
+        ):
             self._session_targets = []
             self.estimated_person_count = 0
             self.session_confidence = 0.0
+        elif self._session_targets:
+            self.estimated_person_count = len(self._session_targets)
+            self.session_confidence = max(
+                self.session_confidence,
+                detection_confidence(self._session_targets, raw_motion, self.motion_threshold),
+            )
 
         results = []
         n = len(csi)

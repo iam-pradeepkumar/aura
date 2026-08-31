@@ -8,6 +8,7 @@ from .loader import (
     load_csi_mat,
     load_csi_npz,
     merge_csi_mat_npy,
+    amplitude_to_complex,
 )
 from .pipeline import AURAPipeline, SensingResult
 
@@ -19,6 +20,7 @@ __all__ = [
     "load_csi_mat",
     "load_csi_npz",
     "merge_csi_mat_npy",
+    "amplitude_to_complex",
     "AURAPipeline",
     "SensingResult",
 ]
