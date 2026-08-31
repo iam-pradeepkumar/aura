@@ -418,6 +418,36 @@ def _file_head(path: Path, n: int = 32) -> bytes:
         return f.read(n)
 
 
+def _is_zip_file(path: Path) -> bool:
+    head = _file_head(path, 4)
+    return head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06")
+
+
+def _extract_mat_from_zip(path: Path) -> tuple[Path, str]:
+    """Extract the CSI .mat member from a ZIP-wrapped upload (common from Kaggle)."""
+    import tempfile
+    import zipfile
+
+    with zipfile.ZipFile(path, "r") as zf:
+        mats = [
+            n for n in zf.namelist()
+            if n.lower().endswith(".mat") and not n.endswith("/")
+        ]
+        if not mats:
+            names = zf.namelist()[:8]
+            raise ValueError(
+                f"{path.name} is a ZIP archive, not a raw MATLAB .mat file. "
+                "Unzip the download on your computer first, then upload the extracted "
+                f".mat file (e.g. act_100_5.mat). Zip contents sample: {names}"
+            )
+        inner = max(mats, key=lambda n: zf.getinfo(n).file_size)
+        data = zf.read(inner)
+
+    tmp_path = Path(tempfile.mkstemp(suffix=".mat", prefix="aura_zip_")[1])
+    tmp_path.write_bytes(data)
+    return tmp_path, inner
+
+
 def _find_hdf5_offset(path: Path, limit: int = 8192) -> int | None:
     data = path.read_bytes()[:limit]
     idx = data.find(b"\x89HDF\r\n\x1a\n")
@@ -433,6 +463,8 @@ def _mat_file_kind(path: Path) -> str:
   - gzip / npy: misnamed files
     """
     head = _file_head(path, 128)
+    if head.startswith(b"PK\x03\x04") or head.startswith(b"PK\x05\x06"):
+        return "zip"
     if head.startswith(b"\x89HDF\r\n"):
         return "hdf5"
     if head.startswith(b"MATLAB 7.3"):
@@ -548,6 +580,15 @@ def _load_mat_h5(path: Path) -> dict:
 def _load_mat_meta(path: Path) -> dict:
     kind = _mat_file_kind(path)
 
+    if kind == "zip":
+        tmp_path, inner_name = _extract_mat_from_zip(path)
+        try:
+            meta = _load_mat_meta(tmp_path)
+            meta["__zip_source__"] = inner_name
+            return meta
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
     if kind == "gzip":
         import gzip
         import tempfile
@@ -592,8 +633,12 @@ def _load_mat_meta(path: Path) -> dict:
     raise ValueError(
         f"Cannot read MATLAB file {path.name} ({path.stat().st_size} bytes). "
         f"Header: {_file_head(path)!r}. "
-        f"WiMANS .mat files should load with SciPy — verify the upload is complete. "
-        f"Errors: {'; '.join(errors)}"
+        + (
+            "This file looks like a ZIP archive — unzip it and upload the extracted .mat. "
+            if _is_zip_file(path) else
+            "WiMANS .mat files should load with SciPy — verify the upload is complete. "
+        )
+        + f"Errors: {'; '.join(errors)}"
     )
 
 
