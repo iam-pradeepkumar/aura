@@ -26,10 +26,29 @@
     <!-- Row 1: upload | video | stats -->
     <div class="card compact">
       <h2 class="card-title">Upload</h2>
-      <input type="file" id="sim-video" accept="video/*" class="file-input mb-2" title="Video" />
-      <input type="file" id="sim-csi" accept=".npy,.npz,.mat,.csv,.bin" class="file-input mb-2" title="CSI" />
-      <input type="number" id="sim-fs" placeholder="Sample rate Hz (auto)" class="file-input mb-2" step="0.1" />
-      <button id="btn-run-simulation" class="btn-primary w-full text-sm py-2">Run Simulation</button>
+      <p class="upload-hint">Video + matching CSI file (same recording session)</p>
+
+      <label class="upload-field">
+        <span class="upload-label">1. Scene video</span>
+        <span class="upload-formats">.mp4, .mov, .avi</span>
+        <input type="file" id="sim-video" accept="video/*,.mp4,.mov,.avi,.mkv,.webm" class="file-input" />
+        <span id="sim-video-name" class="upload-filename">No file chosen</span>
+      </label>
+
+      <label class="upload-field">
+        <span class="upload-label">2. CSI dataset</span>
+        <span class="upload-formats">.mat · .npy · .npz · .csv · .bin</span>
+        <input type="file" id="sim-csi" accept=".mat,.MAT,.npy,.npz,.csv,.bin,application/octet-stream" class="file-input" />
+        <span id="sim-csi-name" class="upload-filename">No file chosen</span>
+      </label>
+
+      <label class="upload-field">
+        <span class="upload-label">Sample rate (optional)</span>
+        <span class="upload-formats">Hz — auto from .mat timestamps if blank</span>
+        <input type="number" id="sim-fs" placeholder="e.g. 955" class="file-input" step="0.1" />
+      </label>
+
+      <button id="btn-run-simulation" class="btn-primary w-full text-sm py-2 mt-1">Run Simulation</button>
       <p id="sim-status" class="text-xs mt-2 text-slate-500 truncate"></p>
     </div>
 

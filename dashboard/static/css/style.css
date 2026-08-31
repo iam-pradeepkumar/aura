@@ -63,6 +63,48 @@ html, body { height: 100%; margin: 0; font-family: "Inter", system-ui, sans-seri
   color: #e2e8f0;
 }
 
+.upload-hint {
+  font-size: 0.65rem;
+  color: #64748b;
+  margin: 0 0 0.5rem;
+  line-height: 1.35;
+}
+
+.upload-field {
+  display: block;
+  margin-bottom: 0.45rem;
+  cursor: pointer;
+}
+
+.upload-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #cbd5e1;
+  margin-bottom: 0.1rem;
+}
+
+.upload-formats {
+  display: block;
+  font-size: 0.6rem;
+  color: #64748b;
+  margin-bottom: 0.2rem;
+}
+
+.upload-filename {
+  display: block;
+  font-size: 0.6rem;
+  color: #38bdf8;
+  margin-top: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.upload-field .file-input {
+  margin-top: 0.1rem;
+}
+
 /* Simulation: 4 columns — upload|video(span2)|stats, then map|targets|resp|hr, events */
 .grid-dashboard-sim {
   display: grid;

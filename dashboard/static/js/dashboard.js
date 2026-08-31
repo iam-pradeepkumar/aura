@@ -221,15 +221,37 @@ function updateSensingUI(prefix, data, nodePositions, areaSize, store = true) {
 
 // --- Simulation ---
 const videoEl = document.getElementById("sim-video-player");
+const videoInput = document.getElementById("sim-video");
+const csiInput = document.getElementById("sim-csi");
+const videoNameEl = document.getElementById("sim-video-name");
+const csiNameEl = document.getElementById("sim-csi-name");
+
+function bindFileLabel(input, labelEl) {
+  if (!input || !labelEl) return;
+  input.addEventListener("change", () => {
+    const f = input.files?.[0];
+    labelEl.textContent = f ? f.name : "No file chosen";
+    labelEl.classList.toggle("text-emerald-400", !!f);
+  });
+}
+bindFileLabel(videoInput, videoNameEl);
+bindFileLabel(csiInput, csiNameEl);
 
 document.getElementById("btn-run-simulation").onclick = async () => {
-  const videoFile = document.getElementById("sim-video").files[0];
-  const csiFile = document.getElementById("sim-csi").files[0];
+  const videoFile = videoInput?.files?.[0];
+  const csiFile = csiInput?.files?.[0];
   const fsVal = document.getElementById("sim-fs").value;
   const status = document.getElementById("sim-status");
 
   if (!videoFile || !csiFile) {
-    status.textContent = "Select video + CSI files.";
+    status.textContent = "Select scene video (.mp4) and CSI (.mat or .npy).";
+    return;
+  }
+
+  const csiExt = (csiFile.name.split(".").pop() || "").toLowerCase();
+  const allowedCsi = ["mat", "npy", "npz", "csv", "bin"];
+  if (!allowedCsi.includes(csiExt)) {
+    status.textContent = `Unsupported CSI type .${csiExt} — use .mat, .npy, .npz, .csv, or .bin`;
     return;
   }
 
