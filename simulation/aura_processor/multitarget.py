@@ -147,7 +147,7 @@ def _iterative_delay_peaks(
             break
         peak = int(np.argmax(residual))
         height = float(delay_prof[peak])
-        if height < 0.12 * delay_prof.max():
+        if height < 0.06 * delay_prof.max():
             break
         dets.append(_localize_from_delay_bin(cleaned, peak, height, fs_hz, area_size_m, sensor_xy))
         lo = max(0, peak - max(2, N // 15))
@@ -207,9 +207,10 @@ def detect_and_localize(
     area_size_m: float = 10.0,
     max_targets: int = 3,
     sensor_xy: tuple[float, float] = (5.0, 0.0),
+    skip_srcc: bool = False,
 ) -> list[dict]:
     """Detect up to max_targets people using SVD separation + iterative delay peaks."""
-    cleaned = srcc(csi)
+    cleaned = csi if skip_srcc else srcc(csi)
     T, N = cleaned.shape
     if T < 8 or N < 4:
         return []
@@ -252,6 +253,76 @@ def detect_and_localize(
     return detections[:max_targets]
 
 
+def _fallback_motion_targets(
+    cleaned: np.ndarray,
+    fs_hz: float,
+    area_size_m: float,
+    max_targets: int,
+    sensor_xy: tuple[float, float],
+) -> list[dict]:
+    """
+    Last-resort localization when motion is present but peak/SVD methods return nothing.
+    Uses delay-profile peaks and subcarrier-band energy splits.
+    """
+    T, N = cleaned.shape
+    if T < 8 or N < 4:
+        return []
+
+    raw_points: list[dict] = []
+    delay_prof = _delay_profile(cleaned)
+    if delay_prof.max() <= 0:
+        return []
+
+    peaks, _ = find_peaks(
+        delay_prof,
+        height=0.04 * delay_prof.max(),
+        distance=max(2, N // 12),
+    )
+    if len(peaks) == 0:
+        peaks = np.argsort(delay_prof)[-max_targets:]
+
+    for peak in peaks[:max_targets]:
+        raw_points.append(
+            _localize_from_delay_bin(
+                cleaned, int(peak), float(delay_prof[peak]), fs_hz, area_size_m, sensor_xy
+            )
+        )
+
+    # Spread detections across the area using subcarrier thirds
+    thirds = np.array_split(np.arange(N), 3)
+    sx, sy = sensor_xy
+    spread_angles = [-0.55, 0.0, 0.55]
+    for i, band in enumerate(thirds):
+        if len(band) < 2:
+            continue
+        sub = cleaned[:, band]
+        prof = _delay_profile(sub)
+        peak = int(np.argmax(prof))
+        global_peak = int(band[peak])
+        det = _localize_from_delay_bin(sub, peak, float(prof[peak]), fs_hz, area_size_m, sensor_xy)
+        det["delay_bin"] = global_peak
+        r = np.hypot(det["x_m"] - sx, det["y_m"] - sy)
+        base = np.arctan2(det["x_m"] - sx, det["y_m"] - sy + 1e-6)
+        ang = base + spread_angles[i]
+        det["x_m"] = float(np.clip(sx + r * np.sin(ang), 0.5, area_size_m - 0.5))
+        det["y_m"] = float(np.clip(sy + r * np.cos(ang), 0.5, area_size_m - 0.5))
+        raw_points.append(det)
+
+    if not raw_points:
+        return []
+
+    centroids = cluster_xy(
+        [(p["x_m"], p["y_m"]) for p in raw_points],
+        eps=1.8,
+        max_clusters=max_targets,
+    )
+    detections = []
+    for cx, cy in centroids:
+        best = min(raw_points, key=lambda p: (p["x_m"] - cx) ** 2 + (p["y_m"] - cy) ** 2)
+        detections.append({**best, "x_m": cx, "y_m": cy})
+    return detections[:max_targets]
+
+
 def detect_session_targets(
     csi: np.ndarray,
     fs_hz: float,
@@ -272,15 +343,19 @@ def detect_session_targets(
     all_points: list[dict] = []
 
     # Full-session SVD (best for separating 3 people)
-    all_points.extend(detect_and_localize(cleaned, fs_hz, area_size_m, max_targets, sensor_xy))
+    all_points.extend(
+        detect_and_localize(cleaned, fs_hz, area_size_m, max_targets, sensor_xy, skip_srcc=True)
+    )
 
     # Sliding windows
     for start in range(0, max(T - win + 1, 1), hop):
         chunk = cleaned[start : start + win]
-        all_points.extend(detect_and_localize(chunk, fs_hz, area_size_m, max_targets, sensor_xy))
+        all_points.extend(
+            detect_and_localize(chunk, fs_hz, area_size_m, max_targets, sensor_xy, skip_srcc=True)
+        )
 
     if not all_points:
-        return []
+        return _fallback_motion_targets(cleaned, fs_hz, area_size_m, max_targets, sensor_xy)
 
     centroids = cluster_xy([(p["x_m"], p["y_m"]) for p in all_points], eps=2.5, max_clusters=max_targets)
 

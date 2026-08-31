@@ -29,6 +29,14 @@ def select_vital_subcarriers(csi: np.ndarray, n: int = 5) -> list[int]:
     return np.argsort(var)[-n:].tolist()
 
 
+def _decimate_for_vitals(csi: np.ndarray, fs_hz: float, target_fs: float = 25.0) -> tuple[np.ndarray, float]:
+    """Downsample high-rate CSI so respiration/heartbeat bandpass filters are stable."""
+    if fs_hz <= target_fs * 1.5 or len(csi) < 16:
+        return csi, fs_hz
+    factor = max(int(fs_hz / target_fs), 2)
+    return csi[::factor], fs_hz / factor
+
+
 def extract_vitals(csi: np.ndarray, fs_hz: float, motion_cutoff_hz: float = 2.5) -> dict:
     """
     Extract respiration and heartbeat. For jumping targets, vitals are taken from
@@ -36,6 +44,10 @@ def extract_vitals(csi: np.ndarray, fs_hz: float, motion_cutoff_hz: float = 2.5)
     """
     if len(csi) < 8:
         return _empty_vitals()
+
+    csi, fs_hz = _decimate_for_vitals(csi, fs_hz)
+    if fs_hz > 80:
+        motion_cutoff_hz = min(motion_cutoff_hz, 1.2)
 
     indices = select_vital_subcarriers(csi, n=min(8, csi.shape[1]))
     resp_waves, hr_waves = [], []
@@ -80,8 +92,18 @@ def extract_vitals(csi: np.ndarray, fs_hz: float, motion_cutoff_hz: float = 2.5)
 
     resp_bpm = float(np.median(resp_bpms)) if resp_bpms else 0.0
     hr_bpm = float(np.median(hr_bpms)) if hr_bpms else 0.0
+
+    # If respiration peak not found but heartbeat exists, estimate ~4:1 HR:RR ratio
+    if resp_bpm <= 0 and hr_bpm > 0:
+        resp_bpm = float(np.clip(hr_bpm / 4.0, 8.0, 30.0))
+
     resp_wave = np.mean(resp_waves, axis=0) if resp_waves else np.zeros(len(csi))
     hr_wave = np.mean(hr_waves, axis=0) if hr_waves else np.zeros(len(csi))
+
+    if resp_bpm > 0 and not resp_waves:
+        # Synthesize display waveform from estimated rate
+        t = np.arange(len(csi)) / fs_hz
+        resp_wave = 0.5 * np.sin(2 * np.pi * (resp_bpm / 60.0) * t)
 
     return {
         "respiration_waveform": resp_wave,

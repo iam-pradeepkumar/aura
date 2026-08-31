@@ -8,7 +8,7 @@ import numpy as np
 from .srcc import srcc, motion_energy
 from .doppler import delay_doppler_map
 from .vitals import extract_vitals, extract_vitals_for_target
-from .multitarget import detect_and_localize, detect_session_targets
+from .multitarget import detect_and_localize, detect_session_targets, _fallback_motion_targets
 from .localization import TargetTracker, Target
 
 
@@ -74,13 +74,19 @@ class AURAPipeline:
         vitals = extract_vitals(cleaned, self.fs_hz)
         _, _, ddm = delay_doppler_map(cleaned, self.fs_hz)
 
-        # Per-window detections
+        # Per-window detections (cleaned already SRCC'd)
         window_dets = detect_and_localize(
-            cleaned, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
+            cleaned, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy, skip_srcc=True
         )
 
         # Merge with session-level targets (ensures all 3 people appear)
         detections = self._merge_session_and_window(window_dets)
+
+        # Motion present but no targets — use amplitude-delay fallback
+        if motion and not detections:
+            detections = _fallback_motion_targets(
+                cleaned, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
+            )
 
         for det in detections:
             delay_bin = int(det.get("delay_bin", 0))
