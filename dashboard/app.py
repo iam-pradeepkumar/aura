@@ -31,7 +31,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-12"
+PROCESSOR_VERSION = "2026.08.31-13"
 
 
 def load_config() -> dict:
@@ -79,35 +79,11 @@ def build_pipeline(fs_hz: float = 20.0, max_targets: int | None = None) -> AURAP
     )
 
 
-def align_results(results, video_duration_sec: float, n_frames: int, session_targets: list | None = None) -> list[dict]:
+def align_results(results, video_duration_sec: float, n_frames: int) -> list[dict]:
+    """Map each video frame to the nearest CSI sensing window by time."""
     if not results:
         return [{}] * n_frames
-    best = max(results, key=lambda r: (r.target_count, r.motion_energy))
-    if best.target_count == 0 and session_targets:
-        base = best
-        dets = [dict(s) for s in session_targets]
-        display = [
-            {
-                "id": i + 1,
-                "x_m": d["x_m"],
-                "y_m": d["y_m"],
-                "velocity_mps": d.get("velocity_mps", 0),
-                "acceleration_mps2": 0.0,
-                "is_moving": d.get("velocity_mps", 0) > 0.12,
-                "respiration_bpm": d.get("respiration_bpm", base.respiration_bpm),
-                "heartbeat_bpm": d.get("heartbeat_bpm", base.heartbeat_bpm),
-                "trajectory": [],
-            }
-            for i, d in enumerate(dets)
-        ]
-        best_dict = result_to_dict(best)
-        best_dict["target_count"] = len(dets)
-        best_dict["targets"] = display
-        return [best_dict] * n_frames
-    # Use best snapshot for all frames when it has targets (stable map/count)
-    if best.target_count > 0:
-        best_dict = result_to_dict(best)
-        return [best_dict] * n_frames
+
     t_max = max(r.timestamp_sec for r in results)
     t_scale = video_duration_sec / max(t_max, 1e-3)
     aligned = []
@@ -115,8 +91,7 @@ def align_results(results, video_duration_sec: float, n_frames: int, session_tar
         t_video = (fi / max(n_frames - 1, 1)) * video_duration_sec
         t_csi = t_video / t_scale if t_scale > 0 else t_video
         nearest = min(results, key=lambda r: abs(r.timestamp_sec - t_csi))
-        chosen = nearest if nearest.target_count >= best.target_count else best
-        aligned.append(result_to_dict(chosen))
+        aligned.append(result_to_dict(nearest))
     return aligned
 
 
@@ -202,10 +177,12 @@ async def upload_simulation(
             fs_hz = float(sample_rate)
 
         pipe = build_pipeline(fs_hz=fs_hz)
-        results = pipe.process_session(csi, timestamps_ms, video_duration_sec=duration)
-        aligned = align_results(results, duration, n_frames, session_targets=pipe._session_targets)
+        results = pipe.process_session(
+            csi, timestamps_ms, video_duration_sec=duration, video_path=str(video_path)
+        )
+        aligned = align_results(results, duration, n_frames)
+        assessment = pipe.session_assessment or {}
         events = [e for e in pipe.tracker.events if _event_in_duration(e, duration)]
-        best = max(results, key=lambda r: (r.target_count, r.motion_energy)) if results else None
     except Exception as exc:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -226,8 +203,8 @@ async def upload_simulation(
     )
     sessions[session_id] = session
 
-    preview = aligned[0] if aligned else {}
-    effective_count = preview.get("target_count", 0) or pipe.estimated_person_count or len(pipe._session_targets)
+    preview = aligned[len(aligned) // 2] if aligned else {}
+    effective_count = preview.get("target_count", 0)
     return {
         "session_id": session_id,
         "processor_version": PROCESSOR_VERSION,
@@ -239,7 +216,12 @@ async def upload_simulation(
         "subcarriers": int(csi.shape[1]),
         "sample_rate_hz": round(fs_hz, 2),
         "target_count": effective_count,
-        "csi_person_estimate": pipe.estimated_person_count or len(pipe._session_targets),
+        "csi_person_estimate": pipe.estimated_person_count,
+        "csi_fingerprint": assessment.get("csi_fingerprint", ""),
+        "sync_score": assessment.get("sync_score", 1.0),
+        "confidence": assessment.get("confidence", preview.get("confidence", 0)),
+        "reliable": assessment.get("reliable", True),
+        "warnings": assessment.get("warnings", []),
         "targets": preview.get("targets", []),
         "motion_detected": preview.get("motion_detected", False),
         "respiration_bpm": preview.get("respiration_bpm", 0),

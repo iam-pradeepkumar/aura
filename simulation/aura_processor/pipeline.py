@@ -8,14 +8,11 @@ import numpy as np
 from .srcc import srcc, motion_energy
 from .doppler import delay_doppler_map
 from .vitals import extract_vitals, extract_vitals_for_detections
+from .csi_quality import assess_session, detection_confidence
 from .multitarget import (
-    detect_and_localize,
     detect_multinode_targets,
     detect_session_targets,
-    estimate_person_count,
-    force_csi_targets,
     preprocess_csi,
-    _band_active_count,
 )
 from .localization import TargetTracker, Target
 
@@ -33,6 +30,7 @@ class SensingResult:
     heartbeat_waveform: np.ndarray | None = None
     delay_doppler_map: np.ndarray | None = None
     events: list[str] = field(default_factory=list)
+    confidence: float = 0.0
 
 
 class AURAPipeline:
@@ -57,10 +55,17 @@ class AURAPipeline:
         self.sensor_xy = (area_size_m / 2.0, 0.0)
         self._session_targets: list[dict] = []
         self.estimated_person_count: int = 0
+        self.session_confidence: float = 0.0
+        self.session_assessment: dict = {}
+        self._suppress_detections: bool = False
 
     def reset(self) -> None:
         self.tracker.reset()
         self._session_targets = []
+        self.estimated_person_count = 0
+        self.session_confidence = 0.0
+        self.session_assessment = {}
+        self._suppress_detections = False
 
     def _sensor_xy(self, node_id: int) -> tuple[float, float]:
         return self.node_positions.get(node_id, self.sensor_xy)
@@ -70,16 +75,11 @@ class AURAPipeline:
         csi: np.ndarray,
         sensor_xy: tuple[float, float] | None = None,
     ) -> None:
-        """Pre-compute stable CSI-only survivor positions from buffered packets."""
+        """Pre-compute CSI-only survivor positions from the full recording."""
         xy = sensor_xy or self.sensor_xy
         prepared = np.nan_to_num(srcc(preprocess_csi(csi)))
-        raw_motion = float(np.mean(motion_energy(np.nan_to_num(srcc(csi)))))
-        self.estimated_person_count = estimate_person_count(
-            prepared, raw_motion, self.motion_threshold, max_people=self.max_targets
-        )
-        if self.estimated_person_count == 0 and raw_motion >= self.motion_threshold:
-            band_n = _band_active_count(prepared, self.max_targets)
-            self.estimated_person_count = max(1, band_n if band_n > 0 else 1)
+        raw_motion = float(np.mean(motion_energy(prepared)))
+
         self._session_targets = detect_session_targets(
             csi,
             self.fs_hz,
@@ -87,37 +87,12 @@ class AURAPipeline:
             self.max_targets,
             xy,
             motion_threshold=self.motion_threshold,
-            expected_count=self.estimated_person_count,
             node_positions=self.node_positions,
         )
-        if len(self._session_targets) > self.estimated_person_count:
-            self.estimated_person_count = len(self._session_targets)
-        active_max = max(self.estimated_person_count, len(self._session_targets), 1)
-        if active_max <= 0:
-            active_max = self.max_targets
-        if not self._session_targets and raw_motion >= self.motion_threshold:
-            self._session_targets = force_csi_targets(
-                prepared, self.fs_hz, self.area_size_m, active_max, xy, raw_motion, self.motion_threshold
-            )
-        if self._session_targets and self.estimated_person_count > len(self._session_targets):
-            extra = force_csi_targets(
-                prepared, self.fs_hz, self.area_size_m,
-                self.estimated_person_count, xy, raw_motion, self.motion_threshold,
-            )
-            for e in extra:
-                if len(self._session_targets) >= self.estimated_person_count:
-                    break
-                if all(
-                    (e["x_m"] - s["x_m"]) ** 2 + (e["y_m"] - s["y_m"]) ** 2 > 1.8
-                    for s in self._session_targets
-                ):
-                    self._session_targets.append(e)
-            if len(self._session_targets) < self.estimated_person_count and extra:
-                for e in extra:
-                    if len(self._session_targets) >= self.estimated_person_count:
-                        break
-                    if e not in self._session_targets:
-                        self._session_targets.append(e)
+        self.estimated_person_count = len(self._session_targets)
+        self.session_confidence = detection_confidence(
+            self._session_targets, raw_motion, self.motion_threshold
+        )
 
     def process_window(
         self,
@@ -125,16 +100,15 @@ class AURAPipeline:
         timestamp_sec: float,
         node_id: int = 1,
     ) -> SensingResult:
-        sensor_xy = self._sensor_xy(node_id)
         prepared = preprocess_csi(csi_window)
         cleaned = np.nan_to_num(srcc(prepared))
-        m_energy = float(np.mean(motion_energy(np.nan_to_num(srcc(csi_window)))))
+        m_energy = float(np.mean(motion_energy(cleaned)))
         motion = m_energy > self.motion_threshold
 
         vitals = extract_vitals(cleaned, self.fs_hz)
         _, _, ddm = delay_doppler_map(cleaned, self.fs_hz)
 
-        if not motion and self.estimated_person_count == 0:
+        if not motion and not self._session_targets:
             return SensingResult(
                 timestamp_sec=timestamp_sec,
                 motion_detected=False,
@@ -147,61 +121,28 @@ class AURAPipeline:
                 heartbeat_waveform=vitals["heartbeat_waveform"],
                 delay_doppler_map=ddm,
                 events=list(self.tracker.events),
+                confidence=0.0,
             )
 
-        active_max = max(self.estimated_person_count, len(self._session_targets), 1)
-        if active_max <= 0:
-            active_max = self.max_targets
-        count_limit = self.estimated_person_count if self.estimated_person_count > 0 else None
         window_dets = detect_multinode_targets(
             cleaned,
             self.fs_hz,
             self.area_size_m,
             self.node_positions,
-            active_max,
+            self.max_targets,
             skip_srcc=True,
             motion_level=m_energy,
             motion_threshold=self.motion_threshold,
-            count_limit=count_limit,
         )
 
+        if self._suppress_detections:
+            window_dets = []
+
         detections = self._merge_session_and_window(window_dets)
+        conf = detection_confidence(detections, m_energy, self.motion_threshold)
 
-        if not detections and self._session_targets:
-            detections = [dict(s) for s in self._session_targets[: self.max_targets]]
-
-        if len(detections) > self.max_targets:
-            detections = sorted(
-                detections,
-                key=lambda d: -float(d.get("confidence", d.get("weight", 0))),
-            )[: self.max_targets]
-        if self.estimated_person_count > 0 and len(detections) > self.estimated_person_count:
-            detections = sorted(
-                detections,
-                key=lambda d: -float(d.get("confidence", d.get("weight", 0))),
-            )[: self.estimated_person_count]
-
-        # Motion confirmed but no peaks yet — retry with relaxed gates
-        if motion and not detections:
-            detections = detect_multinode_targets(
-                cleaned,
-                self.fs_hz,
-                self.area_size_m,
-                self.node_positions,
-                active_max,
-                skip_srcc=True,
-                motion_level=m_energy * 1.1,
-                motion_threshold=self.motion_threshold * 0.75,
-                count_limit=count_limit,
-            )
-
-        if motion and not detections:
-            detections = force_csi_targets(
-                cleaned, self.fs_hz, self.area_size_m, active_max, sensor_xy, m_energy, self.motion_threshold
-            )
-
-        if motion and not detections and self._session_targets:
-            detections = [dict(s) for s in self._session_targets[:active_max]]
+        if conf < 0.12:
+            detections = []
 
         per_vitals = extract_vitals_for_detections(cleaned, self.fs_hz, detections)
         for i, det in enumerate(detections):
@@ -246,8 +187,6 @@ class AURAPipeline:
 
         r_vals = [t.respiration_bpm for t in display_targets if t.respiration_bpm > 0]
         h_vals = [t.heartbeat_bpm for t in display_targets if t.heartbeat_bpm > 0]
-        resp_bpm = float(np.median(r_vals)) if r_vals else 0.0
-        hr_bpm = float(np.median(h_vals)) if h_vals else 0.0
 
         return SensingResult(
             timestamp_sec=timestamp_sec,
@@ -255,62 +194,55 @@ class AURAPipeline:
             motion_energy=m_energy,
             target_count=len(detections),
             targets=display_targets,
-            respiration_bpm=resp_bpm,
-            heartbeat_bpm=hr_bpm,
+            respiration_bpm=float(np.median(r_vals)) if r_vals else 0.0,
+            heartbeat_bpm=float(np.median(h_vals)) if h_vals else 0.0,
             respiration_waveform=None,
             heartbeat_waveform=None,
             delay_doppler_map=ddm,
             events=list(self.tracker.events),
+            confidence=conf,
         )
 
     @property
     def person_count_estimate(self) -> int:
-        return self.estimated_person_count or len(self._session_targets)
+        return len(self._session_targets)
 
     def _merge_session_and_window(self, window_dets: list[dict]) -> list[dict]:
-        if not self._session_targets:
+        """Prefer live window CSI detections; use session only to stabilize IDs."""
+        if window_dets:
             return window_dets[: self.max_targets]
-
-        merged: list[dict] = []
-        used_window: set[int] = set()
-
-        for sess in self._session_targets:
-            best = None
-            best_d = 2.5
-            for i, wd in enumerate(window_dets):
-                if i in used_window:
-                    continue
-                d = (wd["x_m"] - sess["x_m"]) ** 2 + (wd["y_m"] - sess["y_m"]) ** 2
-                if d < best_d:
-                    best_d = d
-                    best = (i, wd)
-
-            if best:
-                i, wd = best
-                used_window.add(i)
-                merged.append({
-                    **sess,
-                    "x_m": wd["x_m"],
-                    "y_m": wd["y_m"],
-                    "velocity_mps": wd.get("velocity_mps", sess.get("velocity_mps", 0)),
-                })
-            else:
-                merged.append(dict(sess))
-
-        for i, wd in enumerate(window_dets):
-            if i not in used_window and len(merged) < self.max_targets:
-                merged.append(wd)
-
-        return merged[: self.max_targets]
+        if self._session_targets and self.session_confidence >= 0.15:
+            return [dict(s) for s in self._session_targets[: self.max_targets]]
+        return []
 
     def process_session(
         self,
         csi: np.ndarray,
         timestamps_ms: np.ndarray,
         video_duration_sec: float | None = None,
+        video_path: str | None = None,
     ) -> list[SensingResult]:
         self.reset()
         self.set_session_targets(csi)
+
+        prepared = np.nan_to_num(srcc(preprocess_csi(csi)))
+        raw_motion = float(np.mean(motion_energy(prepared)))
+        self.session_assessment = assess_session(
+            csi,
+            video_path,
+            video_duration_sec or 1.0,
+            self._session_targets,
+            raw_motion,
+            self.motion_threshold,
+        )
+
+        if not self.session_assessment.get("reliable", True):
+            self._session_targets = []
+            self.estimated_person_count = 0
+            self.session_confidence = 0.0
+            self._suppress_detections = True
+        else:
+            self._suppress_detections = False
 
         results = []
         n = len(csi)
@@ -331,28 +263,6 @@ class AURAPipeline:
 
         if not results and n > 0:
             results.append(self.process_window(csi, 0.0))
-
-        # Ensure every frame carries session targets when motion was detected
-        if self._session_targets and results:
-            prepared = np.nan_to_num(srcc(preprocess_csi(csi)))
-            session_dets = [dict(s) for s in self._session_targets]
-            per_vitals = extract_vitals_for_detections(prepared, self.fs_hz, session_dets)
-            for i, det in enumerate(session_dets):
-                if i < len(per_vitals):
-                    det.update({
-                        "respiration_bpm": per_vitals[i].get("respiration_bpm", 0),
-                        "heartbeat_bpm": per_vitals[i].get("heartbeat_bpm", 0),
-                        "respiration_waveform": per_vitals[i].get("respiration_waveform"),
-                        "heartbeat_waveform": per_vitals[i].get("heartbeat_waveform"),
-                    })
-            for i, res in enumerate(results):
-                if res.target_count == 0:
-                    results[i] = self._result_from_detections(session_dets, res)
-            if all(r.target_count == 0 for r in results):
-                full = self.process_window(csi, 0.0)
-                if full.target_count == 0:
-                    full = self._result_from_detections(session_dets, full)
-                results[0] = full
 
         return results
 
@@ -385,4 +295,5 @@ class AURAPipeline:
             heartbeat_waveform=None,
             delay_doppler_map=base.delay_doppler_map,
             events=base.events,
+            confidence=base.confidence,
         )

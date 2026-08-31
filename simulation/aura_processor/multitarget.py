@@ -730,18 +730,7 @@ def _guaranteed_motion_targets(
             break
 
     while len(dets) < n_targets:
-        i = len(dets)
-        angle = -0.75 + (1.5 * i / max(n_targets - 1, 1))
-        r = 3.0 + i * 0.9
-        dets.append({
-            "x_m": float(np.clip(sx + r * np.sin(angle), 0.8, area_size_m - 0.8)),
-            "y_m": float(np.clip(sy + r * np.cos(angle), 0.8, area_size_m - 0.8)),
-            "velocity_mps": 0.0,
-            "weight": med,
-            "confidence": med * 0.4,
-            "delay_bin": 0,
-            "dt": 1.0 / fs_hz,
-        })
+        break  # never invent synthetic positions — only real CSI sources
 
     centroids = cluster_xy([(p["x_m"], p["y_m"]) for p in dets], eps=CLUSTER_EPS_M, max_clusters=n_targets)
     merged: list[dict] = []
@@ -982,12 +971,9 @@ def localize_motion_sources(
         residual[lo:hi] = 0
 
     if not raw:
-        return force_csi_targets(
-            cleaned, fs_hz, area_size_m, max(1, count_limit or 1),
-            sensor_xy, motion_level, motion_threshold,
-        )
+        return []
 
-    eps = adaptive_cluster_eps(max(len(raw), count_limit or max_targets), area_size_m)
+    eps = adaptive_cluster_eps(max(len(raw), 1), area_size_m)
     centroids = cluster_xy([(p["x_m"], p["y_m"]) for p in raw], eps=eps, max_clusters=max_targets)
     merged: list[dict] = []
     for cx, cy in centroids:
@@ -1006,18 +992,8 @@ def localize_motion_sources(
         merged.append(d)
 
     merged.sort(key=lambda d: -d.get("confidence", 0))
-    limit = count_limit if count_limit and count_limit > 0 else max_targets
-    out = filter_confident_detections(merged, cleaned, gates["min_score"] * 0.65, limit)
-    if count_limit and len(out) < count_limit and merged:
-        seen = {(round(d["x_m"], 1), round(d["y_m"], 1)) for d in out}
-        for d in merged:
-            if len(out) >= count_limit:
-                break
-            key = (round(d["x_m"], 1), round(d["y_m"], 1))
-            if key not in seen:
-                out.append(d)
-                seen.add(key)
-    return out
+    limit = max_targets
+    return filter_confident_detections(merged, cleaned, gates["min_score"] * 0.65, limit)
 
 
 def _stabilize_positions(dets: list[dict], area_size_m: float) -> list[dict]:
@@ -1156,14 +1132,10 @@ def detect_session_targets(
         )
         if fallback:
             return fallback
-        return force_csi_targets(
-            cleaned, fs_hz, area_size_m, active_max, sensor_xy, m_level, motion_threshold
-        )
+        return []
 
     if not window_hits:
-        return force_csi_targets(
-            cleaned, fs_hz, area_size_m, active_max, sensor_xy, m_level, motion_threshold
-        )
+        return []
 
     all_points: list[dict] = [d for group in window_hits for d in group]
     centroids = cluster_xy(
@@ -1211,25 +1183,5 @@ def detect_session_targets(
         return localize_motion_sources(
             cleaned, fs_hz, area_size_m, active_max, ref_xy,
             skip_srcc=True, motion_level=m_level, motion_threshold=motion_threshold,
-            count_limit=estimated if estimated > 0 else None,
         )
-    final_n = _resolve_target_count(
-        session_dets, cleaned, m_level, motion_threshold, max_targets, expected_count
-    )
-    session_dets = _stabilize_positions(session_dets[:max(final_n, 1)], area_size_m)
-    if len(session_dets) < final_n and m_level >= motion_threshold:
-        extra = localize_motion_sources(
-            cleaned, fs_hz, area_size_m, final_n, ref_xy,
-            skip_srcc=True, motion_level=m_level * 1.05,
-            motion_threshold=motion_threshold * 0.8,
-            count_limit=final_n,
-        )
-        for e in extra:
-            if len(session_dets) >= final_n:
-                break
-            if all(
-                (e["x_m"] - s["x_m"]) ** 2 + (e["y_m"] - s["y_m"]) ** 2 > 1.5 ** 2
-                for s in session_dets
-            ):
-                session_dets.append(e)
-    return session_dets[:max(final_n, 1)]
+    return _stabilize_positions(session_dets, area_size_m)

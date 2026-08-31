@@ -37,6 +37,7 @@ def result_to_dict(res: SensingResult, include_waveforms: bool = True) -> dict:
         "motion_detected": res.motion_detected,
         "motion_energy": round(res.motion_energy, 5),
         "target_count": res.target_count,
+        "confidence": round(getattr(res, "confidence", 0.0), 3),
         "respiration_bpm": round(res.respiration_bpm, 1),
         "heartbeat_bpm": round(res.heartbeat_bpm, 1),
         "targets": [target_to_dict(t) for t in res.targets],

@@ -235,6 +235,7 @@ document.getElementById("btn-run-simulation").onclick = async () => {
 
   status.textContent = "Processing…";
   selectedPerson.sim = null;
+  lastSensing.sim = null;
   const form = new FormData();
   form.append("video", videoFile);
   form.append("csi", csiFile);
@@ -250,9 +251,15 @@ document.getElementById("btn-run-simulation").onclick = async () => {
 
     simSessionId = json.session_id;
     simFps = json.fps || 30;
-    status.textContent = `${json.csi_frames} CSI @ ${json.sample_rate_hz}Hz · CSI-only · v${json.processor_version || "?"}`;
+    const warn = (json.warnings || []).join(" ");
+    const fp = json.csi_fingerprint ? ` · CSI ${json.csi_fingerprint}` : "";
+    const sync = json.sync_score != null ? ` · sync ${(json.sync_score * 100).toFixed(0)}%` : "";
+    status.textContent = `${json.csi_frames} CSI @ ${json.sample_rate_hz}Hz · v${json.processor_version || "?"}${fp}${sync}`;
+    if (warn) status.textContent += ` — ${warn}`;
     document.getElementById("sim-meta").textContent =
-      `${json.duration_sec}s · ${json.n_frames} frames · CSI count ${json.csi_person_estimate ?? json.target_count ?? 0}`;
+      `${json.duration_sec}s · ${json.n_frames} frames · count ${json.target_count ?? 0}` +
+      (json.confidence != null ? ` · conf ${(json.confidence * 100).toFixed(0)}%` : "") +
+      (json.reliable === false ? " · ⚠ mismatch/low confidence" : "");
     document.getElementById("sim-events").innerHTML =
       (json.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
 
