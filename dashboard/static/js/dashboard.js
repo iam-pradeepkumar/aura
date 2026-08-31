@@ -233,7 +233,7 @@ function bindFileLabel(input, labelEl) {
   input.addEventListener("change", () => {
     const f = input.files?.[0];
     labelEl.textContent = f ? f.name : "No file chosen";
-    labelEl.classList.toggle("text-emerald-400", !!f);
+    labelEl.classList.toggle("chosen", !!f);
   });
 }
 bindFileLabel(videoInput, videoNameEl);

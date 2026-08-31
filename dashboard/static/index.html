@@ -7,7 +7,7 @@
   <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="stylesheet" href="/static/css/style.css?v=15" />
 </head>
 <body class="bg-slate-950 text-slate-100 overflow-hidden h-screen flex flex-col">
   <header class="shrink-0 border-b border-slate-800 bg-slate-900 px-4 py-2 flex items-center justify-between">
@@ -25,41 +25,52 @@
   <main id="panel-simulation" class="panel flex-1 min-h-0 p-2 grid-dashboard-sim">
     <!-- Row 1: upload | video | stats -->
     <div class="card compact upload-card">
-      <h2 class="card-title">Upload</h2>
-      <p class="upload-hint">One dataset — synchronized 3s sample: video + raw CSI (.mat) + preprocessed amp (.npy)</p>
+      <h2 class="card-title">Upload dataset</h2>
 
-      <div class="upload-fields">
-        <label class="upload-field">
-          <span class="upload-label">1. Scene video</span>
-          <span class="upload-formats">.mp4 — visual reference / ground truth</span>
+      <div class="upload-scroll">
+        <div class="upload-row">
+          <div class="upload-row-head">
+            <span class="upload-row-num">1</span>
+            <span class="upload-row-title">Scene video</span>
+            <span class="upload-row-tag">.mp4</span>
+          </div>
           <input type="file" id="sim-video" accept="video/*,.mp4,.mov,.avi,.mkv,.webm" class="file-input" />
-          <span id="sim-video-name" class="upload-filename">No file chosen</span>
-        </label>
+          <span id="sim-video-name" class="upload-row-file">No file chosen</span>
+        </div>
 
-        <label class="upload-field">
-          <span class="upload-label">2. Raw CSI (.mat)</span>
-          <span class="upload-formats">complex amplitude + phase · ~3000×30</span>
+        <div class="upload-row">
+          <div class="upload-row-head">
+            <span class="upload-row-num">2</span>
+            <span class="upload-row-title">Raw CSI</span>
+            <span class="upload-row-tag">.mat</span>
+          </div>
           <input type="file" id="sim-csi-mat" accept=".mat,.MAT" class="file-input" />
-          <span id="sim-csi-mat-name" class="upload-filename">No file chosen</span>
-        </label>
+          <span id="sim-csi-mat-name" class="upload-row-file">No file chosen</span>
+        </div>
 
-        <label class="upload-field">
-          <span class="upload-label">3. Preprocessed CSI (.npy)</span>
-          <span class="upload-formats">amplitude only (phase discarded) · same session</span>
+        <div class="upload-row">
+          <div class="upload-row-head">
+            <span class="upload-row-num">3</span>
+            <span class="upload-row-title">Preprocessed amp</span>
+            <span class="upload-row-tag">.npy</span>
+          </div>
           <input type="file" id="sim-csi-npy" accept=".npy,.NPY" class="file-input" />
-          <span id="sim-csi-npy-name" class="upload-filename">No file chosen</span>
-        </label>
+          <span id="sim-csi-npy-name" class="upload-row-file">No file chosen</span>
+        </div>
 
-        <label class="upload-field upload-field-compact">
-          <span class="upload-label">Sample rate (optional)</span>
-          <span class="upload-formats">Hz — auto ~1000 from .mat if blank</span>
-          <input type="number" id="sim-fs" placeholder="e.g. 1000" class="file-input" step="0.1" />
-        </label>
+        <div class="upload-row upload-row-last">
+          <div class="upload-row-head">
+            <span class="upload-row-num">·</span>
+            <span class="upload-row-title">Sample rate</span>
+            <span class="upload-row-tag">Hz</span>
+          </div>
+          <input type="number" id="sim-fs" placeholder="auto (~1000)" class="file-input" step="0.1" />
+        </div>
       </div>
 
       <div class="upload-actions">
-        <button id="btn-run-simulation" class="btn-primary w-full text-sm py-2">Run Simulation</button>
-        <p id="sim-status" class="text-xs mt-1 text-slate-500 truncate"></p>
+        <button id="btn-run-simulation" type="button" class="btn-primary btn-run">Run Simulation</button>
+        <p id="sim-status" class="upload-status"></p>
       </div>
     </div>
 
@@ -119,6 +130,6 @@
     </div>
   </main>
 
-  <script src="/static/js/dashboard.js"></script>
+  <script src="/static/js/dashboard.js?v=15"></script>
 </body>
 </html>

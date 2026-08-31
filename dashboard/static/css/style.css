@@ -70,40 +70,114 @@ html, body { height: 100%; margin: 0; font-family: "Inter", system-ui, sans-seri
   line-height: 1.35;
 }
 
-.upload-field {
-  display: block;
-  margin-bottom: 0.35rem;
-  cursor: pointer;
-}
-
-.upload-field-compact {
-  margin-bottom: 0.2rem;
-}
-
+/* Upload card — fixed structure: scrollable rows + pinned run button */
 .upload-card {
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
+  padding-bottom: 0.35rem !important;
 }
 
-.upload-fields {
-  flex: 1;
+.upload-scroll {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-right: 0.15rem;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 2px;
+}
+
+.upload-row {
+  flex-shrink: 0;
+  margin-bottom: 0.45rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid #1e293b;
+}
+
+.upload-row-last {
   margin-bottom: 0.25rem;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.upload-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.2rem;
+}
+
+.upload-row-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  background: #1e293b;
+  color: #94a3b8;
+  font-size: 0.55rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.upload-row-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-row-tag {
+  font-size: 0.58rem;
+  color: #64748b;
+  background: #020617;
+  border: 1px solid #334155;
+  border-radius: 0.25rem;
+  padding: 0.05rem 0.3rem;
+  flex-shrink: 0;
+}
+
+.upload-row-file {
+  display: block;
+  font-size: 0.58rem;
+  color: #38bdf8;
+  margin-top: 0.15rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 0.85rem;
+  line-height: 1.2;
+}
+
+.upload-row-file.chosen {
+  color: #34d399;
 }
 
 .upload-actions {
+  flex: 0 0 auto;
   flex-shrink: 0;
-  margin-top: auto;
-  padding-top: 0.35rem;
-  border-top: 1px solid #1e293b;
-  background: #0f172a;
+  margin-top: 0.35rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid #334155;
 }
 
-.upload-actions .btn-primary {
-  min-height: 2rem;
-  font-weight: 600;
+.btn-run {
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.upload-status {
+  margin: 0.25rem 0 0;
+  font-size: 0.58rem;
+  color: #64748b;
+  line-height: 1.25;
+  max-height: 2.5rem;
+  overflow: hidden;
 }
 
 .upload-label {
@@ -138,8 +212,8 @@ html, body { height: 100%; margin: 0; font-family: "Inter", system-ui, sans-seri
 /* Simulation: 4 columns — upload|video(span2)|stats, then map|targets|resp|hr, events */
 .grid-dashboard-sim {
   display: grid;
-  grid-template-columns: 0.85fr 1.1fr 0.75fr 0.75fr;
-  grid-template-rows: minmax(0, 30%) minmax(0, 56%) minmax(0, 14%);
+  grid-template-columns: minmax(200px, 0.95fr) 1.05fr 0.7fr 0.7fr;
+  grid-template-rows: minmax(260px, 40%) minmax(0, 50%) minmax(52px, 10%);
   gap: 0.4rem;
 }
 .grid-dashboard-sim .span-2 { grid-column: span 2; }
