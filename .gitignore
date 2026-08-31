@@ -28,3 +28,4 @@ dashboard/uploads/*
 .DS_Store
 Thumbs.db
 agent-tools/
+simulation/wimans/models/wimans_sensing.pt
