@@ -18,7 +18,7 @@ SIM_DIR = ROOT / "simulation"
 sys.path.insert(0, str(SIM_DIR))
 
 from aura_processor import AURAPipeline, load_csi_mat, load_csi_npy, merge_csi_mat_npy  # noqa: E402
-from aura_processor.multitarget import estimate_count_from_amplitude  # noqa: E402
+from aura_processor.multitarget import estimate_count_from_amplitude, trim_csi_to_video  # noqa: E402
 from aura_processor.serialize import result_to_dict, target_to_dict  # noqa: E402
 from aura_processor.hardware_state import NodePipelineState, fuse_multinode_targets  # noqa: E402
 from aura_processor.wireless import WirelessReceiver, DEFAULT_UDP_PORT  # noqa: E402
