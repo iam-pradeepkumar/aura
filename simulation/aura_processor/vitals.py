@@ -145,7 +145,7 @@ def extract_vitals_for_detections(
 ) -> list[dict]:
     """
     Extract isolated respiration/heartbeat for each detected person.
-    Uses SVD motion sources and staggered subcarrier bands to avoid blending.
+    Matches SVD motion sources to detections by delay_bin proximity.
     """
     if not detections:
         return []
@@ -154,12 +154,32 @@ def extract_vitals_for_detections(
     n_targets = len(detections)
     sources = _svd_phase_sources(csi, n_targets)
     results: list[dict] = []
+    used_sources: set[int] = set()
 
     for i, det in enumerate(detections):
         delay_bin = int(det.get("delay_bin", 0))
-        if i < len(sources):
-            comp = sources[i]
-            pseudo = np.exp(1j * np.angle(comp))
+        src_idx = int(det.get("source_id", -1))
+        best_src = None
+        best_dist = 999
+
+        if 0 <= src_idx < len(sources) and src_idx not in used_sources:
+            best_src = sources[src_idx]
+            best_dist = 0
+        else:
+            for si, comp in enumerate(sources):
+                if si in used_sources:
+                    continue
+                prof = np.abs(np.fft.ifft(np.exp(1j * np.angle(comp)), axis=1)).mean(axis=0)
+                peak = int(np.argmax(prof))
+                dist = abs(peak - delay_bin)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_src = comp
+                    src_idx = si
+
+        if best_src is not None and src_idx >= 0:
+            used_sources.add(src_idx)
+            pseudo = np.exp(1j * np.angle(best_src))
             v = extract_vitals(pseudo, fs_hz, motion_cutoff_hz=1.35 if fs_hz < 100 else 2.0)
         else:
             band_w = max(6, n_sc // max(n_targets * 2, 4))

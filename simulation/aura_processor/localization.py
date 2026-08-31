@@ -110,4 +110,5 @@ def multinode_localize(
     if not xs:
         return 0.0, 0.0
     xs, ys, ws = np.array(xs), np.array(ys), np.array(ws)
-    return float(np.average(xs, weights=ws)), float(np.average(ys, weights=ws))
+    ws = ws / (ws.sum() + 1e-9)
+    return float(np.sum(xs * ws)), float(np.sum(ys * ws))
