@@ -31,7 +31,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-16"
+PROCESSOR_VERSION = "2026.08.31-17"
 
 
 def load_config() -> dict:
@@ -164,6 +164,17 @@ async def upload_simulation(
             shutil.copyfileobj(csi_mat.file, f)
         with npy_path.open("wb") as f:
             shutil.copyfileobj(csi_npy.file, f)
+
+        for label, p, min_bytes in (
+            ("Video", video_path, 1024),
+            ("CSI .mat", mat_path, 512),
+            ("CSI .npy", npy_path, 128),
+        ):
+            if p.stat().st_size < min_bytes:
+                raise ValueError(
+                    f"{label} file looks incomplete ({p.stat().st_size} bytes). "
+                    "Re-select the file and try again."
+                )
 
         mat_data = load_csi_mat(mat_path, sample_rate_hz=sample_rate)
         npy_data = load_csi_npy(npy_path, sample_rate_hz=sample_rate)

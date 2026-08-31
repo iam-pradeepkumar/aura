@@ -18,7 +18,7 @@ HEADER_SIZE = struct.calcsize(HEADER_FMT)
 AMP_KEYS = ("amplitude", "csi_amp", "csi_amplitude", "amp", "A", "magnitude", "mag")
 PHASE_KEYS = ("phase", "csi_phase", "ph", "P", "angle", "csi_angle", "phase_rad")
 CSI_KEYS = (
-    "csi", "CSI", "data", "H", "csi_data", "cfm", "csi_all", "wifi_csi",
+    "trace", "csi", "CSI", "data", "H", "csi_data", "cfm", "csi_all", "wifi_csi",
     "csi_complex", "channel_state", "cfm_data",
 )
 TIMESTAMP_KEYS = ("timestamp_ms", "timestamps_ms", "timestamp", "timestamps", "ts", "time", "t")
@@ -176,15 +176,104 @@ def _pack_load_result(
     }
 
 
+def _normalize_amplitude_csi(arr: np.ndarray) -> np.ndarray:
+    """Collapse WiMANS-style (T, rx, tx, sc) amplitude arrays to (T, subcarriers)."""
+    a = np.asarray(arr)
+    if np.iscomplexobj(a):
+        a = np.abs(a)
+    a = np.asarray(a, dtype=np.float64)
+    if a.ndim == 1:
+        return a.reshape(1, -1)
+    if a.ndim == 2:
+        return a
+    if a.shape[-1] <= 128:
+        flat_ant = a.reshape(a.shape[0], -1, a.shape[-1])
+        return np.mean(flat_ant, axis=1)
+    return a.reshape(a.shape[0], -1)
+
+
+def _wimans_extract_packet(cell: object) -> np.ndarray | None:
+    """Extract one WiMANS trace cell: trace[t][0][0][0][-1] (complex subcarriers)."""
+    cur = cell
+    for _ in range(10):
+        if isinstance(cur, np.ndarray):
+            if cur.dtype == object:
+                if cur.size == 0:
+                    return None
+                if cur.ndim >= 4:
+                    try:
+                        pkt = cur[0][0][0][-1]
+                        return np.asarray(pkt, dtype=np.complex128)
+                    except (IndexError, TypeError, ValueError):
+                        pass
+                cur = cur.flat[0]
+                continue
+            return np.asarray(cur, dtype=np.complex128)
+        if isinstance(cur, (list, tuple)):
+            if not cur:
+                return None
+            cur = cur[0]
+            continue
+        break
+    try:
+        return np.asarray(cur, dtype=np.complex128)
+    except (TypeError, ValueError):
+        return None
+
+
+def _load_wimans_trace(meta: dict) -> tuple[np.ndarray | None, dict]:
+    """Parse WiMANS / Intel-style nested `trace` cell arrays into (packets, subcarriers)."""
+    if "trace" not in meta:
+        return None, {}
+    trace = np.asarray(meta["trace"], dtype=object)
+    if trace.size == 0:
+        return None, {}
+
+    packets: list[np.ndarray] = []
+    for t in range(trace.shape[0]):
+        cell = trace[t]
+        pkt: np.ndarray | None = None
+        if isinstance(cell, np.ndarray) and cell.dtype != object:
+            pkt = np.asarray(cell, dtype=np.complex128)
+        else:
+            pkt = _wimans_extract_packet(cell)
+        if pkt is None:
+            continue
+        pkt = np.asarray(pkt, dtype=np.complex128).squeeze()
+        if pkt.ndim == 0:
+            continue
+        while pkt.ndim > 1:
+            pkt = pkt[-1]
+        packets.append(pkt.astype(np.complex64))
+
+    if not packets:
+        return None, {}
+
+    sc = max(p.shape[-1] for p in packets)
+    rows: list[np.ndarray] = []
+    for p in packets:
+        if p.shape[-1] < sc:
+            p = np.pad(p, (0, sc - p.shape[-1]), mode="edge")
+        rows.append(p[:sc])
+    csi = np.stack(rows, axis=0)
+    info = {
+        "source_field": "trace",
+        "format": "wimans",
+        "loader": "wimans_trace",
+        "n_frames": int(csi.shape[0]),
+        "n_subcarriers": int(csi.shape[1]),
+        "has_phase": bool(np.std(np.angle(csi)) > 1e-4),
+    }
+    return csi, info
+
+
 def _align_csi_pair(
     mat_csi: np.ndarray,
     npy_amp: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Trim/pad mat and npy amplitude arrays to a common (frames, subcarriers) shape."""
     mat_csi = np.asarray(mat_csi)
-    npy_amp = np.asarray(npy_amp, dtype=np.float64)
-    if np.iscomplexobj(npy_amp):
-        npy_amp = np.abs(npy_amp)
+    npy_amp = _normalize_amplitude_csi(npy_amp)
 
     n_frames = min(mat_csi.shape[0], npy_amp.shape[0])
     sc = min(mat_csi.shape[1], npy_amp.shape[1])
@@ -299,6 +388,9 @@ def load_csi_npy(path: str | Path, sample_rate_hz: float | None = None) -> dict:
             else:
                 meta = {"meta": meta_obj}
 
+    if not np.iscomplexobj(arr) and getattr(arr, "ndim", 0) >= 3:
+        arr = _normalize_amplitude_csi(arr)
+
     csi, orient_info = _to_complex_2d(arr)
     return _pack_load_result(
         csi, orient_info, meta, len(csi), sample_rate_hz, str(path),
@@ -321,20 +413,49 @@ def load_csi_npz(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     )
 
 
+def _file_head(path: Path, n: int = 32) -> bytes:
+    with path.open("rb") as f:
+        return f.read(n)
+
+
+def _find_hdf5_offset(path: Path, limit: int = 8192) -> int | None:
+    data = path.read_bytes()[:limit]
+    idx = data.find(b"\x89HDF\r\n\x1a\n")
+    return idx if idx >= 0 else None
+
+
 def _mat_file_kind(path: Path) -> str:
     """
     Classify .mat files:
     - mat73: MATLAB 7.3 HDF5-based .mat
     - hdf5: plain HDF5 saved with .mat extension
     - scipy: MATLAB v4/v5/v6/v7.2
+  - gzip / npy: misnamed files
     """
-    with path.open("rb") as f:
-        head = f.read(128)
+    head = _file_head(path, 128)
     if head.startswith(b"\x89HDF\r\n"):
         return "hdf5"
-    if head.startswith(b"MATLAB 7.3") or (len(head) > 125 and head[124:126] == b"\x00\x02"):
+    if head.startswith(b"MATLAB 7.3"):
         return "mat73"
-    return "scipy"
+    if head.startswith(b"\x1f\x8b"):
+        return "gzip"
+    if head.startswith(b"\x93NUMPY"):
+        return "npy"
+
+    try:
+        from scipy.io.matlab._miobase import _get_matfile_version
+
+        with path.open("rb") as f:
+            mjv, _mnv = _get_matfile_version(f)
+        if mjv == 2:
+            return "mat73"
+        if mjv in (0, 1):
+            return "scipy"
+    except ValueError:
+        if _find_hdf5_offset(path) is not None:
+            return "hdf5"
+
+    return "unknown"
 
 
 def _is_hdf5_file(path: Path) -> bool:
@@ -388,44 +509,92 @@ def _flatten_mat_meta(meta: dict, prefix: str = "") -> dict:
 
 def _load_mat_h5(path: Path) -> dict:
     """MATLAB v7.3 HDF5 .mat files and plain HDF5 CSI exports."""
+    mat73_err: Exception | None = None
     if _mat_file_kind(path) == "mat73":
         try:
             import mat73
 
             return mat73.loadmat(str(path))
-        except Exception:
-            pass
+        except Exception as exc:
+            mat73_err = exc
 
     import h5py
 
-    meta: dict = {}
-    with h5py.File(path, "r") as f:
-        for key in f.keys():
-            if key.startswith("#"):
-                continue
-            meta[key] = _h5_read_node(f[key])
+    try:
+        meta: dict = {}
+        with h5py.File(path, "r") as f:
+            for key in f.keys():
+                if key.startswith("#"):
+                    continue
+                meta[key] = _h5_read_node(f[key])
+        if meta:
+            return meta
+    except OSError as exc:
+        hint = (
+            f"Cannot read {path.name} as HDF5 ({path.stat().st_size} bytes, "
+            f"header {_file_head(path)!r}). "
+        )
+        if mat73_err:
+            hint += f"mat73: {mat73_err}. "
+        hint += (
+            "Ensure the file is a valid WiMANS/CSI .mat (MATLAB v5–v7.2) or re-export it. "
+            f"h5py: {exc}"
+        )
+        raise ValueError(hint) from exc
 
-    if not meta:
-        raise ValueError(f"No variables found in HDF5 file {path.name}")
-    return meta
+    raise ValueError(f"No variables found in HDF5 file {path.name}")
 
 
 def _load_mat_meta(path: Path) -> dict:
     kind = _mat_file_kind(path)
+
+    if kind == "gzip":
+        import gzip
+        import tempfile
+
+        with gzip.open(path, "rb") as gz:
+            raw = gz.read()
+        with tempfile.NamedTemporaryFile(suffix=".mat", delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = Path(tmp.name)
+        try:
+            return _load_mat_meta(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+
+    if kind == "npy":
+        raise ValueError(f"{path.name} is a NumPy .npy file — upload it as the .npy field, not .mat")
+
     if kind in ("hdf5", "mat73"):
         return _load_mat_h5(path)
 
     from scipy.io import loadmat
 
-    try:
-        mat = loadmat(path, squeeze_me=True, struct_as_record=False)
-        return {k: v for k, v in mat.items() if not k.startswith("__")}
-    except NotImplementedError:
-        return _load_mat_h5(path)
-    except ValueError as exc:
-        if "Unknown mat file type" in str(exc):
+    errors: list[str] = []
+    for kwargs in (
+        {"squeeze_me": True, "struct_as_record": False, "simplify_cells": True},
+        {"squeeze_me": True, "struct_as_record": True},
+    ):
+        try:
+            mat = loadmat(path, **kwargs)
+            return {k: v for k, v in mat.items() if not k.startswith("__")}
+        except NotImplementedError:
             return _load_mat_h5(path)
-        raise
+        except Exception as exc:
+            errors.append(str(exc))
+
+    if _find_hdf5_offset(path) is not None:
+        try:
+            return _load_mat_h5(path)
+        except Exception as exc:
+            errors.append(str(exc))
+
+    raise ValueError(
+        f"Cannot read MATLAB file {path.name} ({path.stat().st_size} bytes). "
+        f"Header: {_file_head(path)!r}. "
+        f"WiMANS .mat files should load with SciPy — verify the upload is complete. "
+        f"Errors: {'; '.join(errors)}"
+    )
 
 
 def load_csi_mat(path: str | Path, sample_rate_hz: float | None = None) -> dict:
@@ -444,6 +613,13 @@ def load_csi_mat(path: str | Path, sample_rate_hz: float | None = None) -> dict:
             raise primary_exc
         except Exception:
             raise primary_exc from None
+
+    wimans_csi, wimans_info = _load_wimans_trace(meta)
+    if wimans_csi is not None:
+        return _pack_load_result(
+            wimans_csi, wimans_info, meta, len(wimans_csi), sample_rate_hz, str(path),
+            source_field="trace",
+        )
 
     raw, source_field = _find_csi_array(meta)
     if raw is None:
