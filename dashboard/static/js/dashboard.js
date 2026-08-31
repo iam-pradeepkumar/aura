@@ -154,17 +154,15 @@ document.getElementById("btn-run-simulation").onclick = async () => {
       (json.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
 
     // Show results immediately (don't wait for video timeupdate)
-    if (json.targets?.length) {
-      updateSensingUI("sim", {
-        target_count: json.target_count,
-        motion_detected: json.motion_detected,
-        respiration_bpm: json.respiration_bpm,
-        heartbeat_bpm: json.heartbeat_bpm,
-        targets: json.targets,
-        respiration_waveform: [],
-        heartbeat_waveform: [],
-      }, config.node_positions, config.area_size_m);
-    }
+    updateSensingUI("sim", {
+      target_count: json.target_count ?? json.csi_person_estimate ?? 0,
+      motion_detected: json.motion_detected,
+      respiration_bpm: json.respiration_bpm,
+      heartbeat_bpm: json.heartbeat_bpm,
+      targets: json.targets || [],
+      respiration_waveform: [],
+      heartbeat_waveform: [],
+    }, config.node_positions, config.area_size_m);
 
     videoEl.src = `/api/simulation/${simSessionId}/video`;
     videoEl.load();
@@ -183,7 +181,7 @@ document.getElementById("btn-run-simulation").onclick = async () => {
     fetch(`/api/simulation/${simSessionId}/frame?index=0`)
       .then((r) => r.json())
       .then((fr) => {
-        if (fr.data?.targets?.length) {
+        if (fr.data) {
           updateSensingUI("sim", fr.data, fr.node_positions, fr.area_size_m);
         }
       })

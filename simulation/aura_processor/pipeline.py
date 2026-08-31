@@ -8,7 +8,13 @@ import numpy as np
 from .srcc import srcc, motion_energy
 from .doppler import delay_doppler_map
 from .vitals import extract_vitals, extract_vitals_for_target
-from .multitarget import detect_and_localize, detect_session_targets, estimate_person_count, preprocess_csi
+from .multitarget import (
+    detect_and_localize,
+    detect_session_targets,
+    estimate_person_count,
+    force_csi_targets,
+    preprocess_csi,
+)
 from .localization import TargetTracker, Target
 
 
@@ -70,7 +76,7 @@ class AURAPipeline:
             prepared, raw_motion, self.motion_threshold, max_people=self.max_targets
         )
         if self.estimated_person_count == 0 and raw_motion >= self.motion_threshold:
-            self.estimated_person_count = 1
+            self.estimated_person_count = max(1, min(self.max_targets, 2))
         active_max = self.estimated_person_count if self.estimated_person_count > 0 else self.max_targets
         self._session_targets = detect_session_targets(
             csi,
@@ -79,7 +85,12 @@ class AURAPipeline:
             active_max,
             xy,
             motion_threshold=self.motion_threshold,
+            expected_count=self.estimated_person_count,
         )
+        if not self._session_targets and raw_motion >= self.motion_threshold:
+            self._session_targets = force_csi_targets(
+                prepared, self.fs_hz, self.area_size_m, active_max, xy, raw_motion, self.motion_threshold
+            )
 
     def process_window(
         self,
@@ -146,8 +157,16 @@ class AURAPipeline:
                 skip_srcc=True,
                 require_motion=True,
                 motion_level=m_energy * 1.1,
-                motion_threshold=self.motion_threshold * 0.8,
+                motion_threshold=self.motion_threshold * 0.75,
             )
+
+        if motion and not detections:
+            detections = force_csi_targets(
+                cleaned, self.fs_hz, self.area_size_m, active_max, sensor_xy, m_energy, self.motion_threshold
+            )
+
+        if motion and not detections and self._session_targets:
+            detections = [dict(s) for s in self._session_targets[:active_max]]
 
         for det in detections:
             delay_bin = int(det.get("delay_bin", 0))
@@ -279,4 +298,43 @@ class AURAPipeline:
         if not results and n > 0:
             results.append(self.process_window(csi, 0.0))
 
+        # Ensure every frame carries session targets when motion was detected
+        if self._session_targets and results:
+            session_dets = [dict(s) for s in self._session_targets]
+            for i, res in enumerate(results):
+                if res.target_count == 0:
+                    results[i] = self._result_from_detections(session_dets, res)
+            if all(r.target_count == 0 for r in results):
+                full = self.process_window(csi, 0.0)
+                if full.target_count == 0:
+                    full = self._result_from_detections(session_dets, full)
+                results[0] = full
+
         return results
+
+    def _result_from_detections(self, detections: list[dict], base: SensingResult) -> SensingResult:
+        display = [
+            Target(
+                id=i + 1,
+                x_m=d["x_m"],
+                y_m=d["y_m"],
+                velocity_mps=d.get("velocity_mps", 0),
+                respiration_bpm=d.get("respiration_bpm", base.respiration_bpm),
+                heartbeat_bpm=d.get("heartbeat_bpm", base.heartbeat_bpm),
+                is_moving=d.get("velocity_mps", 0) > 0.12,
+            )
+            for i, d in enumerate(detections)
+        ]
+        return SensingResult(
+            timestamp_sec=base.timestamp_sec,
+            motion_detected=base.motion_detected or bool(detections),
+            motion_energy=base.motion_energy,
+            target_count=len(detections),
+            targets=display,
+            respiration_bpm=base.respiration_bpm,
+            heartbeat_bpm=base.heartbeat_bpm,
+            respiration_waveform=base.respiration_waveform,
+            heartbeat_waveform=base.heartbeat_waveform,
+            delay_doppler_map=base.delay_doppler_map,
+            events=base.events,
+        )
