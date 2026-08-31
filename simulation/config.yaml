@@ -15,3 +15,9 @@ tx_position: [5.0, -2.0]
 
 # WiFi channel (must match firmware AURA_WIFI_CHANNEL)
 wifi_channel: 6
+
+# Live hardware CSI buffering
+hardware:
+  min_packets: 64        # packets before first detection
+  window_packets: 128    # CSI window size per analysis
+  refresh_every: 32      # recompute session targets every N updates

@@ -1,10 +1,8 @@
-"""AURA Web Dashboard — FastAPI server."""
+"""AURA Web Dashboard — FastAPI server (CSI-only sensing)."""
 
 from __future__ import annotations
 
 import asyncio
-import json
-import shutil
 import sys
 import uuid
 from dataclasses import dataclass, field
@@ -20,9 +18,9 @@ SIM_DIR = ROOT / "simulation"
 sys.path.insert(0, str(SIM_DIR))
 
 from aura_processor import AURAPipeline, load_csi  # noqa: E402
-from aura_processor.multitarget import trim_csi_to_video, _variance_band_targets  # noqa: E402
+from aura_processor.multitarget import trim_csi_to_video  # noqa: E402
 from aura_processor.serialize import result_to_dict, target_to_dict  # noqa: E402
-from aura_processor.video_fusion import detect_people_from_video, fuse_csi_and_video  # noqa: E402
+from aura_processor.hardware_state import NodePipelineState, fuse_multinode_targets  # noqa: E402
 from aura_processor.wireless import WirelessReceiver, DEFAULT_UDP_PORT  # noqa: E402
 
 
@@ -32,6 +30,8 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+PROCESSOR_VERSION = "2026.08.31-5"
 
 
 def load_config() -> dict:
@@ -61,6 +61,7 @@ sessions: dict[str, SimulationSession] = {}
 wireless = WirelessReceiver()
 hardware_clients: set[WebSocket] = set()
 hardware_task: asyncio.Task | None = None
+hardware_nodes: dict[int, NodePipelineState] = {}
 pipeline_cfg = load_config()
 
 
@@ -77,34 +78,6 @@ def build_pipeline(fs_hz: float = 20.0, max_targets: int = 3) -> AURAPipeline:
     )
 
 
-def apply_targets_to_frame(frame: dict, targets: list[dict]) -> dict:
-    """Ensure every stored frame has count + localization."""
-    if not frame:
-        frame = {}
-    out = dict(frame)
-    out["targets"] = targets
-    out["target_count"] = len(targets)
-    return out
-
-
-def build_target_dicts(detections: list[dict]) -> list[dict]:
-    from aura_processor.localization import Target
-
-    targets = []
-    for i, d in enumerate(detections):
-        t = Target(
-            id=i + 1,
-            x_m=d["x_m"],
-            y_m=d["y_m"],
-            velocity_mps=d.get("velocity_mps", 0),
-            is_moving=d.get("velocity_mps", 0) > 0.12,
-            respiration_bpm=d.get("respiration_bpm", 0),
-            heartbeat_bpm=d.get("heartbeat_bpm", 0),
-        )
-        targets.append(target_to_dict(t))
-    return targets
-
-
 def align_results(results, video_duration_sec: float, n_frames: int) -> list[dict]:
     if not results:
         return [{}] * n_frames
@@ -116,10 +89,24 @@ def align_results(results, video_duration_sec: float, n_frames: int) -> list[dic
         t_video = (fi / max(n_frames - 1, 1)) * video_duration_sec
         t_csi = t_video / t_scale if t_scale > 0 else t_video
         nearest = min(results, key=lambda r: abs(r.timestamp_sec - t_csi))
-        # Prefer the snapshot with the most targets so count/map stay populated
         chosen = nearest if nearest.target_count >= best.target_count else best
         aligned.append(result_to_dict(chosen))
     return aligned
+
+
+def _get_hardware_node(node_id: int) -> NodePipelineState:
+    if node_id not in hardware_nodes:
+        pipe = build_pipeline()
+        pipe.node_positions = {int(k): tuple(v) for k, v in pipeline_cfg.get("node_positions", {}).items()}
+        pipe.area_size_m = pipeline_cfg.get("area_size_m", 10.0)
+        hw_cfg = pipeline_cfg.get("hardware", {})
+        hardware_nodes[node_id] = NodePipelineState(
+            node_id,
+            pipe,
+            min_packets=int(hw_cfg.get("min_packets", 64)),
+            refresh_every=int(hw_cfg.get("refresh_every", 32)),
+        )
+    return hardware_nodes[node_id]
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -127,12 +114,9 @@ async def index():
     return (STATIC_DIR / "index.html").read_text()
 
 
-PROCESSOR_VERSION = "2026.08.31-4"
-
-
 @app.get("/api/version")
 async def get_version():
-    return {"processor_version": PROCESSOR_VERSION}
+    return {"processor_version": PROCESSOR_VERSION, "mode": "csi-only"}
 
 
 @app.get("/api/config")
@@ -143,6 +127,7 @@ async def get_config():
         "node_positions": cfg.get("node_positions", {}),
         "udp_port": DEFAULT_UDP_PORT,
         "hub_ssid": "AURA_HUB",
+        "processor_version": PROCESSOR_VERSION,
     }
 
 
@@ -157,6 +142,9 @@ async def upload_simulation(
     csi: UploadFile = File(...),
     sample_rate: float | None = Form(None),
 ):
+    import shutil
+    import cv2
+
     session_id = str(uuid.uuid4())[:8]
     session_dir = UPLOAD_DIR / session_id
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -171,8 +159,6 @@ async def upload_simulation(
             shutil.copyfileobj(video.file, f)
         with csi_path.open("wb") as f:
             shutil.copyfileobj(csi.file, f)
-
-        import cv2
 
         data = load_csi(csi_path, sample_rate_hz=sample_rate)
         cap = cv2.VideoCapture(str(video_path))
@@ -189,42 +175,11 @@ async def upload_simulation(
         if sample_rate:
             fs_hz = float(sample_rate)
 
-        area = pipeline_cfg.get("area_size_m", 10.0)
-        video_count, video_people = detect_people_from_video(video_path, area_size_m=area)
-        max_targets = max(video_count, 1) if video_count else 3
-        max_targets = min(max_targets, 6)
-
-        pipe = build_pipeline(fs_hz=fs_hz, max_targets=max_targets)
-        results = pipe.process_session(
-            csi, timestamps_ms, video_duration_sec=duration, video_people=video_people or None
-        )
-
-        # Fuse CSI session targets with video layout — guarantees map + count
-        session_dets = list(pipe._session_targets)
-        if video_people:
-            session_dets = fuse_csi_and_video(
-                session_dets, video_people, area, max_targets=max_targets, fs_hz=fs_hz
-            )
-        if not session_dets and video_people:
-            from aura_processor.video_fusion import video_people_to_detections
-            session_dets = video_people_to_detections(video_people, fs_hz)
-        if not session_dets and results and any(r.motion_detected for r in results):
-            session_dets = _variance_band_targets(
-                csi, fs_hz, area, max_targets, pipe.sensor_xy
-            )
-
-        best = max(results, key=lambda r: (r.target_count, r.motion_energy)) if results else None
-        for det in session_dets:
-            if best:
-                det.setdefault("respiration_bpm", best.respiration_bpm)
-                det.setdefault("heartbeat_bpm", best.heartbeat_bpm)
-
-        target_dicts = build_target_dicts(session_dets)
+        pipe = build_pipeline(fs_hz=fs_hz, max_targets=3)
+        results = pipe.process_session(csi, timestamps_ms, video_duration_sec=duration)
         aligned = align_results(results, duration, n_frames)
-        if target_dicts:
-            aligned = [apply_targets_to_frame(f, target_dicts) for f in aligned]
-
         events = [e for e in pipe.tracker.events if _event_in_duration(e, duration)]
+        best = max(results, key=lambda r: (r.target_count, r.motion_energy)) if results else None
     except Exception as exc:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -245,21 +200,22 @@ async def upload_simulation(
     )
     sessions[session_id] = session
 
+    preview = aligned[0] if aligned else {}
     return {
         "session_id": session_id,
         "processor_version": PROCESSOR_VERSION,
+        "mode": "csi-only",
         "fps": fps,
         "duration_sec": round(duration, 3),
         "n_frames": n_frames,
         "csi_frames": len(csi),
         "subcarriers": int(csi.shape[1]),
         "sample_rate_hz": round(fs_hz, 2),
-        "video_people_detected": video_count,
-        "target_count": len(target_dicts),
-        "targets": target_dicts,
-        "motion_detected": bool(best.motion_detected) if best else len(target_dicts) > 0,
-        "respiration_bpm": round(best.respiration_bpm, 1) if best else 0,
-        "heartbeat_bpm": round(best.heartbeat_bpm, 1) if best else 0,
+        "target_count": preview.get("target_count", 0),
+        "targets": preview.get("targets", []),
+        "motion_detected": preview.get("motion_detected", False),
+        "respiration_bpm": preview.get("respiration_bpm", 0),
+        "heartbeat_bpm": preview.get("heartbeat_bpm", 0),
         "events": session.events,
     }
 
@@ -323,13 +279,12 @@ async def ws_simulation(websocket: WebSocket, session_id: str):
 def process_hardware_snapshot() -> dict:
     cfg = load_config()
     area = cfg.get("area_size_m", 10.0)
-    node_pos = {int(k): tuple(v) for k, v in cfg.get("node_positions", {}).items()}
-    pipe = build_pipeline()
-    pipe.node_positions = node_pos
-    pipe.area_size_m = area
+    hw_cfg = cfg.get("hardware", {})
+    min_pkts = int(hw_cfg.get("min_packets", 64))
+    window_pkts = int(hw_cfg.get("window_packets", 128))
 
     active = wireless.active_nodes()
-    all_targets = []
+    all_target_dicts: list[dict] = []
     total_count = 0
     resp_bpm = 0.0
     hr_bpm = 0.0
@@ -337,29 +292,41 @@ def process_hardware_snapshot() -> dict:
     resp_wave: list[float] = []
     hr_wave: list[float] = []
     node_status = []
+    events: list[str] = []
+    primary_pipe = None
 
     for nid in active:
-        win = wireless.get_node_window(nid, n=40)
+        win = wireless.get_node_window(nid, n=window_pkts)
         rssi = wireless.node_rssi(nid)
         if win is None:
-            node_status.append({"id": nid, "status": "buffering", "rssi": rssi})
+            buf_len = wireless.buffer_length(nid)
+            node_status.append({
+                "id": nid,
+                "status": f"buffering ({buf_len}/{min_pkts})",
+                "rssi": rssi,
+            })
             continue
+
         csi, ts = win
-        fs = 20.0
-        if len(ts) > 1:
-            import numpy as np
-            fs = float(1000.0 / max(np.median(np.diff(ts)), 1.0))
-        pipe.fs_hz = fs
-        res = pipe.process_window(csi, ts[-1] / 1000.0, node_id=nid)
-        total_count = max(total_count, res.target_count)
+        state = _get_hardware_node(nid)
+        res = state.process(csi, ts)
+        primary_pipe = state.pipeline
+
+        if res is None:
+            node_status.append({"id": nid, "status": "warming up", "rssi": rssi})
+            continue
+
         motion = motion or res.motion_detected
-        all_targets.extend(res.targets)
         resp_bpm = max(resp_bpm, res.respiration_bpm)
         hr_bpm = max(hr_bpm, res.heartbeat_bpm)
+        all_target_dicts.extend(target_to_dict(t) for t in res.targets)
+        events.extend(res.events[-2:])
+
         if res.respiration_waveform is not None and len(resp_wave) == 0:
             from aura_processor.serialize import _downsample
             resp_wave = _downsample(res.respiration_waveform)
             hr_wave = _downsample(res.heartbeat_waveform) if res.heartbeat_waveform is not None else []
+
         node_status.append({
             "id": nid,
             "status": "active",
@@ -370,8 +337,12 @@ def process_hardware_snapshot() -> dict:
             "heartbeat_bpm": round(res.heartbeat_bpm, 1),
         })
 
+    fused = fuse_multinode_targets(all_target_dicts)
+    total_count = len(fused)
+
     return {
         "mode": "hardware",
+        "processor_version": PROCESSOR_VERSION,
         "active_nodes": len(active),
         "motion_detected": motion,
         "target_count": total_count,
@@ -379,11 +350,11 @@ def process_hardware_snapshot() -> dict:
         "heartbeat_bpm": round(hr_bpm, 1),
         "respiration_waveform": resp_wave,
         "heartbeat_waveform": hr_wave,
-        "targets": [target_to_dict(t) for t in all_targets],
+        "targets": fused,
         "node_status": node_status,
         "node_positions": cfg.get("node_positions", {}),
         "area_size_m": area,
-        "events": pipe.tracker.events[-5:],
+        "events": (primary_pipe.tracker.events[-5:] if primary_pipe else events[-5:]),
     }
 
 
@@ -399,7 +370,7 @@ async def hardware_broadcast_loop():
                     dead.append(ws)
             for ws in dead:
                 hardware_clients.discard(ws)
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.25)
 
 
 @app.post("/api/hardware/start")
@@ -415,6 +386,7 @@ async def start_hardware():
 @app.post("/api/hardware/stop")
 async def stop_hardware():
     wireless.stop()
+    hardware_nodes.clear()
     return {"status": "stopped"}
 
 
@@ -432,6 +404,7 @@ async def ws_hardware(websocket: WebSocket):
             "type": "status",
             "message": "Connected. Power on ESP32 nodes on AURA_HUB hotspot.",
             "udp_port": DEFAULT_UDP_PORT,
+            "processor_version": PROCESSOR_VERSION,
         })
         while True:
             await websocket.receive_text()

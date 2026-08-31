@@ -147,9 +147,9 @@ document.getElementById("btn-run-simulation").onclick = async () => {
 
     simSessionId = json.session_id;
     simFps = json.fps || 30;
-    status.textContent = `${json.csi_frames} CSI @ ${json.sample_rate_hz}Hz · v${json.processor_version || "?"}`;
+    status.textContent = `${json.csi_frames} CSI @ ${json.sample_rate_hz}Hz · CSI-only · v${json.processor_version || "?"}`;
     document.getElementById("sim-meta").textContent =
-      `${json.duration_sec}s · ${json.n_frames} frames · ${json.video_people_detected ?? "?"} in video`;
+      `${json.duration_sec}s · ${json.n_frames} frames · ${json.target_count ?? 0} detected`;
     document.getElementById("sim-events").innerHTML =
       (json.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
 

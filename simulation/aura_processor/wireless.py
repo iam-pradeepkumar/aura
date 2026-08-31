@@ -21,7 +21,7 @@ class WirelessReceiver:
         self.port = port
         self.sock: socket.socket | None = None
         self.lock = threading.Lock()
-        self.node_buffers: dict[int, deque] = defaultdict(lambda: deque(maxlen=128))
+        self.node_buffers: dict[int, deque] = defaultdict(lambda: deque(maxlen=256))
         self.node_last_seen: dict[int, float] = {}
         self.running = False
         self._thread: threading.Thread | None = None
@@ -78,7 +78,7 @@ class WirelessReceiver:
                     })
                     self.node_last_seen[node_id] = time.time()
 
-    def get_node_window(self, node_id: int, n: int = 40) -> tuple[np.ndarray, np.ndarray] | None:
+    def get_node_window(self, node_id: int, n: int = 128) -> tuple[np.ndarray, np.ndarray] | None:
         with self.lock:
             buf = list(self.node_buffers[node_id])
         if len(buf) < n:
@@ -99,3 +99,7 @@ class WirelessReceiver:
         if not buf:
             return None
         return int(buf[-1]["rssi"])
+
+    def buffer_length(self, node_id: int) -> int:
+        with self.lock:
+            return len(self.node_buffers.get(node_id, []))

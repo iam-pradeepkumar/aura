@@ -1,4 +1,4 @@
-"""AURA full sensing pipeline — all five detection functions."""
+"""AURA full sensing pipeline — CSI-only (simulation + live hardware)."""
 
 from __future__ import annotations
 
@@ -8,13 +8,7 @@ import numpy as np
 from .srcc import srcc, motion_energy
 from .doppler import delay_doppler_map
 from .vitals import extract_vitals, extract_vitals_for_target
-from .multitarget import (
-    detect_and_localize,
-    detect_session_targets,
-    _collect_detection_points,
-    _variance_band_targets,
-    cluster_xy,
-)
+from .multitarget import detect_and_localize, detect_session_targets
 from .localization import TargetTracker, Target
 
 
@@ -49,7 +43,9 @@ class AURAPipeline:
         self.max_targets = max_targets
         self.window_samples = max(int(window_sec * fs_hz), 32)
         self.tracker = TargetTracker(area_size_m=area_size_m, max_targets=max_targets)
-        self.node_positions = node_positions or {1: (0.0, 0.0), 2: (10.0, 0.0), 3: (10.0, 10.0), 4: (0.0, 10.0)}
+        self.node_positions = node_positions or {
+            1: (0.0, 0.0), 2: (10.0, 0.0), 3: (10.0, 10.0), 4: (0.0, 10.0)
+        }
         self.sensor_xy = (area_size_m / 2.0, 0.0)
         self._session_targets: list[dict] = []
 
@@ -57,41 +53,24 @@ class AURAPipeline:
         self.tracker.reset()
         self._session_targets = []
 
+    def _sensor_xy(self, node_id: int) -> tuple[float, float]:
+        return self.node_positions.get(node_id, self.sensor_xy)
+
     def set_session_targets(
         self,
         csi: np.ndarray,
-        video_people: list | None = None,
+        sensor_xy: tuple[float, float] | None = None,
     ) -> None:
-        """Pre-compute multi-person positions from full CSI session (+ optional video hints)."""
-        from .video_fusion import fuse_csi_and_video, video_people_to_detections
-
+        """Pre-compute stable CSI-only survivor positions from buffered packets."""
+        xy = sensor_xy or self.sensor_xy
         self._session_targets = detect_session_targets(
             csi,
             self.fs_hz,
             self.area_size_m,
             self.max_targets,
-            self.sensor_xy,
+            xy,
+            motion_threshold=self.motion_threshold,
         )
-        if not self._session_targets:
-            m_energy = float(np.mean(motion_energy(csi)))
-            if m_energy > self.motion_threshold * 0.5:
-                self._session_targets = _variance_band_targets(
-                    csi, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
-                )
-
-        if video_people:
-            self._session_targets = fuse_csi_and_video(
-                self._session_targets,
-                video_people,
-                self.area_size_m,
-                self.max_targets,
-                self.fs_hz,
-            )
-        elif not self._session_targets:
-            # Motion in any window but CSI peaks failed — variance layout
-            self._session_targets = _variance_band_targets(
-                csi, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
-            )
 
     def process_window(
         self,
@@ -99,48 +78,34 @@ class AURAPipeline:
         timestamp_sec: float,
         node_id: int = 1,
     ) -> SensingResult:
-        cleaned = srcc(csi_window)
+        sensor_xy = self._sensor_xy(node_id)
+        cleaned = np.nan_to_num(srcc(csi_window))
         m_energy = float(np.mean(motion_energy(cleaned)))
         motion = m_energy > self.motion_threshold
 
         vitals = extract_vitals(cleaned, self.fs_hz)
         _, _, ddm = delay_doppler_map(cleaned, self.fs_hz)
 
-        # Per-window detections (cleaned already SRCC'd)
         window_dets = detect_and_localize(
-            cleaned, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy, skip_srcc=True
+            cleaned,
+            self.fs_hz,
+            self.area_size_m,
+            self.max_targets,
+            sensor_xy,
+            skip_srcc=True,
+            require_motion=True,
+            motion_level=m_energy,
+            motion_threshold=self.motion_threshold,
         )
 
-        # Merge with session-level targets (ensures all people appear)
         detections = self._merge_session_and_window(window_dets)
 
         if not detections and self._session_targets:
             detections = [dict(s) for s in self._session_targets[: self.max_targets]]
 
-        # Motion present but no targets — try every detection path on this window
-        if motion and not detections:
-            raw_dets = _collect_detection_points(
-                csi_window, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
-            )
-            if raw_dets:
-                centroids_xy = cluster_xy(
-                    [(p["x_m"], p["y_m"]) for p in raw_dets],
-                    eps=2.0,
-                    max_clusters=self.max_targets,
-                )
-                detections = []
-                for cx, cy in centroids_xy:
-                    best = min(raw_dets, key=lambda p: (p["x_m"] - cx) ** 2 + (p["y_m"] - cy) ** 2)
-                    detections.append({**best, "x_m": cx, "y_m": cy})
-            if not detections:
-                detections = _variance_band_targets(
-                    csi_window, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
-                )
-
         for det in detections:
             delay_bin = int(det.get("delay_bin", 0))
             tv = extract_vitals_for_target(cleaned, self.fs_hz, delay_bin)
-            # Static people: use low-motion vitals; jumpers: use global fallback
             if det.get("velocity_mps", 0) < 0.15:
                 det["respiration_bpm"] = tv["respiration_bpm"] or vitals["respiration_bpm"]
                 det["heartbeat_bpm"] = tv["heartbeat_bpm"] or vitals["heartbeat_bpm"]
@@ -200,12 +165,11 @@ class AURAPipeline:
         )
 
     def _merge_session_and_window(self, window_dets: list[dict]) -> list[dict]:
-        """Combine session-stable positions with per-window motion updates."""
         if not self._session_targets:
             return window_dets[: self.max_targets]
 
         merged: list[dict] = []
-        used_window = set()
+        used_window: set[int] = set()
 
         for sess in self._session_targets:
             best = None
@@ -230,7 +194,6 @@ class AURAPipeline:
             else:
                 merged.append(dict(sess))
 
-        # Add any new window detection not matched to session
         for i, wd in enumerate(window_dets):
             if i not in used_window and len(merged) < self.max_targets:
                 merged.append(wd)
@@ -242,18 +205,16 @@ class AURAPipeline:
         csi: np.ndarray,
         timestamps_ms: np.ndarray,
         video_duration_sec: float | None = None,
-        video_people: list | None = None,
     ) -> list[SensingResult]:
         self.reset()
-        self.set_session_targets(csi, video_people=video_people)
+        self.set_session_targets(csi)
 
         results = []
         n = len(csi)
-        desired_window = max(int(2.5 * self.fs_hz), 32)
-        # Short clips: use smaller windows so we get multiple analysis passes
-        self.window_samples = min(desired_window, max(32, n // 2))
+        desired_window = max(int(2.5 * self.fs_hz), 48)
+        self.window_samples = min(desired_window, max(48, n // 2))
         if n < self.window_samples:
-            self.window_samples = max(32, n // 2)
+            self.window_samples = max(48, n // 2)
 
         hop = max(self.window_samples // 4, 1)
         t0 = float(timestamps_ms[0]) if len(timestamps_ms) else 0.0
