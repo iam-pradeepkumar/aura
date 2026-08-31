@@ -8,33 +8,8 @@ import numpy as np
 from .srcc import srcc, motion_energy
 from .doppler import delay_doppler_map
 from .vitals import extract_vitals, extract_vitals_for_target
-from .multitarget import detect_and_localize
+from .multitarget import detect_and_localize, detect_session_targets
 from .localization import TargetTracker, Target
-
-
-def _fallback_detections(
-    csi: np.ndarray,
-    area_size_m: float,
-    max_targets: int,
-    sensor_xy: tuple[float, float],
-) -> list[dict]:
-    """Energy-based fallback when delay peaks are weak."""
-    amp = np.abs(csi)
-    sc_energy = amp.var(axis=0)
-    peaks, _ = __import__("scipy.signal", fromlist=["find_peaks"]).find_peaks(
-        sc_energy, distance=max(2, len(sc_energy) // 8)
-    )
-    if len(peaks) == 0:
-        peaks = np.argsort(sc_energy)[-max_targets:]
-    sx, sy = sensor_xy
-    dets = []
-    for i, pk in enumerate(peaks[:max_targets]):
-        angle = (pk / max(len(sc_energy), 1) - 0.5) * 1.8
-        r = area_size_m * (0.35 + 0.2 * i)
-        x = float(np.clip(sx + r * np.sin(angle), 0.5, area_size_m - 0.5))
-        y = float(np.clip(sy + r * np.cos(angle), 0.5, area_size_m - 0.5))
-        dets.append({"x_m": x, "y_m": y, "velocity_mps": 0.1, "weight": 1.0, "delay_bin": int(pk), "dt": 0.05})
-    return dets
 
 
 @dataclass
@@ -53,15 +28,6 @@ class SensingResult:
 
 
 class AURAPipeline:
-    """
-    Processes ESP32 CSI for disaster survivor sensing:
-    1. Motion detection
-    2. Moving target localization (XY, velocity, acceleration)
-    3. Tracking (trajectory, entry/exit)
-    4. Static target localization
-    5. Vital sign estimation
-    """
-
     def __init__(
         self,
         fs_hz: float = 20.0,
@@ -78,11 +44,22 @@ class AURAPipeline:
         self.window_samples = max(int(window_sec * fs_hz), 32)
         self.tracker = TargetTracker(area_size_m=area_size_m, max_targets=max_targets)
         self.node_positions = node_positions or {1: (0.0, 0.0), 2: (10.0, 0.0), 3: (10.0, 10.0), 4: (0.0, 10.0)}
-        # Sensor reference: center of bottom edge (between nodes 1 & 2)
         self.sensor_xy = (area_size_m / 2.0, 0.0)
+        self._session_targets: list[dict] = []
 
     def reset(self) -> None:
         self.tracker.reset()
+        self._session_targets = []
+
+    def set_session_targets(self, csi: np.ndarray) -> None:
+        """Pre-compute multi-person positions from full CSI session."""
+        self._session_targets = detect_session_targets(
+            csi,
+            self.fs_hz,
+            self.area_size_m,
+            self.max_targets,
+            self.sensor_xy,
+        )
 
     def process_window(
         self,
@@ -97,42 +74,43 @@ class AURAPipeline:
         vitals = extract_vitals(cleaned, self.fs_hz)
         _, _, ddm = delay_doppler_map(cleaned, self.fs_hz)
 
-        detections = detect_and_localize(
-            cleaned,
-            self.fs_hz,
-            self.area_size_m,
-            max_targets=self.max_targets,
-            sensor_xy=self.sensor_xy,
+        # Per-window detections
+        window_dets = detect_and_localize(
+            cleaned, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
         )
 
-        # Fallback: if no delay peaks but clear motion, place targets from energy regions
-        if not detections and m_energy > self.motion_threshold * 0.5:
-            detections = _fallback_detections(cleaned, self.area_size_m, self.max_targets, self.sensor_xy)
+        # Merge with session-level targets (ensures all 3 people appear)
+        detections = self._merge_session_and_window(window_dets)
 
-        # Per-target vitals from subcarrier bands near each detection
-        for i, det in enumerate(detections):
-            delay_bin = int(det.get("delay_bin", i * 3 + 2))
+        for det in detections:
+            delay_bin = int(det.get("delay_bin", 0))
             tv = extract_vitals_for_target(cleaned, self.fs_hz, delay_bin)
-            det["respiration_bpm"] = tv["respiration_bpm"] or vitals["respiration_bpm"]
-            det["heartbeat_bpm"] = tv["heartbeat_bpm"] or vitals["heartbeat_bpm"]
-            if not motion and vitals["respiration_bpm"] > 0:
+            # Static people: use low-motion vitals; jumpers: use global fallback
+            if det.get("velocity_mps", 0) < 0.15:
+                det["respiration_bpm"] = tv["respiration_bpm"] or vitals["respiration_bpm"]
+                det["heartbeat_bpm"] = tv["heartbeat_bpm"] or vitals["heartbeat_bpm"]
                 det["velocity_mps"] = 0.0
+            else:
+                det["respiration_bpm"] = tv["respiration_bpm"]
+                det["heartbeat_bpm"] = tv["heartbeat_bpm"] or vitals["heartbeat_bpm"]
 
         targets = self.tracker.update(detections, timestamp_sec)
 
-        # Show only targets detected in THIS frame (not full tracker history)
         display_targets: list[Target] = []
         for det in detections:
             best = None
-            best_d = 1.5
+            best_d = 2.0
             for t in targets:
                 d = np.hypot(t.x_m - det["x_m"], t.y_m - det["y_m"])
                 if d < best_d:
                     best_d = d
                     best = t
             if best and best not in display_targets:
+                best.is_moving = det.get("velocity_mps", 0) > 0.12
+                best.respiration_bpm = det.get("respiration_bpm", best.respiration_bpm)
+                best.heartbeat_bpm = det.get("heartbeat_bpm", best.heartbeat_bpm)
                 display_targets.append(best)
-            elif not best:
+            else:
                 display_targets.append(Target(
                     id=len(display_targets) + 1,
                     x_m=det["x_m"],
@@ -140,19 +118,17 @@ class AURAPipeline:
                     velocity_mps=det.get("velocity_mps", 0),
                     respiration_bpm=det.get("respiration_bpm", 0),
                     heartbeat_bpm=det.get("heartbeat_bpm", 0),
-                    is_moving=det.get("velocity_mps", 0) > 0.08,
+                    is_moving=det.get("velocity_mps", 0) > 0.12,
                 ))
 
-        # Session-level vitals: median across targets or global
         resp_bpm = vitals["respiration_bpm"]
         hr_bpm = vitals["heartbeat_bpm"]
-        if targets:
-            r_vals = [t.respiration_bpm for t in display_targets if t.respiration_bpm > 0]
-            h_vals = [t.heartbeat_bpm for t in display_targets if t.heartbeat_bpm > 0]
-            if r_vals:
-                resp_bpm = float(np.median(r_vals))
-            if h_vals:
-                hr_bpm = float(np.median(h_vals))
+        r_vals = [t.respiration_bpm for t in display_targets if t.respiration_bpm > 0]
+        h_vals = [t.heartbeat_bpm for t in display_targets if t.heartbeat_bpm > 0]
+        if r_vals:
+            resp_bpm = float(np.median(r_vals))
+        if h_vals:
+            hr_bpm = float(np.median(h_vals))
 
         return SensingResult(
             timestamp_sec=timestamp_sec,
@@ -168,18 +144,57 @@ class AURAPipeline:
             events=list(self.tracker.events),
         )
 
+    def _merge_session_and_window(self, window_dets: list[dict]) -> list[dict]:
+        """Combine session-stable positions with per-window motion updates."""
+        if not self._session_targets:
+            return window_dets[: self.max_targets]
+
+        merged: list[dict] = []
+        used_window = set()
+
+        for sess in self._session_targets:
+            best = None
+            best_d = 2.5
+            for i, wd in enumerate(window_dets):
+                if i in used_window:
+                    continue
+                d = (wd["x_m"] - sess["x_m"]) ** 2 + (wd["y_m"] - sess["y_m"]) ** 2
+                if d < best_d:
+                    best_d = d
+                    best = (i, wd)
+
+            if best:
+                i, wd = best
+                used_window.add(i)
+                merged.append({
+                    **sess,
+                    "x_m": wd["x_m"],
+                    "y_m": wd["y_m"],
+                    "velocity_mps": wd.get("velocity_mps", sess.get("velocity_mps", 0)),
+                })
+            else:
+                merged.append(dict(sess))
+
+        # Add any new window detection not matched to session
+        for i, wd in enumerate(window_dets):
+            if i not in used_window and len(merged) < self.max_targets:
+                merged.append(wd)
+
+        return merged[: self.max_targets]
+
     def process_session(
         self,
         csi: np.ndarray,
         timestamps_ms: np.ndarray,
         video_duration_sec: float | None = None,
     ) -> list[SensingResult]:
-        """Slide window over CSI recording (trimmed to video duration)."""
         self.reset()
+        self.set_session_targets(csi)
+
         results = []
         n = len(csi)
         if n < self.window_samples:
-            self.window_samples = max(16, n)
+            self.window_samples = max(32, n // 2)
 
         hop = max(self.window_samples // 4, 1)
         t0 = float(timestamps_ms[0]) if len(timestamps_ms) else 0.0
@@ -189,8 +204,7 @@ class AURAPipeline:
             t_sec = (float(timestamps_ms[start]) - t0) / 1000.0 if len(timestamps_ms) > start else start / self.fs_hz
             if video_duration_sec and t_sec > video_duration_sec:
                 break
-            res = self.process_window(csi[start:end], t_sec)
-            results.append(res)
+            results.append(self.process_window(csi[start:end], t_sec))
 
         if not results and n > 0:
             results.append(self.process_window(csi, 0.0))

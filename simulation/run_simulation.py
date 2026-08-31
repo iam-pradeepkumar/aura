@@ -122,13 +122,19 @@ def main():
     n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     duration = n_frames / fps
 
+    csi, timestamps_ms, fs_hz = trim_csi_to_video(data["csi"], data["timestamps_ms"], duration)
+    if args.fs:
+        fs_hz = args.fs
+
     pipeline = AURAPipeline(
-        fs_hz=data["sample_rate_hz"],
+        fs_hz=fs_hz,
         area_size_m=cfg.get("area_size_m", 10.0),
         motion_threshold=cfg.get("motion_threshold", 0.02),
+        max_targets=3,
+        window_sec=2.5,
         node_positions=node_pos,
     )
-    results = pipeline.process_session(data["csi"], data["timestamps_ms"])
+    results = pipeline.process_session(csi, timestamps_ms, video_duration_sec=duration)
     aligned = align_results_to_video(results, duration, n_frames)
 
     fig = plt.figure(figsize=(14, 9))
