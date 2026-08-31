@@ -7,14 +7,14 @@ AURA integrates the [WiMANS](https://github.com/huangshk/WiMANS) benchmark for a
 After downloading WiMANS from [Kaggle](https://www.kaggle.com/datasets/shuokhuang/wimans):
 
 ```bash
+pip install -r simulation/requirements.txt   # no PyTorch — scikit-learn only
+
 # Unzip so you have dataset/wifi_csi/amp/act_*.npy
 python tools/train_wimans.py \
-  --amp-dir /path/to/WiMANS/dataset/wifi_csi/amp \
-  --epochs 60 \
-  --batch-size 128
+  --amp-dir /path/to/WiMANS/dataset/wifi_csi/amp
 ```
 
-This writes `simulation/wimans/models/wimans_sensing.pt`. Restart the dashboard and upload matching `video + .mat + .npy` triplets.
+This writes `simulation/wimans/models/wimans_sensing.joblib`. Restart the dashboard and upload matching `video + .mat + .npy` triplets.
 
 ## What gets trained
 

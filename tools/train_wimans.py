@@ -6,7 +6,9 @@ With real WiMANS amplitude files (recommended):
   python tools/train_wimans.py --amp-dir /path/to/WiMANS/dataset/wifi_csi/amp --epochs 60
 
 Bootstrap (synthetic, shipped by default):
-  python tools/train_wimans.py --synthetic-only --epochs 40
+  python tools/train_wimans.py --synthetic-only
+
+No PyTorch required — uses scikit-learn only (~50 MB disk vs 500+ MB for torch).
 """
 
 from __future__ import annotations

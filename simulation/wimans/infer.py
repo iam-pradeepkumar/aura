@@ -4,36 +4,36 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import joblib
 import numpy as np
-import torch
 
 from .annotations import lookup_label
 from .features import extract_features
 from .layouts import ACTIVITY_VITALS, location_to_xy
-from .model import WimansMLP
+from .model import WimansBundle
 
-MODEL_PATH = Path(__file__).resolve().parent / "models" / "wimans_sensing.pt"
+MODEL_DIR = Path(__file__).resolve().parent / "models"
+MODEL_FILE = MODEL_DIR / "wimans_sensing.joblib"
+LEGACY_PT = MODEL_DIR / "wimans_sensing.pt"
 
-_model_cache: tuple[WimansMLP, int] | None = None
+_bundle_cache: WimansBundle | None = None
 
 
 def model_available() -> bool:
-    return MODEL_PATH.exists()
+    return MODEL_FILE.exists() or LEGACY_PT.exists()
 
 
-def _load_model() -> tuple[WimansMLP, int]:
-    global _model_cache
-    if _model_cache is not None:
-        return _model_cache
-    if not MODEL_PATH.exists():
-        raise FileNotFoundError(f"WiMANS model not found at {MODEL_PATH}. Run tools/train_wimans.py")
-    ckpt = torch.load(MODEL_PATH, map_location="cpu", weights_only=False)
-    in_dim = int(ckpt["in_dim"])
-    model = WimansMLP(in_dim)
-    model.load_state_dict(ckpt["state_dict"])
-    model.eval()
-    _model_cache = (model, in_dim)
-    return _model_cache
+def _load_bundle() -> WimansBundle:
+    global _bundle_cache
+    if _bundle_cache is not None:
+        return _bundle_cache
+    if not MODEL_FILE.exists():
+        raise FileNotFoundError(
+            "WiMANS model not found. Run: python tools/train_wimans.py "
+            "--amp-dir /path/to/WiMANS/dataset/wifi_csi/amp"
+        )
+    _bundle_cache = joblib.load(MODEL_FILE)
+    return _bundle_cache
 
 
 def predict_from_amplitude(
@@ -42,35 +42,28 @@ def predict_from_amplitude(
     area_size_m: float = 10.0,
     fs_hz: float = 1000.0,
 ) -> dict:
-    """
-    Run WiMANS-trained model on amplitude CSI.
-    Returns count, targets (x,y), activities, and vitals priors.
-    """
-    model, _ = _load_model()
-    feat = extract_features(amp, fs_hz=fs_hz)
-    x = torch.from_numpy(feat).unsqueeze(0)
+    """Run WiMANS-trained model on amplitude CSI."""
+    bundle = _load_bundle()
+    feat = extract_features(amp, fs_hz=fs_hz).reshape(1, -1)
 
-    with torch.no_grad():
-        out = model(x)
-        count_idx = int(out["count"].argmax(1).item())
-        identity = torch.sigmoid(out["identity"]).numpy()[0]
-        loc_logits = out["location"].numpy().reshape(6, 5)
+    count_idx = int(bundle.count.predict(feat)[0])
+    identity = bundle.identity.predict(feat)[0].astype(np.float64)
+    loc_slots = bundle.location.predict(feat)[0]
 
     ann = lookup_label(label_hint) if label_hint else None
     environment = ann["environment"] if ann else "empty_room"
 
-    active_slots = [i for i, p in enumerate(identity) if p >= 0.45]
-    id_count = len(active_slots)
-    count = max(count_idx, id_count)
+    active_slots = [i for i, p in enumerate(identity) if p >= 1]
+    count = max(count_idx, len(active_slots))
     count = int(np.clip(count, 0, 6))
 
-    targets: list[dict] = []
     if not active_slots:
         active_slots = list(range(min(count, 6)))
 
+    targets: list[dict] = []
     for slot_i, slot in enumerate(active_slots[:count]):
-        loc_probs = loc_logits[slot]
-        loc_idx = int(np.argmax(loc_probs))
+        loc_idx = int(loc_slots[slot]) if slot < len(loc_slots) else 0
+        loc_idx = int(np.clip(loc_idx, 0, 4))
         loc_char = {0: "a", 1: "b", 2: "c", 3: "d", 4: "e"}[loc_idx]
         x_m, y_m = location_to_xy(environment, loc_char, area_size_m)
         act = "walk"
@@ -79,8 +72,8 @@ def predict_from_amplitude(
             "x_m": x_m,
             "y_m": y_m,
             "velocity_mps": 0.25 if act in ("walk", "jump", "rotation") else 0.05,
-            "confidence": float(identity[slot]),
-            "weight": float(identity[slot]),
+            "confidence": float(identity[slot]) if identity[slot] <= 1 else 1.0,
+            "weight": float(identity[slot]) if identity[slot] <= 1 else 1.0,
             "activity": act,
             "respiration_bpm": resp,
             "heartbeat_bpm": hr,
@@ -88,7 +81,6 @@ def predict_from_amplitude(
         })
 
     while len(targets) < count:
-        slot = len(targets)
         loc_char = "b"
         x_m, y_m = location_to_xy(environment, loc_char, area_size_m)
         resp, hr = ACTIVITY_VITALS.get("walk", (14.0, 70.0))
@@ -103,7 +95,7 @@ def predict_from_amplitude(
         "targets": targets[:count],
         "environment": environment,
         "wifi_band": ann["wifi_band"] if ann else None,
-        "model": "wimans_mlp",
+        "model": "wimans_sklearn",
         "label": ann["label"] if ann else None,
     }
 

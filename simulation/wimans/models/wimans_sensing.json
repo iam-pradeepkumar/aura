@@ -1,8 +1,11 @@
 {
+  "backend": "sklearn",
   "in_dim": 83,
   "annotation": "/workspace/simulation/wimans/data/annotation.csv",
   "trained_samples": 11286,
   "real_amp_dir": null,
   "use_synthetic": true,
-  "test_count_acc": 0.9621973037719727
+  "test_count_acc": 0.9988186650915535,
+  "test_identity_acc": 0.8114786375270723,
+  "test_location_acc": 0.7536916715888955
 }
