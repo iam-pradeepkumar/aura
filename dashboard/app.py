@@ -18,7 +18,7 @@ SIM_DIR = ROOT / "simulation"
 sys.path.insert(0, str(SIM_DIR))
 
 from aura_processor import AURAPipeline, load_csi_mat, load_csi_npy, merge_csi_mat_npy  # noqa: E402
-from aura_processor.multitarget import trim_csi_to_video  # noqa: E402
+from aura_processor.multitarget import estimate_count_from_amplitude  # noqa: E402
 from aura_processor.serialize import result_to_dict, target_to_dict  # noqa: E402
 from aura_processor.hardware_state import NodePipelineState, fuse_multinode_targets  # noqa: E402
 from aura_processor.wireless import WirelessReceiver, DEFAULT_UDP_PORT  # noqa: E402
@@ -31,7 +31,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-19"
+PROCESSOR_VERSION = "2026.08.31-20"
 
 
 def load_config() -> dict:
@@ -197,9 +197,16 @@ async def upload_simulation(
         elif data.get("sample_rate_hz", 0) > 25:
             fs_hz = float(data["sample_rate_hz"])
 
+        amp_count = estimate_count_from_amplitude(
+            data.get("npy_amplitude", npy_data["csi"]),
+            motion_threshold=pipeline_cfg.get("motion_threshold", 0.02),
+            max_people=int(pipeline_cfg.get("max_people", 8)),
+        )
+
         pipe = build_pipeline(fs_hz=fs_hz)
         results = pipe.process_session(
-            csi, timestamps_ms, video_duration_sec=duration, video_path=str(video_path)
+            csi, timestamps_ms, video_duration_sec=duration, video_path=str(video_path),
+            amplitude_count=amp_count if amp_count > 0 else None,
         )
         aligned = align_results(results, duration, n_frames)
         assessment = pipe.session_assessment or {}
@@ -250,6 +257,7 @@ async def upload_simulation(
         "csi_frames": len(csi),
         "subcarriers": int(csi.shape[1]),
         "sample_rate_hz": round(fs_hz, 2),
+        "amplitude_count": amp_count,
         "target_count": effective_count,
         "csi_person_estimate": pipe.estimated_person_count,
         "csi_fingerprint": assessment.get("csi_fingerprint", ""),

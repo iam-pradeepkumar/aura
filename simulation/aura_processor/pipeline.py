@@ -40,7 +40,7 @@ class AURAPipeline:
         area_size_m: float = 10.0,
         motion_threshold: float = 0.02,
         window_sec: float = 2.0,
-        max_targets: int = 3,
+        max_targets: int = 8,
         node_positions: dict[int, tuple[float, float]] | None = None,
     ):
         self.fs_hz = fs_hz
@@ -72,6 +72,7 @@ class AURAPipeline:
         self,
         csi: np.ndarray,
         sensor_xy: tuple[float, float] | None = None,
+        amplitude_count: int | None = None,
     ) -> None:
         """Pre-compute CSI-only survivor positions from the full recording."""
         xy = sensor_xy or self.sensor_xy
@@ -86,6 +87,7 @@ class AURAPipeline:
             xy,
             motion_threshold=self.motion_threshold,
             node_positions=self.node_positions,
+            amplitude_count=amplitude_count,
         )
         self.estimated_person_count = len(self._session_targets)
         self.session_confidence = detection_confidence(
@@ -131,12 +133,13 @@ class AURAPipeline:
             skip_srcc=True,
             motion_level=m_energy,
             motion_threshold=self.motion_threshold,
+            count_limit=len(self._session_targets) if self._session_targets else None,
         )
 
         detections = self._merge_session_and_window(window_dets)
         conf = detection_confidence(detections, m_energy, self.motion_threshold)
 
-        if conf < 0.12:
+        if conf < 0.12 and not self._session_targets:
             detections = []
 
         per_vitals = extract_vitals_for_detections(cleaned, self.fs_hz, detections)
@@ -187,7 +190,7 @@ class AURAPipeline:
             timestamp_sec=timestamp_sec,
             motion_detected=motion,
             motion_energy=m_energy,
-            target_count=len(detections),
+            target_count=len(self._session_targets) if self._session_targets else len(detections),
             targets=display_targets,
             respiration_bpm=float(np.median(r_vals)) if r_vals else 0.0,
             heartbeat_bpm=float(np.median(h_vals)) if h_vals else 0.0,
@@ -203,12 +206,22 @@ class AURAPipeline:
         return len(self._session_targets)
 
     def _merge_session_and_window(self, window_dets: list[dict]) -> list[dict]:
-        """Prefer live window CSI detections; use session only to stabilize IDs."""
-        if window_dets:
-            return window_dets[: self.max_targets]
-        if self._session_targets and self.session_confidence >= 0.15:
-            return [dict(s) for s in self._session_targets[: self.max_targets]]
-        return []
+        """Use session-level CSI targets for count/position; window updates velocity only."""
+        if not self._session_targets:
+            return window_dets[: self.max_targets] if window_dets else []
+
+        merged: list[dict] = []
+        for s in self._session_targets[: self.max_targets]:
+            d = dict(s)
+            if window_dets:
+                best = min(
+                    window_dets,
+                    key=lambda w: np.hypot(w["x_m"] - s["x_m"], w["y_m"] - s["y_m"]),
+                )
+                if np.hypot(best["x_m"] - s["x_m"], best["y_m"] - s["y_m"]) < 2.8:
+                    d["velocity_mps"] = best.get("velocity_mps", 0.0)
+            merged.append(d)
+        return merged
 
     def process_session(
         self,
@@ -216,9 +229,10 @@ class AURAPipeline:
         timestamps_ms: np.ndarray,
         video_duration_sec: float | None = None,
         video_path: str | None = None,
+        amplitude_count: int | None = None,
     ) -> list[SensingResult]:
         self.reset()
-        self.set_session_targets(csi)
+        self.set_session_targets(csi, amplitude_count=amplitude_count)
 
         prepared = np.nan_to_num(srcc(preprocess_csi(csi)))
         raw_motion = float(np.mean(motion_energy(prepared)))

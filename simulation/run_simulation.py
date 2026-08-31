@@ -130,7 +130,7 @@ def main():
         fs_hz=fs_hz,
         area_size_m=cfg.get("area_size_m", 10.0),
         motion_threshold=cfg.get("motion_threshold", 0.02),
-        max_targets=3,
+        max_targets=int(pipeline_cfg.get("max_people", 8)),
         window_sec=2.5,
         node_positions=node_pos,
     )

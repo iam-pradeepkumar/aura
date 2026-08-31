@@ -11,6 +11,181 @@ CLUSTER_EPS_M = 1.35
 MAX_PEOPLE_DEFAULT = 8
 
 
+def _normalize_amp_2d(arr: np.ndarray) -> np.ndarray:
+    """Collapse amplitude CSI to (time, subcarriers)."""
+    a = np.asarray(arr)
+    if np.iscomplexobj(a):
+        a = np.abs(a)
+    a = np.asarray(a, dtype=np.float64)
+    if a.ndim == 1:
+        return a.reshape(1, -1)
+    if a.ndim == 2:
+        return a
+    if a.shape[-1] <= 128:
+        flat = a.reshape(a.shape[0], -1, a.shape[-1])
+        return np.mean(flat, axis=1)
+    return a.reshape(a.shape[0], -1)
+
+
+def _narrow_sc_gates(gates: dict, n_sc: int) -> dict:
+    """Stricter peak/SVD gates for Intel/WiMANS 30-subcarrier CSI."""
+    if n_sc > 40:
+        return gates
+    return {
+        **gates,
+        "peak_ratio": gates["peak_ratio"] * 1.55,
+        "svd_ratio": max(gates["svd_ratio"], 0.14),
+        "min_score": gates["min_score"] * 1.2,
+    }
+
+
+def _motion_signal_quality(cleaned: np.ndarray, motion_threshold: float) -> float:
+    """How structured the CSI motion is (filters SRCC noise on static scenes)."""
+    prof = _motion_delay_profile(cleaned)
+    if prof.max() <= 0:
+        return 0.0
+    peak_ratio = float(prof.max() / (np.median(prof) + 1e-9))
+    mcurve = motion_energy(cleaned)
+    if len(mcurve) < 8:
+        return 0.0
+    periodicity = float(np.std(mcurve) / (np.mean(mcurve) + 1e-9))
+    m_level = float(np.mean(mcurve))
+    if m_level < motion_threshold * 0.5:
+        return 0.0
+    return float(np.clip(min(peak_ratio / 10.0, 1.0) * min(periodicity / 1.5, 1.0), 0.0, 1.0))
+
+
+def _aoa_per_delay_bin(csi: np.ndarray, peak_bin: int) -> float:
+    """Estimate AoA from subcarriers most correlated with motion at this delay bin."""
+    n_sc = csi.shape[1]
+    if n_sc < 4:
+        return 0.0
+    h = np.fft.ifft(csi, axis=1)
+    peak_bin = int(np.clip(peak_bin, 0, h.shape[1] - 1))
+    ref = h[:, peak_bin].astype(np.complex128)
+    ref = ref - ref.mean()
+    ref_norm = float(np.linalg.norm(ref)) + 1e-9
+    cors = np.zeros(n_sc, dtype=np.float64)
+    for sc in range(n_sc):
+        s = h[:, sc].astype(np.complex128) - h[:, sc].mean()
+        s_norm = float(np.linalg.norm(s)) + 1e-9
+        cors[sc] = float(np.abs(np.vdot(ref, s))) / (ref_norm * s_norm)
+    thresh = max(float(np.percentile(cors, 72)), float(cors.max()) * 0.72)
+    mask = cors >= thresh
+    if int(mask.sum()) < 2:
+        mask = cors >= float(cors.max()) * 0.85
+    idx = np.arange(n_sc, dtype=np.float64)
+    com = float(np.sum(idx[mask] * cors[mask]) / (cors[mask].sum() + 1e-9))
+    angle = (com - (n_sc - 1) / 2.0) / max(n_sc / 2.0, 1.0) * 1.05
+    return float(np.clip(angle, -1.1, 1.1))
+
+
+def _motion_delay_profile(csi: np.ndarray) -> np.ndarray:
+    """Per-delay-bin temporal motion energy — distinguishes moving people from static multipath."""
+    h = np.abs(np.fft.ifft(csi, axis=1))
+    if h.shape[0] > 8:
+        h = detrend(h, axis=0, type="linear")
+    return np.var(h, axis=0)
+
+
+def _range_from_delay_peak(prof: np.ndarray, peak_f: float, area_size_m: float) -> float:
+    """Map delay peak index to range using this recording's delay spread."""
+    n = max(len(prof) - 1, 1)
+    weights = prof / (float(prof.sum()) + 1e-9)
+    idx = np.arange(len(prof), dtype=np.float64)
+    com = float(np.sum(idx * weights))
+    spread = float(np.sqrt(np.sum(weights * (idx - com) ** 2))) + 1e-6
+    rel = abs(peak_f - com) / spread
+    r = 1.1 + rel * (area_size_m * 0.52)
+    return float(np.clip(r, 0.8, area_size_m * 0.92))
+
+
+def _count_motion_delay_peaks(
+    cleaned: np.ndarray,
+    gates: dict,
+    max_people: int,
+) -> int:
+    """Count people from motion-heavy delay bins (dataset-specific)."""
+    prof = _motion_delay_profile(cleaned)
+    if prof.max() <= 0:
+        return 0
+    n_sc = cleaned.shape[1]
+    height = gates["peak_ratio"] * float(prof.max())
+    min_sep = max(4, len(prof) // 7) if n_sc <= 40 else max(3, len(prof) // 14)
+    prom = max(height * 0.28, float(np.std(prof)) * 0.45)
+    peaks, props = find_peaks(
+        prof,
+        height=height * 0.5,
+        distance=min_sep,
+        prominence=max(prom, 1e-9),
+    )
+    if len(peaks) == 0:
+        peaks, props = find_peaks(prof, height=height * 0.35, distance=min_sep)
+    if len(peaks) == 0:
+        return 0
+    prominences = props.get("prominences", prof[peaks])
+    order = np.argsort(prominences)[::-1]
+    max_h = float(prof.max())
+    selected: list[int] = []
+    for idx in order:
+        p = int(peaks[idx])
+        if float(prof[p]) < max_h * gates["peak_ratio"] * 0.7:
+            continue
+        if float(prominences[idx]) / max_h < 0.04:
+            continue
+        if all(abs(p - s) >= min_sep for s in selected):
+            selected.append(p)
+        if len(selected) >= max_people:
+            break
+    return len(selected)
+
+
+def estimate_count_from_amplitude(
+    amp: np.ndarray,
+    motion_threshold: float = 0.02,
+    max_people: int = MAX_PEOPLE_DEFAULT,
+) -> int:
+    """
+    Estimate occupant count from preprocessed amplitude CSI (.npy).
+    Complements complex .mat phase-based counting for WiMANS-style datasets.
+    """
+    a = _normalize_amp_2d(amp)
+    if a.ndim != 2 or a.shape[0] < 24 or a.shape[1] < 4:
+        return 0
+
+    n_sc = a.shape[1]
+    detrended = detrend(a, axis=0, type="linear")
+    detrended = detrended - detrended.mean(axis=0, keepdims=True)
+    m_level = float(np.mean(np.var(detrended, axis=0)))
+    if m_level < motion_threshold * 0.35:
+        return 0
+
+    gates = _narrow_sc_gates(_adaptive_gates(m_level, motion_threshold), n_sc)
+    pseudo = detrended.astype(np.complex64)
+
+    motion_n = _count_motion_delay_peaks(pseudo, gates, max_people)
+    delay_n = _delay_peak_count(pseudo, gates, max_people)
+    if delay_n == 0:
+        delay_n = _delay_peak_count_relaxed(pseudo, gates, max_people)
+
+    n_svd = 0
+    try:
+        _, s, _ = np.linalg.svd(detrended, full_matrices=False)
+        cap = min(max_people, max(2, n_sc // 8)) if n_sc <= 40 else max_people
+        n_svd = _count_svd_sources(s, gates["svd_ratio"], cap)
+    except np.linalg.LinAlgError:
+        pass
+
+    parts = [x for x in (motion_n, delay_n, n_svd) if x > 0]
+    if not parts:
+        return 0
+    if len(parts) == 1:
+        return int(np.clip(parts[0], 1, max_people))
+    lo, hi = min(parts), max(parts)
+    count = lo if hi - lo >= 2 else int(np.round(np.median(parts)))
+    return int(np.clip(count, 1, max_people))
+
+
 def _weighted_mean_axis0(values: np.ndarray, weights: np.ndarray) -> np.ndarray:
     """Column-wise weighted mean (numpy 2.4+ compatible)."""
     w = np.asarray(weights, dtype=float)
@@ -46,44 +221,48 @@ def _resolve_target_count(
     max_targets: int,
     expected_count: int | None,
 ) -> int:
-    """Pick final person count from CSI estimate + separated cluster count."""
+    """Pick final person count — conservative when estimates disagree."""
     recount = estimate_person_count(cleaned, m_level, motion_threshold, max_people=max_targets)
     cluster_n = len(session_dets)
-    sep = _min_pairwise_distance(session_dets)
 
     if expected_count and expected_count > 0:
-        base = expected_count
-    elif recount > 0:
-        base = recount
-    else:
-        base = max(1, cluster_n)
+        if cluster_n > 0 and abs(cluster_n - expected_count) <= 1:
+            return min(max_targets, int(np.round((expected_count + cluster_n) / 2)))
+        return min(max_targets, expected_count)
 
-    # Trust well-separated session clusters when they agree with recount
-    if cluster_n >= 2 and sep >= 1.4:
-        if recount > 0 and abs(cluster_n - recount) <= 1:
-            return min(max_targets, max(cluster_n, recount))
-        if recount == 0 or cluster_n <= recount + 1:
-            return min(max_targets, cluster_n)
-
-    if recount > 0:
-        return min(max_targets, max(base, recount))
-    return min(max_targets, max(1, cluster_n))
+    candidates = [x for x in (recount, cluster_n) if x > 0]
+    if not candidates:
+        return 0
+    if len(candidates) == 1:
+        return min(max_targets, candidates[0])
+    lo, hi = min(candidates), max(candidates)
+    if hi - lo >= 2:
+        return min(max_targets, lo)
+    return min(max_targets, int(np.round(np.median(candidates))))
 
 
 def _count_svd_sources(s: np.ndarray, svd_ratio: float, max_people: int) -> int:
-    """Count motion sources from singular value drop-off (not raw elbow)."""
+    """Count motion sources from singular-value energy above noise floor."""
     if len(s) == 0 or s[0] <= 0:
         return 0
+    s2 = s.astype(np.float64) ** 2
+    total = float(s2.sum())
+    if total <= 0:
+        return 0
+    tail = s2[max(1, len(s2) // 2):]
+    noise = float(np.median(tail)) if len(tail) else float(s2[-1])
+    floor = max(noise * 4.0, svd_ratio * float(s2[0]))
     n = 0
-    for i, sv in enumerate(s[:max_people]):
-        if sv < svd_ratio * s[0]:
+    cum = 0.0
+    for i, e in enumerate(s2[:max_people]):
+        if e < floor:
             break
-        if i > 0:
-            rel_prev = float(sv / s[i - 1])
-            plateau = 0.93 if i == 1 else 0.88
-            if rel_prev > plateau:
-                break
+        if i > 0 and e / total < 0.035:
+            break
+        cum += e
         n = i + 1
+        if cum / total > 0.9:
+            break
     return n
 
 
@@ -125,9 +304,13 @@ def _delay_peak_count(cleaned: np.ndarray, gates: dict, max_people: int) -> int:
     prof = _delay_profile(cleaned)
     if prof.max() <= 0:
         return 0
+    n_sc = cleaned.shape[1] if cleaned.ndim == 2 else len(prof)
     height = gates["peak_ratio"] * prof.max()
     prom = height * 0.22
     min_sep = max(3, len(prof) // 16)
+    if n_sc <= 40:
+        min_sep = max(4, len(prof) // 6)
+        prom = height * 0.35
     peaks, props = find_peaks(
         prof,
         height=height * 0.65,
@@ -187,6 +370,8 @@ def _band_active_count(cleaned: np.ndarray, max_people: int) -> int:
     n_sc = cleaned.shape[1]
     if n_sc < 6:
         return 0
+    if n_sc <= 40:
+        return 0
     n_bands = min(max_people, max(4, n_sc // 4))
     bands = np.array_split(np.arange(n_sc), n_bands)
     amp = np.abs(cleaned)
@@ -222,34 +407,41 @@ def estimate_person_count(
     if motion_level < motion_threshold * 0.70:
         return 0
 
-    gates = _adaptive_gates(motion_level, motion_threshold)
+    quality = _motion_signal_quality(cleaned, motion_threshold)
+    if quality < 0.12:
+        return 0
+
     t_len, n_sc = cleaned.shape
     if t_len < 16 or n_sc < 4:
         return 0
 
+    gates = _narrow_sc_gates(_adaptive_gates(motion_level, motion_threshold), n_sc)
+
     n_svd = 0
     delay_n = 0
+    motion_n = 0
     band_n = 0
     temporal_n = 0
 
-    # SVD motion sources — elbow + energy threshold
+    motion_n = _count_motion_delay_peaks(cleaned, gates, max_people)
+
+    # SVD motion sources — energy above noise floor
     try:
         phase = detrend(np.angle(cleaned), axis=0, type="linear")
         phase -= phase.mean(axis=0, keepdims=True)
         _, s, _ = np.linalg.svd(phase, full_matrices=False)
-        n_svd = _count_svd_sources(s, gates["svd_ratio"], max_people)
+        svd_cap = min(max_people, max(2, n_sc // 8)) if n_sc <= 40 else max_people
+        n_svd = _count_svd_sources(s, gates["svd_ratio"], svd_cap)
     except np.linalg.LinAlgError:
         pass
 
-    # Distinct delay peaks — merged, prominence-ranked
+    # Static delay peaks (secondary for narrow-band CSI)
     delay_n = _delay_peak_count(cleaned, gates, max_people)
     band_n = _band_active_count(cleaned, max_people)
     if delay_n == 0:
         relaxed = _delay_peak_count_relaxed(cleaned, gates, max_people)
         if relaxed > 0:
             delay_n = relaxed
-    elif delay_n > 6:
-        delay_n = min(delay_n, band_n + 4 if band_n else 6)
 
     try:
         mcurve = motion_energy(cleaned)
@@ -269,21 +461,25 @@ def estimate_person_count(
         pass
 
     parts: list[int] = []
-    if delay_n >= 1:
+    if motion_n >= 1:
+        parts.append(motion_n)
+    if delay_n >= 1 and (n_sc > 40 or motion_n == 0):
         parts.append(delay_n)
-    if n_svd >= 1:
+    if n_svd >= 1 and n_svd <= max(motion_n, delay_n, 1) + 1:
         parts.append(n_svd)
-    if band_n >= 2 and band_n <= max(delay_n, n_svd, 1) + 1:
+    if band_n >= 2 and band_n <= max(delay_n, n_svd, motion_n, 1) + 1:
         parts.append(band_n)
-    if temporal_n >= 2 and temporal_n <= max(delay_n, n_svd, band_n, 1) + 1:
+    if temporal_n >= 2 and temporal_n <= max(delay_n, n_svd, motion_n, band_n, 1) + 1:
         parts.append(temporal_n)
 
     if not parts:
-        if n_svd >= 1:
-            return 1
         return 0
 
-    count = int(np.round(float(np.median(parts))))
+    if n_sc <= 40:
+        lo, hi = min(parts), max(parts)
+        count = lo if hi - lo >= 2 else int(np.round(np.median(parts)))
+    else:
+        count = int(np.round(float(np.median(parts))))
 
     return int(np.clip(count, 1, max_people))
 
@@ -851,13 +1047,63 @@ def _aoa_enhanced(csi: np.ndarray, delay_bin: int) -> float:
 
 
 def _range_enhanced(prof: np.ndarray, peak_f: float, n_sc: int, area_size_m: float) -> float:
-    """Range from refined delay peak with direct-path calibration."""
-    n = max(n_sc - 1, 1)
-    early = prof[: max(n // 3, 2)]
-    direct_bin = float(np.argmax(early)) if early.size else 0.0
-    rel = max(0.0, peak_f - direct_bin)
-    r = 1.2 + (rel / n) * area_size_m * 0.92
-    return float(np.clip(r, 1.0, area_size_m * 1.15))
+    """Range from refined delay peak using this recording's delay spread."""
+    return _range_from_delay_peak(prof, peak_f, area_size_m)
+
+
+def _localize_motion_delay_sources(
+    cleaned: np.ndarray,
+    fs_hz: float,
+    area_size_m: float,
+    sensor_xy: tuple[float, float],
+    max_targets: int,
+    peak_ratio: float,
+) -> list[dict]:
+    """Localize from delay bins with strongest temporal motion (per-dataset)."""
+    prof = _motion_delay_profile(cleaned)
+    if prof.max() <= 0:
+        return []
+    n_sc = cleaned.shape[1]
+    h_time = np.abs(np.fft.ifft(cleaned, axis=1))
+    height = peak_ratio * float(prof.max())
+    min_sep = max(4, len(prof) // 7) if n_sc <= 40 else max(3, len(prof) // 14)
+    peaks, props = find_peaks(
+        prof,
+        height=height * 0.45,
+        distance=min_sep,
+        prominence=max(height * 0.2, float(np.std(prof)) * 0.35),
+    )
+    if len(peaks) == 0:
+        peaks = np.array([int(np.argmax(prof))])
+    prominences = props.get("prominences", prof[peaks]) if len(peaks) else prof[peaks]
+    order = np.argsort(prominences)[::-1]
+    sx, sy = sensor_xy
+    dets: list[dict] = []
+
+    for idx in order[:max_targets]:
+        peak = int(peaks[idx])
+        peak_f = _refined_peak_index(prof, peak)
+        bin_series = h_time[:, peak]
+        active = bin_series >= np.percentile(bin_series, 65)
+        if int(active.sum()) < 8:
+            active = np.ones(len(bin_series), dtype=bool)
+        seg = cleaned[active]
+        angle = _aoa_per_delay_bin(cleaned, peak)
+        if abs(angle) < 0.05:
+            angle = _aoa_enhanced(seg, peak)
+        r = _range_from_delay_peak(prof, peak_f, area_size_m)
+        x = float(np.clip(sx + r * np.sin(angle), 0.8, area_size_m - 0.8))
+        y = float(np.clip(sy + r * np.cos(angle), 0.8, area_size_m - 0.8))
+        dets.append({
+            "x_m": x,
+            "y_m": y,
+            "velocity_mps": 0.0,
+            "weight": float(prof[peak]),
+            "confidence": float(prof[peak] / (prof.max() + 1e-9)),
+            "delay_bin": int(round(peak_f)),
+            "dt": 1.0 / fs_hz,
+        })
+    return dets
 
 
 def _localize_from_csi_segment(
@@ -875,7 +1121,9 @@ def _localize_from_csi_segment(
         return None
     peak = int(np.argmax(prof))
     peak_f = _refined_peak_index(prof, peak)
-    angle = _aoa_enhanced(seg, peak)
+    angle = _aoa_per_delay_bin(seg, peak)
+    if abs(angle) < 0.05:
+        angle = _aoa_enhanced(seg, peak)
     sx, sy = sensor_xy
     r = _range_enhanced(prof, peak_f, seg.shape[1], area_size_m)
     x = float(np.clip(sx + r * np.sin(angle), 0.8, area_size_m - 0.8))
@@ -926,37 +1174,47 @@ def localize_motion_sources(
     if motion_level < motion_threshold * 0.65:
         return []
 
+    n_sc = cleaned.shape[1]
     gates = _adaptive_gates(motion_level, motion_threshold)
+    gates = _narrow_sc_gates(gates, n_sc)
+    cap = min(max_targets, count_limit) if count_limit and count_limit > 0 else max_targets
+    cap = max(1, int(cap))
+
     raw: list[dict] = []
-    seen_bins: list[int] = []
+    raw.extend(_localize_motion_delay_sources(
+        cleaned, fs_hz, area_size_m, sensor_xy, cap, gates["peak_ratio"]
+    ))
 
-    # Primary: independent SVD motion sources (one per person)
-    sources = _svd_motion_sources(cleaned, max_targets, gates["svd_ratio"])
-    for i, src in enumerate(sources):
-        pseudo = np.exp(1j * np.angle(src)) * np.abs(cleaned).mean(axis=0, keepdims=True)
-        pseudo = pseudo * (np.abs(cleaned) + 1e-6)
-        det = _localize_from_csi_segment(
-            pseudo.astype(np.complex64), fs_hz, area_size_m, sensor_xy,
-            weight=float(i + 1) / max(len(sources), 1),
-        )
-        if det:
-            det["source_id"] = i
-            raw.append(det)
-            seen_bins.append(det["delay_bin"])
+    seen_bins = [d["delay_bin"] for d in raw]
 
-    # Secondary: distinct delay peaks not already captured
+    # Secondary: SVD-separated sources when motion-delay finds fewer than cap
+    if len(raw) < cap:
+        sources = _svd_motion_sources(cleaned, cap - len(raw), gates["svd_ratio"])
+        for i, src in enumerate(sources):
+            pseudo = np.exp(1j * np.angle(src)) * (np.abs(cleaned) + 1e-6)
+            det = _localize_from_csi_segment(
+                pseudo.astype(np.complex64), fs_hz, area_size_m, sensor_xy,
+                weight=float(i + 1) / max(len(sources), 1),
+            )
+            if det and all(abs(det["delay_bin"] - b) >= 3 for b in seen_bins):
+                det["source_id"] = i
+                raw.append(det)
+                seen_bins.append(det["delay_bin"])
+
+    # Tertiary: static delay peaks not already captured
     prof = _delay_profile(cleaned)
     residual = prof.copy()
     n_bins = len(prof)
-    for _ in range(max_targets):
+    min_sep = max(4, n_bins // 7) if n_sc <= 40 else max(3, n_bins // 16)
+    while len(raw) < cap:
         if residual.max() <= 0:
             break
         peak = int(np.argmax(residual))
         if float(prof[peak]) < gates["peak_ratio"] * prof.max():
             break
-        if any(abs(peak - b) < max(3, n_bins // 16) for b in seen_bins):
-            lo = max(0, peak - max(2, n_bins // 12))
-            hi = min(n_bins, peak + max(2, n_bins // 12) + 1)
+        if any(abs(peak - b) < min_sep for b in seen_bins):
+            lo = max(0, peak - min_sep)
+            hi = min(n_bins, peak + min_sep + 1)
             residual[lo:hi] = 0
             continue
         det = _localize_from_csi_segment(
@@ -965,15 +1223,15 @@ def localize_motion_sources(
         if det:
             raw.append(det)
             seen_bins.append(det["delay_bin"])
-        lo = max(0, peak - max(2, n_bins // 12))
-        hi = min(n_bins, peak + max(2, n_bins // 12) + 1)
+        lo = max(0, peak - min_sep)
+        hi = min(n_bins, peak + min_sep + 1)
         residual[lo:hi] = 0
 
     if not raw:
         return []
 
     eps = adaptive_cluster_eps(max(len(raw), 1), area_size_m)
-    centroids = cluster_xy([(p["x_m"], p["y_m"]) for p in raw], eps=eps, max_clusters=max_targets)
+    centroids = cluster_xy([(p["x_m"], p["y_m"]) for p in raw], eps=eps, max_clusters=cap)
     merged: list[dict] = []
     for cx, cy in centroids:
         nearby = [p for p in raw if (p["x_m"] - cx) ** 2 + (p["y_m"] - cy) ** 2 < 2.8]
@@ -991,8 +1249,7 @@ def localize_motion_sources(
         merged.append(d)
 
     merged.sort(key=lambda d: -d.get("confidence", 0))
-    limit = max_targets
-    return filter_confident_detections(merged, cleaned, gates["min_score"] * 0.65, limit)
+    return filter_confident_detections(merged, cleaned, gates["min_score"] * 0.65, cap)
 
 
 def _stabilize_positions(dets: list[dict], area_size_m: float) -> list[dict]:
@@ -1065,11 +1322,12 @@ def detect_session_targets(
     csi: np.ndarray,
     fs_hz: float,
     area_size_m: float = 10.0,
-    max_targets: int = 3,
+    max_targets: int = 8,
     sensor_xy: tuple[float, float] = (5.0, 0.0),
     window_sec: float = 0.5,
     motion_threshold: float = 0.02,
     expected_count: int | None = None,
+    amplitude_count: int | None = None,
     node_positions: dict[int, tuple[float, float]] | None = None,
 ) -> list[dict]:
     """Aggregate CSI detections across sliding windows with temporal voting."""
@@ -1086,16 +1344,27 @@ def detect_session_targets(
     if m_level < motion_threshold * 0.60:
         return []
 
+    quality = _motion_signal_quality(cleaned, motion_threshold)
+    if quality < 0.10:
+        return []
+
     estimated = expected_count if expected_count and expected_count > 0 else estimate_person_count(
         cleaned, m_level, motion_threshold, max_people=max_targets
     )
-    if estimated <= 0 and m_level >= motion_threshold:
-        band_n = _band_active_count(cleaned, max_targets)
-        estimated = max(1, band_n if band_n > 0 else 1)
+    if amplitude_count is not None and amplitude_count > 0:
+        if estimated > 0:
+            if abs(amplitude_count - estimated) <= 1:
+                estimated = int(np.round((amplitude_count + estimated) / 2))
+            else:
+                estimated = min(amplitude_count, estimated)
+        elif m_level >= motion_threshold * 0.65:
+            estimated = amplitude_count
+
     if estimated <= 0:
         return []
-    active_max = max_targets
-    cluster_eps = adaptive_cluster_eps(max(estimated, active_max // 2), area_size_m)
+
+    cluster_cap = int(np.clip(estimated, 1, max_targets))
+    cluster_eps = adaptive_cluster_eps(cluster_cap, area_size_m)
 
     gates = _adaptive_gates(motion_level, motion_threshold)
     win = max(int(window_sec * fs_hz), 48)
@@ -1104,9 +1373,9 @@ def detect_session_targets(
 
     def _localize(chunk: np.ndarray, m_chunk: float) -> list[dict]:
         return localize_motion_sources(
-            chunk, fs_hz, area_size_m, active_max, ref_xy,
+            chunk, fs_hz, area_size_m, max_targets, ref_xy,
             skip_srcc=True, motion_level=m_chunk, motion_threshold=motion_threshold,
-            count_limit=estimated if estimated > 0 else None,
+            count_limit=cluster_cap,
         )
 
     window_hits: list[list[dict]] = []
@@ -1123,11 +1392,11 @@ def detect_session_targets(
 
     if not window_hits and m_level >= motion_threshold:
         fallback = filter_confident_detections(
-            _band_motion_sources(cleaned, fs_hz, area_size_m, active_max, sensor_xy)
-            + _delay_peak_candidates(cleaned, fs_hz, area_size_m, active_max, sensor_xy, gates["peak_ratio"] * 0.7),
+            _band_motion_sources(cleaned, fs_hz, area_size_m, cluster_cap, sensor_xy)
+            + _delay_peak_candidates(cleaned, fs_hz, area_size_m, cluster_cap, sensor_xy, gates["peak_ratio"] * 0.7),
             cleaned,
             gates["min_score"] * 0.5,
-            active_max,
+            cluster_cap,
         )
         if fallback:
             return fallback
@@ -1140,7 +1409,7 @@ def detect_session_targets(
     centroids = cluster_xy(
         [(p["x_m"], p["y_m"]) for p in all_points],
         eps=cluster_eps,
-        max_clusters=active_max,
+        max_clusters=cluster_cap,
     )
 
     session_dets: list[dict] = []
@@ -1178,9 +1447,15 @@ def detect_session_targets(
         })
 
     session_dets.sort(key=lambda d: -d.get("confidence", 0))
+    final_n = _resolve_target_count(
+        session_dets, cleaned, m_level, motion_threshold, max_targets, cluster_cap
+    )
+    session_dets = _stabilize_positions(session_dets, area_size_m)[:final_n]
+
     if not session_dets and m_level >= motion_threshold:
         return localize_motion_sources(
-            cleaned, fs_hz, area_size_m, active_max, ref_xy,
+            cleaned, fs_hz, area_size_m, max_targets, ref_xy,
             skip_srcc=True, motion_level=m_level, motion_threshold=motion_threshold,
+            count_limit=cluster_cap,
         )
-    return _stabilize_positions(session_dets, area_size_m)
+    return session_dets
