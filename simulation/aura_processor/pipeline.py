@@ -280,6 +280,7 @@ class AURAPipeline:
         timestamps_ms: np.ndarray,
         video_duration_sec: float | None = None,
         video_path: str | None = None,
+        amplitude_count: int | None = None,
         wimans_amp: np.ndarray | None = None,
         wimans_label: str | None = None,
     ) -> list[SensingResult]:
