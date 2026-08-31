@@ -9,6 +9,7 @@ import joblib
 import numpy as np
 from sklearn.metrics import accuracy_score
 
+from .amp_index import index_amp_files, resolve_amp_dir
 from .annotations import ANNOTATION_PATH, encode_count, encode_identity, encode_location, load_annotations
 from .features import extract_features
 from .model import WimansBundle, make_count_model, make_identity_model, make_location_model
@@ -31,6 +32,7 @@ def _load_amp(path: Path) -> np.ndarray | None:
 
 def build_dataset(
     amp_dir: Path | None = None,
+    amp_index: dict[str, Path] | None = None,
     max_samples: int | None = None,
     use_synthetic: bool = True,
     seed: int = 42,
@@ -40,16 +42,22 @@ def build_dataset(
     if max_samples:
         df = df.iloc[:max_samples]
 
+    if amp_dir is not None and amp_index is None:
+        amp_index = index_amp_files(amp_dir)
+
     rng = np.random.default_rng(seed)
     xs, y_count, y_id, y_loc = [], [], [], []
+    real_count = 0
 
     for _, row in df.iterrows():
-        label = row["label"]
+        label = str(row["label"]).lower()
         amp = None
-        if amp_dir is not None:
-            p = amp_dir / f"{label}.npy"
-            if p.exists():
+        if amp_index:
+            p = amp_index.get(label)
+            if p is not None:
                 amp = _load_amp(p)
+                if amp is not None:
+                    real_count += 1
 
         if amp is None and use_synthetic:
             locs = [
@@ -73,6 +81,21 @@ def build_dataset(
         loc = encode_location(row)
         y_loc.append([max(0, v) for v in loc])
 
+    if not xs:
+        raise ValueError(
+            "No training samples could be built. "
+            "Run: python tools/train_wimans.py --synthetic-only"
+        )
+
+    if amp_index and real_count == 0:
+        print(
+            "WARNING: No act_*.npy files matched annotation labels in that folder. "
+            "Training on synthetic CSI only. Fix --amp-dir or run:\n"
+            "  find ~ -name 'act_100_5.npy' 2>/dev/null"
+        )
+    elif real_count > 0:
+        print(f"Loaded {real_count} real .npy files")
+
     return (
         np.stack(xs),
         np.asarray(y_count, dtype=np.int64),
@@ -95,7 +118,10 @@ def train_models(
     out.mkdir(parents=True, exist_ok=True)
 
     amp_path = Path(amp_dir) if amp_dir else None
-    x, y_count, y_id, y_loc = build_dataset(amp_path, max_samples=max_samples, use_synthetic=use_synthetic)
+    amp_index = index_amp_files(amp_path) if amp_path else None
+    x, y_count, y_id, y_loc = build_dataset(
+        amp_path, amp_index=amp_index, max_samples=max_samples, use_synthetic=use_synthetic
+    )
 
     n = len(x)
     split = int(n * 0.85)
