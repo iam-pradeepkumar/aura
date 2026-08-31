@@ -3,6 +3,7 @@
 let config = { area_size_m: 10, node_positions: {} };
 let simSessionId = null;
 let simWs = null;
+let simFps = 30;
 let hwWs = null;
 
 const plotLayout = {
@@ -145,10 +146,25 @@ document.getElementById("btn-run-simulation").onclick = async () => {
     }
 
     simSessionId = json.session_id;
-    status.textContent = `${json.csi_frames} CSI @ ${json.sample_rate_hz}Hz`;
-    document.getElementById("sim-meta").textContent = `${json.duration_sec}s · ${json.n_frames} frames`;
+    simFps = json.fps || 30;
+    status.textContent = `${json.csi_frames} CSI @ ${json.sample_rate_hz}Hz · v${json.processor_version || "?"}`;
+    document.getElementById("sim-meta").textContent =
+      `${json.duration_sec}s · ${json.n_frames} frames · ${json.video_people_detected ?? "?"} in video`;
     document.getElementById("sim-events").innerHTML =
       (json.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
+
+    // Show results immediately (don't wait for video timeupdate)
+    if (json.targets?.length) {
+      updateSensingUI("sim", {
+        target_count: json.target_count,
+        motion_detected: json.motion_detected,
+        respiration_bpm: json.respiration_bpm,
+        heartbeat_bpm: json.heartbeat_bpm,
+        targets: json.targets,
+        respiration_waveform: [],
+        heartbeat_waveform: [],
+      }, config.node_positions, config.area_size_m);
+    }
 
     videoEl.src = `/api/simulation/${simSessionId}/video`;
     videoEl.load();
@@ -162,6 +178,16 @@ document.getElementById("btn-run-simulation").onclick = async () => {
         updateSensingUI("sim", msg.data, msg.node_positions, msg.area_size_m);
       }
     };
+
+    // Load waveforms from first aligned frame
+    fetch(`/api/simulation/${simSessionId}/frame?index=0`)
+      .then((r) => r.json())
+      .then((fr) => {
+        if (fr.data?.targets?.length) {
+          updateSensingUI("sim", fr.data, fr.node_positions, fr.area_size_m);
+        }
+      })
+      .catch(() => {});
   } catch (err) {
     status.textContent = "Error: " + err.message;
   }
@@ -169,7 +195,7 @@ document.getElementById("btn-run-simulation").onclick = async () => {
 
 videoEl.addEventListener("timeupdate", () => {
   if (!simSessionId || !simWs || simWs.readyState !== WebSocket.OPEN) return;
-  const idx = Math.floor(videoEl.currentTime * 30);
+  const idx = Math.floor(videoEl.currentTime * simFps);
   document.getElementById("sim-time").textContent = `${videoEl.currentTime.toFixed(2)}s`;
   simWs.send(JSON.stringify({ type: "frame", index: idx }));
 });

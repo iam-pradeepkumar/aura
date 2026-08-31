@@ -20,8 +20,9 @@ SIM_DIR = ROOT / "simulation"
 sys.path.insert(0, str(SIM_DIR))
 
 from aura_processor import AURAPipeline, load_csi  # noqa: E402
-from aura_processor.multitarget import trim_csi_to_video  # noqa: E402
+from aura_processor.multitarget import trim_csi_to_video, _variance_band_targets  # noqa: E402
 from aura_processor.serialize import result_to_dict, target_to_dict  # noqa: E402
+from aura_processor.video_fusion import detect_people_from_video, fuse_csi_and_video  # noqa: E402
 from aura_processor.wireless import WirelessReceiver, DEFAULT_UDP_PORT  # noqa: E402
 
 
@@ -63,17 +64,45 @@ hardware_task: asyncio.Task | None = None
 pipeline_cfg = load_config()
 
 
-def build_pipeline(fs_hz: float = 20.0) -> AURAPipeline:
+def build_pipeline(fs_hz: float = 20.0, max_targets: int = 3) -> AURAPipeline:
     node_pos = {int(k): tuple(v) for k, v in pipeline_cfg.get("node_positions", {}).items()}
     area = pipeline_cfg.get("area_size_m", 10.0)
     return AURAPipeline(
         fs_hz=fs_hz,
         area_size_m=area,
         motion_threshold=pipeline_cfg.get("motion_threshold", 0.02),
-        max_targets=3,
+        max_targets=max_targets,
         window_sec=2.5,
         node_positions=node_pos,
     )
+
+
+def apply_targets_to_frame(frame: dict, targets: list[dict]) -> dict:
+    """Ensure every stored frame has count + localization."""
+    if not frame:
+        frame = {}
+    out = dict(frame)
+    out["targets"] = targets
+    out["target_count"] = len(targets)
+    return out
+
+
+def build_target_dicts(detections: list[dict]) -> list[dict]:
+    from aura_processor.localization import Target
+
+    targets = []
+    for i, d in enumerate(detections):
+        t = Target(
+            id=i + 1,
+            x_m=d["x_m"],
+            y_m=d["y_m"],
+            velocity_mps=d.get("velocity_mps", 0),
+            is_moving=d.get("velocity_mps", 0) > 0.12,
+            respiration_bpm=d.get("respiration_bpm", 0),
+            heartbeat_bpm=d.get("heartbeat_bpm", 0),
+        )
+        targets.append(target_to_dict(t))
+    return targets
 
 
 def align_results(results, video_duration_sec: float, n_frames: int) -> list[dict]:
@@ -98,7 +127,7 @@ async def index():
     return (STATIC_DIR / "index.html").read_text()
 
 
-PROCESSOR_VERSION = "2026.08.31-2"
+PROCESSOR_VERSION = "2026.08.31-3"
 
 
 @app.get("/api/version")
@@ -160,9 +189,41 @@ async def upload_simulation(
         if sample_rate:
             fs_hz = float(sample_rate)
 
-        pipe = build_pipeline(fs_hz=fs_hz)
-        results = pipe.process_session(csi, timestamps_ms, video_duration_sec=duration)
+        area = pipeline_cfg.get("area_size_m", 10.0)
+        video_count, video_people = detect_people_from_video(video_path, area_size_m=area)
+        max_targets = max(video_count, 1) if video_count else 3
+        max_targets = min(max_targets, 6)
+
+        pipe = build_pipeline(fs_hz=fs_hz, max_targets=max_targets)
+        results = pipe.process_session(
+            csi, timestamps_ms, video_duration_sec=duration, video_people=video_people or None
+        )
+
+        # Fuse CSI session targets with video layout — guarantees map + count
+        session_dets = list(pipe._session_targets)
+        if video_people:
+            session_dets = fuse_csi_and_video(
+                session_dets, video_people, area, max_targets=max_targets, fs_hz=fs_hz
+            )
+        if not session_dets and video_people:
+            from aura_processor.video_fusion import video_people_to_detections
+            session_dets = video_people_to_detections(video_people, fs_hz)
+        if not session_dets and results and any(r.motion_detected for r in results):
+            session_dets = _variance_band_targets(
+                csi, fs_hz, area, max_targets, pipe.sensor_xy
+            )
+
+        best = max(results, key=lambda r: (r.target_count, r.motion_energy)) if results else None
+        for det in session_dets:
+            if best:
+                det.setdefault("respiration_bpm", best.respiration_bpm)
+                det.setdefault("heartbeat_bpm", best.heartbeat_bpm)
+
+        target_dicts = build_target_dicts(session_dets)
         aligned = align_results(results, duration, n_frames)
+        if target_dicts:
+            aligned = [apply_targets_to_frame(f, target_dicts) for f in aligned]
+
         events = [e for e in pipe.tracker.events if _event_in_duration(e, duration)]
     except Exception as exc:
         shutil.rmtree(session_dir, ignore_errors=True)
@@ -193,6 +254,12 @@ async def upload_simulation(
         "csi_frames": len(csi),
         "subcarriers": int(csi.shape[1]),
         "sample_rate_hz": round(fs_hz, 2),
+        "video_people_detected": video_count,
+        "target_count": len(target_dicts),
+        "targets": target_dicts,
+        "motion_detected": bool(best.motion_detected) if best else len(target_dicts) > 0,
+        "respiration_bpm": round(best.respiration_bpm, 1) if best else 0,
+        "heartbeat_bpm": round(best.heartbeat_bpm, 1) if best else 0,
         "events": session.events,
     }
 

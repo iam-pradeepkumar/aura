@@ -57,8 +57,14 @@ class AURAPipeline:
         self.tracker.reset()
         self._session_targets = []
 
-    def set_session_targets(self, csi: np.ndarray) -> None:
-        """Pre-compute multi-person positions from full CSI session."""
+    def set_session_targets(
+        self,
+        csi: np.ndarray,
+        video_people: list | None = None,
+    ) -> None:
+        """Pre-compute multi-person positions from full CSI session (+ optional video hints)."""
+        from .video_fusion import fuse_csi_and_video, video_people_to_detections
+
         self._session_targets = detect_session_targets(
             csi,
             self.fs_hz,
@@ -68,10 +74,24 @@ class AURAPipeline:
         )
         if not self._session_targets:
             m_energy = float(np.mean(motion_energy(csi)))
-            if m_energy > self.motion_threshold:
+            if m_energy > self.motion_threshold * 0.5:
                 self._session_targets = _variance_band_targets(
                     csi, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
                 )
+
+        if video_people:
+            self._session_targets = fuse_csi_and_video(
+                self._session_targets,
+                video_people,
+                self.area_size_m,
+                self.max_targets,
+                self.fs_hz,
+            )
+        elif not self._session_targets:
+            # Motion in any window but CSI peaks failed — variance layout
+            self._session_targets = _variance_band_targets(
+                csi, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
+            )
 
     def process_window(
         self,
@@ -91,8 +111,11 @@ class AURAPipeline:
             cleaned, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy, skip_srcc=True
         )
 
-        # Merge with session-level targets (ensures all 3 people appear)
+        # Merge with session-level targets (ensures all people appear)
         detections = self._merge_session_and_window(window_dets)
+
+        if not detections and self._session_targets:
+            detections = [dict(s) for s in self._session_targets[: self.max_targets]]
 
         # Motion present but no targets — try every detection path on this window
         if motion and not detections:
@@ -219,9 +242,10 @@ class AURAPipeline:
         csi: np.ndarray,
         timestamps_ms: np.ndarray,
         video_duration_sec: float | None = None,
+        video_people: list | None = None,
     ) -> list[SensingResult]:
         self.reset()
-        self.set_session_targets(csi)
+        self.set_session_targets(csi, video_people=video_people)
 
         results = []
         n = len(csi)
