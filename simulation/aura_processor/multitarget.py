@@ -243,13 +243,13 @@ def estimate_person_count(
 
     # Distinct delay peaks — merged, prominence-ranked
     delay_n = _delay_peak_count(cleaned, gates, max_people)
+    band_n = _band_active_count(cleaned, max_people)
     if delay_n == 0:
         relaxed = _delay_peak_count_relaxed(cleaned, gates, max_people)
         if relaxed > 0:
             delay_n = relaxed
     elif delay_n > 6:
         delay_n = min(delay_n, band_n + 4 if band_n else 6)
-    band_n = _band_active_count(cleaned, max_people)
 
     try:
         mcurve = motion_energy(cleaned)
@@ -269,15 +269,14 @@ def estimate_person_count(
         pass
 
     parts: list[int] = []
-    if band_n >= 1:
+    if delay_n >= 1:
+        parts.append(delay_n)
+    if n_svd >= 1:
+        parts.append(n_svd)
+    if band_n >= 2 and band_n <= max(delay_n, n_svd, 1) + 1:
         parts.append(band_n)
-    if delay_n >= 2:
-        delay_use = min(delay_n, band_n + 2 if band_n >= 2 else delay_n)
-        parts.append(delay_use)
-    if temporal_n >= 2 and temporal_n <= band_n + 2:
+    if temporal_n >= 2 and temporal_n <= max(delay_n, n_svd, band_n, 1) + 1:
         parts.append(temporal_n)
-    if n_svd >= 2:
-        parts.append(min(n_svd, max(parts) if parts else n_svd))
 
     if not parts:
         if n_svd >= 1:

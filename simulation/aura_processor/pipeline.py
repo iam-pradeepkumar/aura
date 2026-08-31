@@ -57,7 +57,6 @@ class AURAPipeline:
         self.estimated_person_count: int = 0
         self.session_confidence: float = 0.0
         self.session_assessment: dict = {}
-        self._suppress_detections: bool = False
 
     def reset(self) -> None:
         self.tracker.reset()
@@ -65,7 +64,6 @@ class AURAPipeline:
         self.estimated_person_count = 0
         self.session_confidence = 0.0
         self.session_assessment = {}
-        self._suppress_detections = False
 
     def _sensor_xy(self, node_id: int) -> tuple[float, float]:
         return self.node_positions.get(node_id, self.sensor_xy)
@@ -134,9 +132,6 @@ class AURAPipeline:
             motion_level=m_energy,
             motion_threshold=self.motion_threshold,
         )
-
-        if self._suppress_detections:
-            window_dets = []
 
         detections = self._merge_session_and_window(window_dets)
         conf = detection_confidence(detections, m_energy, self.motion_threshold)
@@ -240,9 +235,6 @@ class AURAPipeline:
             self._session_targets = []
             self.estimated_person_count = 0
             self.session_confidence = 0.0
-            self._suppress_detections = True
-        else:
-            self._suppress_detections = False
 
         results = []
         n = len(csi)

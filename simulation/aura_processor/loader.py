@@ -9,9 +9,19 @@ from typing import Iterator
 import numpy as np
 import pandas as pd
 
+from .csi_orient import combine_amplitude_phase, orient_csi
+
 AURA_MAGIC = 0x41555241
 HEADER_FMT = "<IBBBBIIbBHHI"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)
+
+AMP_KEYS = ("amplitude", "csi_amp", "csi_amplitude", "amp", "A", "magnitude", "mag")
+PHASE_KEYS = ("phase", "csi_phase", "ph", "P", "angle", "csi_angle", "phase_rad")
+CSI_KEYS = (
+    "csi", "CSI", "data", "H", "csi_data", "cfm", "csi_all", "wifi_csi",
+    "csi_complex", "channel_state", "cfm_data",
+)
+TIMESTAMP_KEYS = ("timestamp_ms", "timestamps_ms", "timestamp", "timestamps", "ts", "time", "t")
 
 
 def load_csi(path: str | Path, sample_rate_hz: float | None = None) -> dict:
@@ -47,48 +57,55 @@ def iq_to_complex(iq: np.ndarray) -> np.ndarray:
     raise ValueError("Expected 1-D interleaved I/Q buffer")
 
 
-def _to_complex_2d(arr: np.ndarray) -> np.ndarray:
-    """Normalize various CSI array layouts to (frames, subcarriers) complex."""
-    arr = np.asarray(arr)
+def _to_complex_2d(arr: np.ndarray) -> tuple[np.ndarray, dict]:
+    """Normalize various CSI layouts to (frames, subcarriers) complex."""
+    csi, info = orient_csi(arr)
+    return csi, info
 
-    if np.iscomplexobj(arr):
-        out = arr
-    elif arr.ndim == 4:
-        # (packets, tones, nrx, ntx) — Intel/Atheros/csiread container
-        out = arr[:, :, 0, 0]
-        if not np.iscomplexobj(out):
-            out = out.astype(np.complex64)
-    elif arr.ndim == 3:
-        if arr.shape[-1] == 2:
-            # (T, N, 2) real/imag
-            out = arr[..., 0] + 1j * arr[..., 1]
-        elif arr.shape[1] == 2:
-            # (T, 2, N)
-            out = arr[:, 0, :] + 1j * arr[:, 1, :]
-        else:
-            # (T, nrx, tones) — take first antenna
-            out = arr[:, 0, :].astype(np.complex64)
-    elif arr.ndim == 2:
-        if arr.shape[1] % 2 == 0 and not np.iscomplexobj(arr):
-            # Possibly interleaved I/Q columns
-            try:
-                out = iq_to_complex(arr[0])  # test one row
-                out = np.stack([iq_to_complex(row) for row in arr])
-            except Exception:
-                out = arr.astype(np.complex64)
-        else:
-            out = arr.astype(np.complex64)
-    else:
-        raise ValueError(f"Cannot interpret CSI shape {arr.shape}")
 
-    if out.ndim != 2:
-        out = out.reshape(out.shape[0], -1)
+def _try_amp_phase(meta: dict) -> np.ndarray | None:
+    """Build complex CSI from separate amplitude + phase fields (common in .mat exports)."""
+    amp_key = next((k for k in AMP_KEYS if k in meta), None)
+    ph_key = next((k for k in PHASE_KEYS if k in meta), None)
+    if not amp_key or not ph_key:
+        for k in meta:
+            kl = k.lower()
+            if amp_key is None and any(x in kl for x in ("amplitude", "csi_amp", "magnitude")):
+                amp_key = k
+            if ph_key is None and any(x in kl for x in ("phase", "csi_phase", "angle")):
+                ph_key = k
+    if amp_key and ph_key:
+        return combine_amplitude_phase(np.asarray(meta[amp_key]), np.asarray(meta[ph_key]))
+    return None
 
-    # Common mistake: (subcarriers, packets) instead of (packets, subcarriers)
-    if out.shape[0] < out.shape[1] and out.shape[0] <= 256 and out.shape[1] >= 500:
-        out = out.T
 
-    return out.astype(np.complex64)
+def _find_csi_array(meta: dict) -> tuple[np.ndarray | None, str]:
+    """Locate CSI in metadata — prefer complex fields over amplitude-only."""
+    combined = _try_amp_phase(meta)
+    if combined is not None:
+        return combined, "amplitude+phase"
+
+    for k in CSI_KEYS:
+        if k in meta and hasattr(meta[k], "shape"):
+            return np.asarray(meta[k]), k
+
+    for k in meta:
+        if "csi" in k.lower() and hasattr(meta[k], "shape"):
+            return np.asarray(meta[k]), k
+
+    best, best_size, best_key = None, 0, ""
+    for k, v in meta.items():
+        try:
+            arr = np.asarray(v)
+            if arr.ndim >= 2 and arr.size > best_size:
+                if k.lower() in AMP_KEYS and _try_amp_phase(meta) is None:
+                    continue
+                best, best_size, best_key = arr, arr.size, k
+        except Exception:
+            continue
+    if best is not None:
+        return best, best_key
+    return None, ""
 
 
 def _extract_timestamps(
@@ -121,8 +138,7 @@ def _extract_node_ids(meta: dict, n_frames: int) -> np.ndarray:
     return np.zeros(n_frames, dtype=np.int32)
 
 
-CSI_KEYS = ("csi", "CSI", "data", "H", "csi_data", "cfm", "amplitude", "csi_amp", "csi_all")
-TIMESTAMP_KEYS = ("timestamp_ms", "timestamps_ms", "timestamp", "timestamps", "ts", "time", "t")
+CSI_KEYS_LEGACY = CSI_KEYS  # backwards compat for internal refs
 
 
 def _meta_from_npz(data: np.lib.npyio.NpzFile) -> dict:
@@ -130,23 +146,34 @@ def _meta_from_npz(data: np.lib.npyio.NpzFile) -> dict:
 
 
 def _find_csi_key(meta: dict) -> str | None:
-    for k in CSI_KEYS:
-        if k in meta:
-            return k
-    # Fuzzy: any array key containing 'csi'
-    for k in meta:
-        if "csi" in k.lower() and hasattr(meta[k], "shape"):
-            return k
-    # Largest numeric array fallback
-    best, best_size = None, 0
-    for k, v in meta.items():
-        try:
-            arr = np.asarray(v)
-            if arr.ndim >= 2 and arr.size > best_size:
-                best, best_size = k, arr.size
-        except Exception:
-            continue
-    return best
+    arr, key = _find_csi_array(meta)
+    return key if arr is not None else None
+
+
+def _pack_load_result(
+    csi: np.ndarray,
+    orient_info: dict,
+    meta: dict,
+    n_frames: int,
+    sample_rate_hz: float | None,
+    source: str,
+    source_field: str = "",
+) -> dict:
+    timestamps, fs = _extract_timestamps(meta, n_frames, sample_rate_hz)
+    node_ids = _extract_node_ids(meta, n_frames)
+    load_info = {
+        "source_field": source_field,
+        "format": Path(source).suffix.lower(),
+        **orient_info,
+    }
+    return {
+        "csi": csi,
+        "timestamps_ms": timestamps,
+        "node_ids": node_ids,
+        "sample_rate_hz": fs,
+        "source": source,
+        "load_info": load_info,
+    }
 
 
 def load_csi_npy(path: str | Path, sample_rate_hz: float | None = None) -> dict:
@@ -161,14 +188,16 @@ def load_csi_npy(path: str | Path, sample_rate_hz: float | None = None) -> dict:
         return load_csi_npz(path, sample_rate_hz=sample_rate_hz)
 
     meta: dict = {}
+    csi_key = "array"
     if isinstance(raw, np.ndarray) and raw.dtype == object:
         item = raw.item()
         if isinstance(item, dict):
             meta = item
-            csi_key = _find_csi_key(meta)
-            if csi_key is None:
+            raw, source_field = _find_csi_array(meta)
+            if raw is None:
                 raise ValueError(f".npy dict must contain CSI array. Keys: {list(meta.keys())}")
-            arr = meta[csi_key]
+            arr = raw
+            csi_key = source_field
         else:
             arr = item
     else:
@@ -183,17 +212,11 @@ def load_csi_npy(path: str | Path, sample_rate_hz: float | None = None) -> dict:
             else:
                 meta = {"meta": meta_obj}
 
-    csi = _to_complex_2d(arr)
-    timestamps, fs = _extract_timestamps(meta, len(csi), sample_rate_hz)
-    node_ids = _extract_node_ids(meta, len(csi))
-
-    return {
-        "csi": csi,
-        "timestamps_ms": timestamps,
-        "node_ids": node_ids,
-        "sample_rate_hz": fs,
-        "source": str(path),
-    }
+    csi, orient_info = _to_complex_2d(arr)
+    return _pack_load_result(
+        csi, orient_info, meta, len(csi), sample_rate_hz, str(path),
+        source_field=csi_key or "array",
+    )
 
 
 def load_csi_npz(path: str | Path, sample_rate_hz: float | None = None) -> dict:
@@ -201,26 +224,20 @@ def load_csi_npz(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     path = Path(path)
     data = np.load(path, allow_pickle=True)
     meta = _meta_from_npz(data)
-    csi_key = _find_csi_key(meta)
-    if csi_key is None:
+    raw, source_field = _find_csi_array(meta)
+    if raw is None:
         raise ValueError(f".npz must contain CSI array. Found keys: {list(meta.keys())}")
-    csi = _to_complex_2d(meta[csi_key])
-    timestamps, fs = _extract_timestamps(meta, len(csi), sample_rate_hz)
-    node_ids = _extract_node_ids(meta, len(csi))
-    return {
-        "csi": csi,
-        "timestamps_ms": timestamps,
-        "node_ids": node_ids,
-        "sample_rate_hz": fs,
-        "source": str(path),
-    }
+    csi, orient_info = _to_complex_2d(raw)
+    orient_info["source_field"] = source_field
+    return _pack_load_result(
+        csi, orient_info, meta, len(csi), sample_rate_hz, str(path), source_field=source_field,
+    )
 
 
 def load_csi_mat(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     """
-    Load .mat CSI (Intel 5300 / csiread / WiDFS exports).
-
-    Tries csiread if installed; otherwise scipy.io.loadmat with common field names.
+    Load .mat CSI — complex arrays, separate amplitude+phase, Intel/csiread layouts.
+    Supports (antennas, subcarriers, packets) and (packets, subcarriers) orientations.
     """
     path = Path(path)
 
@@ -231,41 +248,63 @@ def load_csi_mat(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     except ImportError:
         pass
 
-    from scipy.io import loadmat
-
-    mat = loadmat(path, squeeze_me=True, struct_as_record=False)
-    meta = {k: v for k, v in mat.items() if not k.startswith("__")}
-
-    csi_key = next((k for k in ("csi", "CSI", "data", "csi_data", "H", "cfm") if k in meta), None)
-    if csi_key is None:
+    meta = _load_mat_meta(path)
+    raw, source_field = _find_csi_array(meta)
+    if raw is None:
         raise ValueError(
-            f"No CSI field in {path.name}. Expected one of: csi, CSI, data, csi_data. "
-            f"Found: {list(meta.keys())}"
+            f"No CSI in {path.name}. Need complex 'csi', or amplitude+phase fields. "
+            f"Found keys: {list(meta.keys())}"
         )
 
-    raw = meta[csi_key]
+    orient_info: dict = {"source_field": source_field}
 
-    # MATLAB cell array of per-packet CSI
     if isinstance(raw, np.ndarray) and raw.dtype == object:
-        frames = []
+        frames: list[np.ndarray] = []
+        infos: list[dict] = []
         for cell in raw.ravel():
-            frames.append(_to_complex_2d(np.asarray(cell)))
-        # Pad to same subcarrier count
-        max_sc = max(f.shape[-1] for f in frames)
-        csi = np.stack([np.pad(f, ((0, 0), (0, max_sc - f.shape[1])), mode="edge") for f in frames])
+            f, inf = _to_complex_2d(np.asarray(cell))
+            frames.append(f)
+            infos.append(inf)
+        max_sc = max(f.shape[1] for f in frames)
+        csi = np.stack([
+            np.pad(f, ((0, 0), (0, max_sc - f.shape[1])), mode="edge") for f in frames
+        ])
+        orient_info = {"cell_array": True, "n_cells": len(frames), **infos[0]}
     else:
-        csi = _to_complex_2d(np.asarray(raw))
+        csi, orient_info = _to_complex_2d(np.asarray(raw))
+        orient_info["source_field"] = source_field
 
-    timestamps, fs = _extract_timestamps(meta, len(csi), sample_rate_hz)
-    node_ids = _extract_node_ids(meta, len(csi))
+    return _pack_load_result(
+        csi, orient_info, meta, len(csi), sample_rate_hz, str(path), source_field=source_field,
+    )
 
-    return {
-        "csi": csi,
-        "timestamps_ms": timestamps,
-        "node_ids": node_ids,
-        "sample_rate_hz": fs,
-        "source": str(path),
-    }
+
+def _load_mat_meta(path: Path) -> dict:
+    from scipy.io import loadmat
+
+    try:
+        mat = loadmat(path, squeeze_me=True, struct_as_record=False)
+        return {k: v for k, v in mat.items() if not k.startswith("__")}
+    except NotImplementedError:
+        return _load_mat_h5(path)
+
+
+def _load_mat_h5(path: Path) -> dict:
+    """MATLAB v7.3 HDF5 .mat files."""
+    import h5py
+
+    meta: dict = {}
+    with h5py.File(path, "r") as f:
+        for key in f.keys():
+            if key.startswith("#"):
+                continue
+            obj = f[key]
+            if isinstance(obj, h5py.Dataset):
+                data = obj[()]
+                if data.dtype.names and "real" in data.dtype.names:
+                    data = data["real"] + 1j * data["imag"]
+                meta[key] = np.array(data)
+    return meta
 
 
 def _load_mat_csiread(path: Path, sample_rate_hz: float | None) -> dict:
@@ -273,27 +312,14 @@ def _load_mat_csiread(path: Path, sample_rate_hz: float | None) -> dict:
 
     reader = csiread.Intel(str(path))
     reader.read()
-    csi = reader.csi
-    if csi.ndim == 4:
-        csi = csi[:, :, 0, 0]
-    csi = _to_complex_2d(csi)
-
+    csi, orient_info = _to_complex_2d(reader.csi)
+    meta: dict = {}
     if hasattr(reader, "timestamp") and len(reader.timestamp) == len(csi):
-        ts = np.asarray(reader.timestamp, dtype=np.float64)
-        if ts.max() < 1000:
-            ts = ts * 1000.0
-    else:
-        fs = sample_rate_hz or 1000.0
-        ts = np.arange(len(csi)) * (1000.0 / fs)
-
-    fs = sample_rate_hz or _estimate_fs(ts)
-    return {
-        "csi": csi,
-        "timestamps_ms": ts,
-        "node_ids": np.zeros(len(csi), dtype=np.int32),
-        "sample_rate_hz": fs,
-        "source": str(path),
-    }
+        meta["timestamp"] = reader.timestamp
+    return _pack_load_result(
+        csi, {**orient_info, "loader": "csiread"}, meta, len(csi), sample_rate_hz, str(path),
+        source_field="csiread",
+    )
 
 
 def load_csi_csv(path: str | Path) -> dict:

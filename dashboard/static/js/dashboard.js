@@ -258,8 +258,10 @@ document.getElementById("btn-run-simulation").onclick = async () => {
     if (warn) status.textContent += ` — ${warn}`;
     document.getElementById("sim-meta").textContent =
       `${json.duration_sec}s · ${json.n_frames} frames · count ${json.target_count ?? 0}` +
+      (json.csi_load?.frames ? ` · CSI ${json.csi_load.frames}×${json.csi_load.subcarriers}` : "") +
+      (json.csi_load?.has_phase === false ? " · ⚠ no phase" : "") +
       (json.confidence != null ? ` · conf ${(json.confidence * 100).toFixed(0)}%` : "") +
-      (json.reliable === false ? " · ⚠ mismatch/low confidence" : "");
+      (json.reliable === false ? " · ⚠ low confidence" : "");
     document.getElementById("sim-events").innerHTML =
       (json.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
 

@@ -31,7 +31,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-13"
+PROCESSOR_VERSION = "2026.08.31-14"
 
 
 def load_config() -> dict:
@@ -162,6 +162,7 @@ async def upload_simulation(
             shutil.copyfileobj(csi.file, f)
 
         data = load_csi(csi_path, sample_rate_hz=sample_rate)
+        load_info = data.get("load_info", {})
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise ValueError("Cannot open video file")
@@ -175,6 +176,8 @@ async def upload_simulation(
         )
         if sample_rate:
             fs_hz = float(sample_rate)
+        elif data.get("sample_rate_hz", 0) > 25:
+            fs_hz = float(data["sample_rate_hz"])
 
         pipe = build_pipeline(fs_hz=fs_hz)
         results = pipe.process_session(
@@ -222,6 +225,15 @@ async def upload_simulation(
         "confidence": assessment.get("confidence", preview.get("confidence", 0)),
         "reliable": assessment.get("reliable", True),
         "warnings": assessment.get("warnings", []),
+        "csi_load": {
+            "format": load_info.get("format", csi_ext),
+            "source_field": load_info.get("source_field", ""),
+            "input_shape": list(load_info.get("input_shape", [])),
+            "frames": load_info.get("n_frames", len(csi)),
+            "subcarriers": load_info.get("n_subcarriers", int(csi.shape[1])),
+            "has_phase": load_info.get("has_phase", True),
+            "combined_antennas": load_info.get("combined_antennas"),
+        },
         "targets": preview.get("targets", []),
         "motion_detected": preview.get("motion_detected", False),
         "respiration_bpm": preview.get("respiration_bpm", 0),

@@ -44,9 +44,16 @@ def phase_unwrap(csi: np.ndarray) -> np.ndarray:
 
 
 def motion_energy(csi: np.ndarray, window: int = 32) -> np.ndarray:
-    """Per-frame motion metric from amplitude variance across subcarriers."""
+    """Per-frame motion from amplitude + phase dynamics (uses full complex CSI)."""
     amp = amplitude(csi)
-    var_sc = np.var(amp, axis=1)
+    amp_var = np.var(amp, axis=1)
+    ph = np.angle(csi)
+    if ph.shape[0] > 1:
+        ph_diff = np.diff(ph, axis=0, prepend=ph[:1])
+        phase_var = np.var(ph_diff, axis=1)
+    else:
+        phase_var = np.zeros(len(amp_var))
+    combined = amp_var + 0.45 * phase_var
     if window > 1:
-        return gaussian_filter1d(var_sc, sigma=window / 6.0)
-    return var_sc
+        return gaussian_filter1d(combined, sigma=window / 6.0)
+    return combined

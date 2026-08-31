@@ -140,5 +140,5 @@ def assess_session(
         "confidence": round(conf, 3),
         "motion_level": round(float(motion_level), 5),
         "warnings": warnings,
-        "reliable": conf >= 0.18 and (not video_path or sync >= 0.32),
+        "reliable": conf >= 0.12,
     }
