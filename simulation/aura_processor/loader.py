@@ -321,6 +321,113 @@ def load_csi_npz(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     )
 
 
+def _mat_file_kind(path: Path) -> str:
+    """
+    Classify .mat files:
+    - mat73: MATLAB 7.3 HDF5-based .mat
+    - hdf5: plain HDF5 saved with .mat extension
+    - scipy: MATLAB v4/v5/v6/v7.2
+    """
+    with path.open("rb") as f:
+        head = f.read(128)
+    if head.startswith(b"\x89HDF\r\n"):
+        return "hdf5"
+    if head.startswith(b"MATLAB 7.3") or (len(head) > 125 and head[124:126] == b"\x00\x02"):
+        return "mat73"
+    return "scipy"
+
+
+def _is_hdf5_file(path: Path) -> bool:
+    return _mat_file_kind(path) in ("hdf5", "mat73")
+
+
+def _h5_read_node(obj) -> object:
+    """Read one HDF5 dataset or group into numpy / nested dict."""
+    import h5py
+
+    if isinstance(obj, h5py.Dataset):
+        data = obj[()]
+        if getattr(data, "dtype", None) is not None and data.dtype.names:
+            if "real" in data.dtype.names and "imag" in data.dtype.names:
+                arr = data["real"] + 1j * data["imag"]
+            else:
+                arr = np.array(data)
+        else:
+            arr = np.array(data)
+        if isinstance(arr, np.ndarray) and arr.ndim >= 2 and np.issubdtype(arr.dtype, np.number):
+            arr = arr.T
+        return arr
+
+    if isinstance(obj, h5py.Group):
+        if "real" in obj and "imag" in obj:
+            real = np.array(obj["real"][()])
+            imag = np.array(obj["imag"][()])
+            arr = real + 1j * imag
+            if arr.ndim >= 2:
+                arr = arr.T
+            return arr
+        out: dict = {}
+        for key in obj.keys():
+            out[key] = _h5_read_node(obj[key])
+        return out
+
+    return None
+
+
+def _flatten_mat_meta(meta: dict, prefix: str = "") -> dict:
+    """Flatten nested dicts from HDF5 groups so CSI fields are discoverable."""
+    flat: dict = {}
+    for key, val in meta.items():
+        full = f"{prefix}.{key}" if prefix else key
+        if isinstance(val, dict):
+            flat.update(_flatten_mat_meta(val, full))
+        else:
+            flat[full] = val
+    return flat
+
+
+def _load_mat_h5(path: Path) -> dict:
+    """MATLAB v7.3 HDF5 .mat files and plain HDF5 CSI exports."""
+    if _mat_file_kind(path) == "mat73":
+        try:
+            import mat73
+
+            return mat73.loadmat(str(path))
+        except Exception:
+            pass
+
+    import h5py
+
+    meta: dict = {}
+    with h5py.File(path, "r") as f:
+        for key in f.keys():
+            if key.startswith("#"):
+                continue
+            meta[key] = _h5_read_node(f[key])
+
+    if not meta:
+        raise ValueError(f"No variables found in HDF5 file {path.name}")
+    return meta
+
+
+def _load_mat_meta(path: Path) -> dict:
+    kind = _mat_file_kind(path)
+    if kind in ("hdf5", "mat73"):
+        return _load_mat_h5(path)
+
+    from scipy.io import loadmat
+
+    try:
+        mat = loadmat(path, squeeze_me=True, struct_as_record=False)
+        return {k: v for k, v in mat.items() if not k.startswith("__")}
+    except NotImplementedError:
+        return _load_mat_h5(path)
+    except ValueError as exc:
+        if "Unknown mat file type" in str(exc):
+            return _load_mat_h5(path)
+        raise
+
+
 def load_csi_mat(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     """
     Load .mat CSI — complex arrays, separate amplitude+phase, Intel/csiread layouts.
@@ -329,21 +436,29 @@ def load_csi_mat(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     path = Path(path)
 
     try:
-        import csiread  # type: ignore
+        meta = _flatten_mat_meta(_load_mat_meta(path))
+    except Exception as primary_exc:
+        try:
+            return _load_mat_csiread(path, sample_rate_hz)
+        except ImportError:
+            raise primary_exc
+        except Exception:
+            raise primary_exc from None
 
-        return _load_mat_csiread(path, sample_rate_hz)
-    except ImportError:
-        pass
-
-    meta = _load_mat_meta(path)
     raw, source_field = _find_csi_array(meta)
     if raw is None:
+        try:
+            return _load_mat_csiread(path, sample_rate_hz)
+        except ImportError:
+            pass
+        except Exception:
+            pass
         raise ValueError(
             f"No CSI in {path.name}. Need complex 'csi', or amplitude+phase fields. "
             f"Found keys: {list(meta.keys())}"
         )
 
-    orient_info: dict = {"source_field": source_field}
+    orient_info: dict = {"source_field": source_field, "mat_loader": "hdf5" if _is_hdf5_file(path) else "scipy"}
 
     if isinstance(raw, np.ndarray) and raw.dtype == object:
         frames: list[np.ndarray] = []
@@ -364,34 +479,6 @@ def load_csi_mat(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     return _pack_load_result(
         csi, orient_info, meta, len(csi), sample_rate_hz, str(path), source_field=source_field,
     )
-
-
-def _load_mat_meta(path: Path) -> dict:
-    from scipy.io import loadmat
-
-    try:
-        mat = loadmat(path, squeeze_me=True, struct_as_record=False)
-        return {k: v for k, v in mat.items() if not k.startswith("__")}
-    except NotImplementedError:
-        return _load_mat_h5(path)
-
-
-def _load_mat_h5(path: Path) -> dict:
-    """MATLAB v7.3 HDF5 .mat files."""
-    import h5py
-
-    meta: dict = {}
-    with h5py.File(path, "r") as f:
-        for key in f.keys():
-            if key.startswith("#"):
-                continue
-            obj = f[key]
-            if isinstance(obj, h5py.Dataset):
-                data = obj[()]
-                if data.dtype.names and "real" in data.dtype.names:
-                    data = data["real"] + 1j * data["imag"]
-                meta[key] = np.array(data)
-    return meta
 
 
 def _load_mat_csiread(path: Path, sample_rate_hz: float | None) -> dict:
