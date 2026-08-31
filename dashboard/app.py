@@ -127,7 +127,7 @@ async def index():
     return (STATIC_DIR / "index.html").read_text()
 
 
-PROCESSOR_VERSION = "2026.08.31-3"
+PROCESSOR_VERSION = "2026.08.31-4"
 
 
 @app.get("/api/version")

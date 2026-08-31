@@ -16,31 +16,67 @@ class VideoPerson:
     is_moving: bool = False
 
 
-def detect_people_from_video(
-    video_path: str,
-    area_size_m: float = 10.0,
-    n_samples: int = 9,
-) -> tuple[int, list[VideoPerson]]:
-    """
-    Estimate how many people are in the scene and their approximate floor positions.
-    Uses OpenCV HOG on several frames (no extra model download).
-    """
+def _hog_detector():
+    """Return HOG people detector when available (OpenCV 4.x full builds)."""
+    try:
+        if not hasattr(cv2, "HOGDescriptor"):
+            return None
+        hog = cv2.HOGDescriptor()
+        if hasattr(cv2, "HOGDescriptor_getDefaultPeopleDetector"):
+            hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+            return hog
+    except Exception:
+        pass
+    return None
+
+
+def _read_sample_frames(video_path: str, n_samples: int) -> list[np.ndarray]:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
-        return 0, []
-
+        return []
     n_frames = max(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)), 1)
-    hog = cv2.HOGDescriptor()
-    hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-
-    per_frame: list[list[tuple[float, float, float, float]]] = []
     sample_idx = np.linspace(0, n_frames - 1, min(n_samples, n_frames), dtype=int)
-
+    frames: list[np.ndarray] = []
     for idx in sample_idx:
         cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
         ok, frame = cap.read()
-        if not ok or frame is None:
+        if ok and frame is not None:
+            frames.append(frame)
+    cap.release()
+    return frames
+
+
+def _blobs_from_contours(
+    contours: list,
+    frame_shape: tuple[int, int, int],
+) -> list[tuple[float, float, float, float]]:
+    """Convert contours to normalized (cx, foot_y, size_norm, confidence) detections."""
+    h, w = frame_shape[:2]
+    people: list[tuple[float, float, float, float]] = []
+    for cnt in contours:
+        x, y, rw, rh = cv2.boundingRect(cnt)
+        area = rw * rh
+        frame_area = h * w
+        if area < 0.004 * frame_area or area > 0.5 * frame_area:
             continue
+        aspect = rh / max(rw, 1)
+        if aspect < 1.0 or rh < 0.12 * h:
+            continue
+        cx = (x + rw * 0.5) / w
+        foot_y = min((y + rh) / h, 0.98)
+        size_norm = float(np.clip(rw / w, 0.05, 0.55))
+        conf = float(np.clip(np.sqrt(area / frame_area) * 3.5, 0.35, 0.95))
+        people.append((cx, foot_y, size_norm, conf))
+    return people
+
+
+def _detect_with_hog(frames: list[np.ndarray]) -> list[list[tuple[float, float, float, float]]]:
+    hog = _hog_detector()
+    if hog is None:
+        return []
+
+    per_frame: list[list[tuple[float, float, float, float]]] = []
+    for frame in frames:
         h, w = frame.shape[:2]
         rects, weights = hog.detectMultiScale(
             frame,
@@ -58,8 +94,66 @@ def detect_people_from_video(
             size_norm = float(np.clip(rw / w, 0.05, 0.55))
             people.append((cx, foot_y, size_norm, float(wt)))
         per_frame.append(people)
+    return per_frame
 
-    cap.release()
+
+def _detect_with_motion_and_bg(frames: list[np.ndarray]) -> list[list[tuple[float, float, float, float]]]:
+    """
+    Person blobs via background subtraction + frame differencing.
+    Works on OpenCV builds without HOGDescriptor (e.g. OpenCV 5 headless).
+    """
+    if not frames:
+        return []
+
+    per_frame: list[list[tuple[float, float, float, float]]] = []
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
+    # Temporal range per pixel — highlights anything that moved across samples
+    grays = []
+    for frame in frames:
+        g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        g = cv2.GaussianBlur(g, (5, 5), 0)
+        grays.append(g)
+    stack = np.stack(grays)
+    temporal = (np.max(stack, axis=0) - np.min(stack, axis=0)).astype(np.uint8)
+    _, temporal_mask = cv2.threshold(temporal, 12, 255, cv2.THRESH_BINARY)
+    temporal_mask = cv2.morphologyEx(temporal_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    subtractor = cv2.createBackgroundSubtractorMOG2(history=80, detectShadows=False)
+
+    for i, frame in enumerate(frames):
+        h, w = frame.shape[:2]
+        fg = subtractor.apply(frame)
+        fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, kernel, iterations=1)
+        fg = cv2.morphologyEx(fg, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+        combined = cv2.bitwise_or(fg, temporal_mask)
+
+        # Silhouette pass for mostly-static people (Otsu on lower scene)
+        gray = grays[i]
+        roi_y = int(h * 0.15)
+        roi = gray[roi_y:, :]
+        _, sil = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        sil = cv2.morphologyEx(sil, cv2.MORPH_OPEN, kernel, iterations=1)
+        sil_full = np.zeros_like(gray)
+        sil_full[roi_y:, :] = sil
+        combined = cv2.bitwise_or(combined, sil_full)
+
+        if i > 0:
+            diff = cv2.absdiff(grays[i], grays[i - 1])
+            _, diff_mask = cv2.threshold(diff, 18, 255, cv2.THRESH_BINARY)
+            combined = cv2.bitwise_or(combined, diff_mask)
+
+        contours, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        per_frame.append(_blobs_from_contours(contours, frame.shape))
+
+    return per_frame
+
+
+def _cluster_detections(
+    per_frame: list[list[tuple[float, float, float, float]]],
+    area_size_m: float,
+) -> tuple[int, list[VideoPerson]]:
     if not per_frame:
         return 0, []
 
@@ -68,7 +162,6 @@ def detect_people_from_video(
     if person_count == 0:
         return 0, []
 
-    # Collect detections from frames with the highest count
     best_frames = [p for p in per_frame if len(p) == person_count]
     pool = best_frames if best_frames else per_frame
     flat = [det for frame in pool for det in frame]
@@ -99,6 +192,26 @@ def detect_people_from_video(
     return person_count, people
 
 
+def detect_people_from_video(
+    video_path: str,
+    area_size_m: float = 10.0,
+    n_samples: int = 9,
+) -> tuple[int, list[VideoPerson]]:
+    """
+    Estimate how many people are in the scene and their approximate floor positions.
+    Uses HOG when available, otherwise motion/background blob detection.
+    """
+    frames = _read_sample_frames(video_path, n_samples)
+    if not frames:
+        return 0, []
+
+    per_frame = _detect_with_hog(frames)
+    if not per_frame or max((len(p) for p in per_frame), default=0) == 0:
+        per_frame = _detect_with_motion_and_bg(frames)
+
+    return _cluster_detections(per_frame, area_size_m)
+
+
 def _video_norm_to_xy(
     cx: float,
     foot_y: float,
@@ -108,7 +221,6 @@ def _video_norm_to_xy(
 ) -> VideoPerson:
     """Map normalized video coords to room meters (sensor at bottom-center)."""
     x_m = float(np.clip(cx * area_size_m, 0.8, area_size_m - 0.8))
-    # Larger bbox → closer to camera (bottom of frame) → smaller Y in room map
     depth = 1.0 - size_norm * 1.6
     y_m = float(np.clip(foot_y * area_size_m * depth + 1.2, 0.8, area_size_m - 0.8))
     return VideoPerson(x_m=x_m, y_m=y_m, confidence=confidence)
