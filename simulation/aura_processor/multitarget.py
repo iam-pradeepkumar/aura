@@ -8,7 +8,44 @@ from scipy.signal import find_peaks, stft, detrend
 from .srcc import srcc, motion_energy
 
 CLUSTER_EPS_M = 1.35
-MAX_PEOPLE_DEFAULT = 6
+MAX_PEOPLE_DEFAULT = 8
+
+
+def adaptive_cluster_eps(expected_people: int, area_size_m: float) -> float:
+    """Tighter clustering when more people are expected (keeps targets separated)."""
+    n = max(expected_people, 1)
+    return float(np.clip(area_size_m / (n * 1.45 + 2.0), 0.85, 2.2))
+
+
+def _min_pairwise_distance(dets: list[dict]) -> float:
+    if len(dets) < 2:
+        return 99.0
+    pts = np.array([(d["x_m"], d["y_m"]) for d in dets])
+    min_d = 99.0
+    for i in range(len(pts)):
+        for j in range(i + 1, len(pts)):
+            min_d = min(min_d, float(np.linalg.norm(pts[i] - pts[j])))
+    return min_d
+
+
+def _resolve_target_count(
+    session_dets: list[dict],
+    cleaned: np.ndarray,
+    m_level: float,
+    motion_threshold: float,
+    max_targets: int,
+    expected_count: int | None,
+) -> int:
+    """Pick final person count from CSI estimate + separated cluster count."""
+    recount = estimate_person_count(cleaned, m_level, motion_threshold, max_people=max_targets)
+    cluster_n = len(session_dets)
+    sep = _min_pairwise_distance(session_dets)
+    base = max(recount, expected_count or 0, 1)
+    if cluster_n > base and sep >= 1.2 and (cluster_n - base) <= 2:
+        return min(max_targets, cluster_n)
+    if recount > 0:
+        return min(max_targets, max(base, recount))
+    return min(max_targets, max(1, cluster_n))
 
 
 def _count_svd_sources(s: np.ndarray, svd_ratio: float, max_people: int) -> int:
@@ -92,14 +129,14 @@ def _band_active_count(cleaned: np.ndarray, max_people: int) -> int:
     n_sc = cleaned.shape[1]
     if n_sc < 6:
         return 0
-    n_bands = min(max_people, max(3, n_sc // 5))
+    n_bands = min(max_people, max(4, n_sc // 4))
     bands = np.array_split(np.arange(n_sc), n_bands)
     amp = np.abs(cleaned)
     band_vars = [float(np.mean(np.var(amp[:, b], axis=1))) for b in bands if len(b) > 1]
     if not band_vars:
         return 0
     med = float(np.median(band_vars))
-    thresh = med * 1.12
+    thresh = med * 1.08
     return int(np.sum(np.array(band_vars) > thresh))
 
 
@@ -147,15 +184,18 @@ def estimate_person_count(
 
     # Distinct delay peaks — merged, prominence-ranked
     delay_n = _delay_peak_count(cleaned, gates, max_people)
-    if delay_n == 0:
-        delay_n = _delay_peak_count_relaxed(cleaned, gates, max_people)
-    if delay_n > 0:
-        estimates.append(delay_n)
-
+    if delay_n == 0 or delay_n > 5:
+        relaxed = _delay_peak_count_relaxed(cleaned, gates, max_people)
+        if relaxed > 0:
+            delay_n = relaxed if delay_n == 0 else min(delay_n, relaxed + 1)
     band_n = _band_active_count(cleaned, max_people)
     n_svd = estimates[0] if estimates else 0
-    if band_n >= 2 and 2 <= delay_n <= 3 and n_svd >= 2 and max_people >= 3:
-        estimates.append(3)
+    cap_hint = max(band_n, n_svd, 1)
+    if delay_n > 0:
+        if delay_n <= cap_hint + 2:
+            estimates.append(delay_n)
+        elif delay_n <= 4:
+            estimates.append(min(delay_n, cap_hint + 1))
     if band_n >= 2:
         estimates.append(band_n)
 
@@ -185,14 +225,14 @@ def estimate_person_count(
     peak_est = max(estimates)
     med_est = float(np.median(estimates))
     # Drop outlier estimates (e.g. noisy delay peaks) before voting
-    filtered = [e for e in estimates if e <= med_est + 1.5 and e >= max(1, med_est - 1.5)]
+    filtered = [e for e in estimates if e <= med_est + 1.0 and e >= max(1, med_est - 1.0)]
     if not filtered:
         filtered = estimates
     count = int(np.round(np.median(filtered)))
     agree_peak = sum(1 for e in filtered if e >= peak_est)
     if agree_peak >= 2 and peak_est > count:
         count = peak_est
-    elif ratio >= 2.5 and peak_est > count and agree_peak >= 1:
+    elif peak_est > count and ratio >= 1.8:
         count = min(peak_est, count + 1)
     return int(np.clip(count, 1, max_people))
 
@@ -567,7 +607,11 @@ def detect_and_localize(
     if not raw_points:
         return []
 
-    centroids = cluster_xy([(p["x_m"], p["y_m"]) for p in raw_points], eps=CLUSTER_EPS_M, max_clusters=max_targets)
+    centroids = cluster_xy(
+        [(p["x_m"], p["y_m"]) for p in raw_points],
+        eps=adaptive_cluster_eps(max_targets, area_size_m),
+        max_clusters=max_targets,
+    )
     merged: list[dict] = []
     for cx, cy in centroids:
         nearby = [p for p in raw_points if (p["x_m"] - cx) ** 2 + (p["y_m"] - cy) ** 2 < 3.5]
@@ -713,6 +757,64 @@ def force_csi_targets(
     return merged[:n_targets]
 
 
+def detect_multinode_targets(
+    csi: np.ndarray,
+    fs_hz: float,
+    area_size_m: float,
+    node_positions: dict[int, tuple[float, float]],
+    max_targets: int = 6,
+    skip_srcc: bool = False,
+    motion_level: float = 0.0,
+    motion_threshold: float = 0.02,
+    count_limit: int | None = None,
+) -> list[dict]:
+    """Fuse CSI detections from all corner nodes for better XY spread."""
+    if not node_positions:
+        return detect_and_localize(
+            csi, fs_hz, area_size_m, max_targets, (area_size_m / 2, 0.0),
+            skip_srcc=skip_srcc, require_motion=True,
+            motion_level=motion_level, motion_threshold=motion_threshold,
+        )
+
+    raw: list[dict] = []
+    for nid, xy in node_positions.items():
+        dets = detect_and_localize(
+            csi, fs_hz, area_size_m, max_targets, xy,
+            skip_srcc=skip_srcc, require_motion=True,
+            motion_level=motion_level, motion_threshold=motion_threshold,
+        )
+        for d in dets:
+            entry = dict(d)
+            entry["node_id"] = int(nid)
+            raw.append(entry)
+
+    if not raw:
+        prepared = np.nan_to_num(srcc(preprocess_csi(csi))) if not skip_srcc else np.nan_to_num(csi)
+        center = (area_size_m / 2.0, 0.0)
+        return force_csi_targets(
+            prepared, fs_hz, area_size_m, max_targets, center, motion_level, motion_threshold
+        )
+
+    eps = adaptive_cluster_eps(max_targets, area_size_m)
+    centroids = cluster_xy([(p["x_m"], p["y_m"]) for p in raw], eps=eps, max_clusters=max_targets)
+    merged: list[dict] = []
+    for cx, cy in centroids:
+        nearby = [p for p in raw if (p["x_m"] - cx) ** 2 + (p["y_m"] - cy) ** 2 < 3.0]
+        if nearby:
+            ws = np.array([p.get("confidence", p.get("weight", 1.0)) for p in nearby], dtype=float)
+            ws /= ws.sum() + 1e-9
+            cx = float(np.sum([p["x_m"] * w for p, w in zip(nearby, ws)]))
+            cy = float(np.sum([p["y_m"] * w for p, w in zip(nearby, ws)]))
+            best = max(nearby, key=lambda p: p.get("confidence", p.get("weight", 0)))
+        else:
+            best = min(raw, key=lambda p: (p["x_m"] - cx) ** 2 + (p["y_m"] - cy) ** 2)
+        merged.append({**best, "x_m": cx, "y_m": cy})
+
+    merged.sort(key=lambda d: -d.get("confidence", d.get("weight", 0)))
+    limit = count_limit if count_limit and count_limit > 0 else max_targets
+    return merged[: min(limit, max_targets)]
+
+
 def detect_session_targets(
     csi: np.ndarray,
     fs_hz: float,
@@ -722,6 +824,7 @@ def detect_session_targets(
     window_sec: float = 0.5,
     motion_threshold: float = 0.02,
     expected_count: int | None = None,
+    node_positions: dict[int, tuple[float, float]] | None = None,
 ) -> list[dict]:
     """Aggregate CSI detections across sliding windows with temporal voting."""
     t_len = len(csi)
@@ -742,32 +845,37 @@ def detect_session_targets(
     )
     if estimated <= 0 and m_level >= motion_threshold:
         band_n = _band_active_count(cleaned, max_targets)
-        estimated = max(1, band_n if band_n > 0 else min(max_targets, 3))
+        estimated = max(1, band_n if band_n > 0 else 1)
     if estimated <= 0:
         return []
     active_max = max_targets
+    cluster_eps = adaptive_cluster_eps(max(estimated, active_max // 2), area_size_m)
 
     gates = _adaptive_gates(motion_level, motion_threshold)
     win = max(int(window_sec * fs_hz), 48)
     hop = max(win // 4, 16)
 
-    window_hits: list[list[dict]] = []
-    for start in range(0, max(t_len - win + 1, 1), hop):
-        chunk = cleaned[start : start + win]
-        m_chunk = float(np.mean(motion_energy(chunk)))
-        dets = detect_and_localize(
+    def _localize(chunk: np.ndarray, m_chunk: float) -> list[dict]:
+        if node_positions:
+            return detect_multinode_targets(
+                chunk, fs_hz, area_size_m, node_positions, active_max,
+                skip_srcc=True, motion_level=m_chunk, motion_threshold=motion_threshold,
+            )
+        return detect_and_localize(
             chunk, fs_hz, area_size_m, active_max, sensor_xy,
             skip_srcc=True, require_motion=True,
             motion_level=m_chunk, motion_threshold=motion_threshold,
         )
+
+    window_hits: list[list[dict]] = []
+    for start in range(0, max(t_len - win + 1, 1), hop):
+        chunk = cleaned[start : start + win]
+        m_chunk = float(np.mean(motion_energy(chunk)))
+        dets = _localize(chunk, m_chunk)
         if dets:
             window_hits.append(dets)
 
-    full_dets = detect_and_localize(
-        cleaned, fs_hz, area_size_m, active_max, sensor_xy,
-        skip_srcc=True, require_motion=True,
-        motion_level=motion_level, motion_threshold=motion_threshold,
-    )
+    full_dets = _localize(cleaned, motion_level)
     if full_dets:
         window_hits.append(full_dets)
 
@@ -791,7 +899,11 @@ def detect_session_targets(
         )
 
     all_points: list[dict] = [d for group in window_hits for d in group]
-    centroids = cluster_xy([(p["x_m"], p["y_m"]) for p in all_points], eps=CLUSTER_EPS_M, max_clusters=active_max)
+    centroids = cluster_xy(
+        [(p["x_m"], p["y_m"]) for p in all_points],
+        eps=cluster_eps,
+        max_clusters=active_max,
+    )
 
     session_dets: list[dict] = []
     min_votes = gates["vote_windows"]
@@ -828,13 +940,15 @@ def detect_session_targets(
 
     session_dets.sort(key=lambda d: -d.get("confidence", 0))
     if not session_dets and m_level >= motion_threshold:
+        if node_positions:
+            return detect_multinode_targets(
+                cleaned, fs_hz, area_size_m, node_positions, active_max,
+                skip_srcc=True, motion_level=m_level, motion_threshold=motion_threshold,
+            )
         return force_csi_targets(
             cleaned, fs_hz, area_size_m, active_max, sensor_xy, m_level, motion_threshold
         )
-    final_n = estimate_person_count(cleaned, m_level, motion_threshold, max_people=max_targets)
-    if final_n <= 0:
-        final_n = max(1, len(session_dets))
-    elif expected_count and expected_count > 0:
-        final_n = max(final_n, expected_count)
-    final_n = min(final_n, len(session_dets)) if session_dets else final_n
+    final_n = _resolve_target_count(
+        session_dets, cleaned, m_level, motion_threshold, max_targets, expected_count
+    )
     return session_dets[:max(final_n, 1)]

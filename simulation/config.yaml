@@ -1,7 +1,7 @@
 # AURA node layout — adjust to match your physical deployment (meters)
 area_size_m: 10.0
 motion_threshold: 0.02
-max_people: 6
+max_people: 8
 
 # ESP32 RX node positions around disaster search area (X, Y in meters)
 # Place nodes at corners of the collapsed structure perimeter

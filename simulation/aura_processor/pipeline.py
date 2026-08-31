@@ -10,6 +10,7 @@ from .doppler import delay_doppler_map
 from .vitals import extract_vitals, extract_vitals_for_detections
 from .multitarget import (
     detect_and_localize,
+    detect_multinode_targets,
     detect_session_targets,
     estimate_person_count,
     force_csi_targets,
@@ -78,16 +79,16 @@ class AURAPipeline:
         )
         if self.estimated_person_count == 0 and raw_motion >= self.motion_threshold:
             band_n = _band_active_count(prepared, self.max_targets)
-            self.estimated_person_count = max(1, band_n if band_n > 0 else min(self.max_targets, 3))
-        detect_max = self.max_targets
+            self.estimated_person_count = max(1, band_n if band_n > 0 else 1)
         self._session_targets = detect_session_targets(
             csi,
             self.fs_hz,
             self.area_size_m,
-            detect_max,
+            self.max_targets,
             xy,
             motion_threshold=self.motion_threshold,
             expected_count=self.estimated_person_count,
+            node_positions=self.node_positions,
         )
         if len(self._session_targets) > self.estimated_person_count:
             self.estimated_person_count = len(self._session_targets)
@@ -151,16 +152,17 @@ class AURAPipeline:
         active_max = max(self.estimated_person_count, len(self._session_targets), 1)
         if active_max <= 0:
             active_max = self.max_targets
-        window_dets = detect_and_localize(
+        count_limit = self.estimated_person_count if self.estimated_person_count > 0 else None
+        window_dets = detect_multinode_targets(
             cleaned,
             self.fs_hz,
             self.area_size_m,
+            self.node_positions,
             active_max,
-            sensor_xy,
             skip_srcc=True,
-            require_motion=True,
             motion_level=m_energy,
             motion_threshold=self.motion_threshold,
+            count_limit=count_limit,
         )
 
         detections = self._merge_session_and_window(window_dets)
@@ -168,8 +170,12 @@ class AURAPipeline:
         if not detections and self._session_targets:
             detections = [dict(s) for s in self._session_targets[: self.max_targets]]
 
-        cap = max(self.estimated_person_count, len(self._session_targets))
-        if cap > 0 and len(detections) > cap:
+        if len(detections) > self.max_targets:
+            detections = sorted(
+                detections,
+                key=lambda d: -float(d.get("confidence", d.get("weight", 0))),
+            )[: self.max_targets]
+        if self.estimated_person_count > 0 and len(detections) > self.estimated_person_count:
             detections = sorted(
                 detections,
                 key=lambda d: -float(d.get("confidence", d.get("weight", 0))),
@@ -177,16 +183,16 @@ class AURAPipeline:
 
         # Motion confirmed but no peaks yet — retry with relaxed gates
         if motion and not detections:
-            detections = detect_and_localize(
+            detections = detect_multinode_targets(
                 cleaned,
                 self.fs_hz,
                 self.area_size_m,
+                self.node_positions,
                 active_max,
-                sensor_xy,
                 skip_srcc=True,
-                require_motion=True,
                 motion_level=m_energy * 1.1,
                 motion_threshold=self.motion_threshold * 0.75,
+                count_limit=count_limit,
             )
 
         if motion and not detections:

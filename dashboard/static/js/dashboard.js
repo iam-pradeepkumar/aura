@@ -1,4 +1,4 @@
-/* AURA Dashboard — single-screen layout */
+/* AURA Dashboard — click person to view individual vitals */
 
 let config = { area_size_m: 10, node_positions: {} };
 let simSessionId = null;
@@ -6,7 +6,12 @@ let simWs = null;
 let simFps = 30;
 let hwWs = null;
 
-const PERSON_COLORS = ["#10b981", "#34d399", "#6ee7b7", "#f59e0b", "#fbbf24", "#a78bfa"];
+const PERSON_COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#a78bfa", "#ec4899", "#14b8a6", "#f97316", "#8b5cf6"];
+const RESP_COLOR = "#10b981";
+const HR_COLOR = "#ef4444";
+
+const selectedPerson = { sim: null, hw: null };
+const lastSensing = { sim: null, hw: null };
 
 const plotLayout = {
   paper_bgcolor: "transparent",
@@ -30,16 +35,38 @@ function setTab(name) {
 
 fetch("/api/config").then((r) => r.json()).then((c) => {
   config = c;
-  renderMap("sim-map", { targets: [] }, config.node_positions, config.area_size_m || 10);
-  renderMap("hw-map", { targets: [] }, config.node_positions, config.area_size_m || 10);
+  renderMap("sim-map", { targets: [] }, config.node_positions, config.area_size_m || 10, "sim");
+  renderMap("hw-map", { targets: [] }, config.node_positions, config.area_size_m || 10, "hw");
 });
 
-function renderMap(elId, data, nodePositions, areaSize) {
+function personColor(index) {
+  return PERSON_COLORS[index % PERSON_COLORS.length];
+}
+
+function getSelectedTarget(prefix, targets) {
+  if (!targets?.length) return null;
+  const id = selectedPerson[prefix];
+  let t = targets.find((x) => x.id === id);
+  if (!t) {
+    t = targets[0];
+    selectedPerson[prefix] = t.id;
+  }
+  return t;
+}
+
+function selectPerson(prefix, targetId) {
+  selectedPerson[prefix] = targetId;
+  const cached = lastSensing[prefix];
+  if (cached) {
+    updateSensingUI(prefix, cached.data, cached.nodePositions, cached.areaSize, false);
+  }
+}
+
+function renderMap(elId, data, nodePositions, areaSize, prefix) {
   const el = document.getElementById(elId);
   if (!el) return;
   const targets = data.targets || [];
-  const moving = targets.filter((t) => t.is_moving);
-  const staticT = targets.filter((t) => !t.is_moving);
+  const selId = selectedPerson[prefix];
   const nodeX = [], nodeY = [], nodeText = [];
   for (const [id, pos] of Object.entries(nodePositions || {})) {
     nodeX.push(pos[0]); nodeY.push(pos[1]); nodeText.push(`N${id}`);
@@ -49,113 +76,116 @@ function renderMap(elId, data, nodePositions, areaSize) {
     marker: { size: 10, color: "#3b82f6", symbol: "square" },
     text: nodeText, textposition: "top center", textfont: { size: 8 },
   }];
-  if (moving.length) {
+
+  targets.forEach((t, i) => {
+    const color = personColor(i);
+    const selected = t.id === selId;
     traces.push({
-      x: moving.map((t) => t.x_m), y: moving.map((t) => t.y_m),
-      mode: "markers+text", name: "Move",
-      marker: { size: 12, color: "#ef4444" },
-      text: moving.map((t) => `#${t.id}`), textposition: "top center", textfont: { size: 8, color: "#fca5a5" },
+      x: [t.x_m], y: [t.y_m],
+      mode: "markers+text",
+      name: `Person ${t.id}`,
+      marker: {
+        size: selected ? 16 : 12,
+        color: t.is_moving ? "#ef4444" : color,
+        symbol: t.is_moving ? "circle" : "triangle-up",
+        line: selected ? { color: "#fff", width: 2 } : { width: 0 },
+      },
+      text: [`#${t.id}`],
+      textposition: "top center",
+      textfont: { size: 9, color: selected ? "#fff" : color },
+      customdata: [[t.id]],
     });
-    moving.forEach((t) => {
-      if (t.trajectory?.length > 1) {
-        traces.push({
-          x: t.trajectory.map((p) => p[0]), y: t.trajectory.map((p) => p[1]),
-          mode: "lines", line: { color: "rgba(148,163,184,0.45)", width: 1 }, showlegend: false,
-        });
-      }
-    });
-  }
-  if (staticT.length) {
-    traces.push({
-      x: staticT.map((t) => t.x_m), y: staticT.map((t) => t.y_m),
-      mode: "markers+text", name: "Static",
-      marker: { size: 12, color: "#f59e0b", symbol: "triangle-up" },
-      text: staticT.map((t) => `#${t.id}`), textposition: "top center", textfont: { size: 8, color: "#fcd34d" },
-    });
-  }
+    if (t.trajectory?.length > 1) {
+      traces.push({
+        x: t.trajectory.map((p) => p[0]), y: t.trajectory.map((p) => p[1]),
+        mode: "lines",
+        line: { color: color + "66", width: 1 },
+        showlegend: false,
+        hoverinfo: "skip",
+      });
+    }
+  });
+
   Plotly.react(elId, traces, {
     ...plotLayout,
     xaxis: { ...plotLayout.xaxis, range: [0, areaSize], title: { text: "X", font: { size: 9 } } },
     yaxis: { ...plotLayout.yaxis, range: [0, areaSize], title: { text: "Y", font: { size: 9 } }, scaleanchor: "x" },
     showlegend: false,
   }, { responsive: true, displayModeBar: false });
+
+  el.on("plotly_click", (ev) => {
+    const cd = ev.points?.[0]?.customdata;
+    if (cd?.[0] != null) selectPerson(prefix, cd[0]);
+  });
 }
 
-function renderPerPersonWaveforms(elId, targets, kind) {
+function renderSingleWaveform(elId, wave, bpm, color, label) {
   const el = document.getElementById(elId);
-  if (!el || !targets?.length) return;
-
-  const isResp = kind === "resp";
-  const traces = [];
-  const annotations = [];
-
-  targets.forEach((t, i) => {
-    const wave = isResp ? t.respiration_waveform : t.heartbeat_waveform;
-    const bpm = isResp ? t.respiration_bpm : t.heartbeat_bpm;
-    const color = PERSON_COLORS[i % PERSON_COLORS.length];
-    if (wave?.length) {
-      const x = wave.map((_, j) => j / Math.max(wave.length - 1, 1));
-      traces.push({
-        x, y: wave, type: "scatter", mode: "lines",
-        name: `#${t.id}`,
-        line: { color, width: 1.5 },
-      });
-    }
-    annotations.push({
-      text: `#${t.id}: ${bpm || "—"} BPM`,
-      xref: "paper", yref: "paper",
-      x: 1, y: 1 - i * 0.12,
-      showarrow: false,
-      xanchor: "right",
-      font: { size: 8, color },
-    });
-  });
-
-  if (!traces.length) {
-    Plotly.react(elId, [], { ...plotLayout, annotations }, { responsive: true, displayModeBar: false });
+  if (!el) return;
+  if (!wave?.length) {
+    Plotly.react(elId, [], {
+      ...plotLayout,
+      annotations: [{
+        text: label ? `${label}: — BPM` : "—",
+        xref: "paper", yref: "paper", x: 1, y: 1,
+        showarrow: false, xanchor: "right", font: { size: 9, color: "#64748b" },
+      }],
+    }, { responsive: true, displayModeBar: false });
     return;
   }
-
-  Plotly.react(elId, traces, {
+  const x = wave.map((_, i) => i / Math.max(wave.length - 1, 1));
+  Plotly.react(elId, [{
+    x, y: wave, type: "scatter", mode: "lines",
+    line: { color, width: 2 },
+  }], {
     ...plotLayout,
-    annotations,
-    showlegend: traces.length > 1,
-    legend: { orientation: "h", y: 1.15, font: { size: 8 } },
+    annotations: [{
+      text: `${label}: ${bpm || "—"} BPM`,
+      xref: "paper", yref: "paper", x: 1, y: 1,
+      showarrow: false, xanchor: "right", font: { size: 9, color },
+    }],
   }, { responsive: true, displayModeBar: false });
 }
 
-function vitalsSummary(targets, kind) {
-  if (!targets?.length) return "—";
-  const vals = targets
-    .map((t) => (kind === "resp" ? t.respiration_bpm : t.heartbeat_bpm))
-    .filter((v) => v > 0);
-  if (!vals.length) return "—";
-  if (vals.length === 1) return `${vals[0]}`;
-  return vals.map((v) => v.toFixed(0)).join(" / ");
-}
-
-function renderTargets(elId, targets) {
+function renderTargets(elId, targets, prefix) {
   const el = document.getElementById(elId);
   if (!el) return;
-  if (!targets?.length) { el.innerHTML = "<span class='text-slate-600'>No targets</span>"; return; }
-  el.innerHTML = targets.map((t, i) => {
-    const color = PERSON_COLORS[i % PERSON_COLORS.length];
-    return `
-    <div class="border-b border-slate-800 py-1.5" style="border-left: 3px solid ${color}; padding-left: 6px;">
-      <div><b class="text-white">Person #${t.id}</b> ${t.is_moving ? "🔴 moving" : "🟠 static"}
-        <span class="text-slate-500">@ (${Number(t.x_m).toFixed(1)}, ${Number(t.y_m).toFixed(1)})</span></div>
-      <div class="text-slate-400 mt-0.5">
-        <span style="color:${color}">Resp ${t.respiration_bpm || "—"} BPM</span>
-        <span class="mx-1">·</span>
-        <span style="color:${color}">HR ${t.heartbeat_bpm || "—"} BPM</span>
-        <span class="text-slate-600 ml-1">v=${t.velocity_mps}</span>
-      </div>
-    </div>`;
-  }).join("");
+  if (!targets?.length) {
+    el.innerHTML = "<span class='text-slate-600'>No targets</span>";
+    return;
+  }
+  const selId = selectedPerson[prefix];
+  el.innerHTML = `<p class="text-slate-600 text-xs mb-1">Click a person to view their vitals</p>` +
+    targets.map((t, i) => {
+      const color = personColor(i);
+      const selected = t.id === selId;
+      return `
+      <div class="target-row ${selected ? "selected" : ""}" data-person-id="${t.id}" data-prefix="${prefix}"
+           style="border-left: 3px solid ${color};">
+        <div><b class="text-white">Person #${t.id}</b> ${t.is_moving ? "🔴 moving" : "🟠 static"}
+          <span class="text-slate-500">@ (${Number(t.x_m).toFixed(1)}, ${Number(t.y_m).toFixed(1)})</span></div>
+        <div class="text-slate-400 mt-0.5">
+          <span style="color:${RESP_COLOR}">Resp ${t.respiration_bpm || "—"} BPM</span>
+          <span class="mx-1">·</span>
+          <span style="color:${HR_COLOR}">HR ${t.heartbeat_bpm || "—"} BPM</span>
+        </div>
+      </div>`;
+    }).join("");
+
+  el.querySelectorAll(".target-row").forEach((row) => {
+    row.onclick = () => selectPerson(row.dataset.prefix, Number(row.dataset.personId));
+  });
 }
 
-function updateSensingUI(prefix, data, nodePositions, areaSize) {
+function updateSensingUI(prefix, data, nodePositions, areaSize, store = true) {
   const targets = data.targets || [];
+  if (store) {
+    lastSensing[prefix] = { data, nodePositions, areaSize };
+    if (targets.length && !targets.find((t) => t.id === selectedPerson[prefix])) {
+      selectedPerson[prefix] = targets[0].id;
+    }
+  }
+
   const countEl = document.getElementById(`${prefix}-count`);
   if (countEl) countEl.textContent = data.target_count ?? targets.length ?? 0;
 
@@ -165,15 +195,28 @@ function updateSensingUI(prefix, data, nodePositions, areaSize) {
     motionEl.className = "stat-value-sm " + (data.motion_detected ? "text-red-400" : "text-emerald-400");
   }
 
+  const selected = getSelectedTarget(prefix, targets);
   const respEl = document.getElementById(`${prefix}-resp`);
   const hrEl = document.getElementById(`${prefix}-hr`);
-  if (respEl) respEl.textContent = vitalsSummary(targets, "resp");
-  if (hrEl) hrEl.textContent = vitalsSummary(targets, "hr");
+  if (respEl) respEl.textContent = selected?.respiration_bpm ? `${selected.respiration_bpm}` : "—";
+  if (hrEl) hrEl.textContent = selected?.heartbeat_bpm ? `${selected.heartbeat_bpm}` : "—";
 
-  renderMap(`${prefix}-map`, data, nodePositions, areaSize);
-  renderTargets(`${prefix}-targets`, targets);
-  renderPerPersonWaveforms(`${prefix}-resp-chart`, targets, "resp");
-  renderPerPersonWaveforms(`${prefix}-hr-chart`, targets, "hr");
+  renderMap(`${prefix}-map`, data, nodePositions, areaSize, prefix);
+  renderTargets(`${prefix}-targets`, targets, prefix);
+
+  if (selected) {
+    renderSingleWaveform(
+      `${prefix}-resp-chart`, selected.respiration_waveform,
+      selected.respiration_bpm, RESP_COLOR, `Person #${selected.id}`
+    );
+    renderSingleWaveform(
+      `${prefix}-hr-chart`, selected.heartbeat_waveform,
+      selected.heartbeat_bpm, HR_COLOR, `Person #${selected.id}`
+    );
+  } else {
+    renderSingleWaveform(`${prefix}-resp-chart`, [], 0, RESP_COLOR, "");
+    renderSingleWaveform(`${prefix}-hr-chart`, [], 0, HR_COLOR, "");
+  }
 }
 
 // --- Simulation ---
@@ -191,6 +234,7 @@ document.getElementById("btn-run-simulation").onclick = async () => {
   }
 
   status.textContent = "Processing…";
+  selectedPerson.sim = null;
   const form = new FormData();
   form.append("video", videoFile);
   form.append("csi", csiFile);
@@ -234,9 +278,7 @@ document.getElementById("btn-run-simulation").onclick = async () => {
     fetch(`/api/simulation/${simSessionId}/frame?index=0`)
       .then((r) => r.json())
       .then((fr) => {
-        if (fr.data) {
-          updateSensingUI("sim", fr.data, fr.node_positions, fr.area_size_m);
-        }
+        if (fr.data) updateSensingUI("sim", fr.data, fr.node_positions, fr.area_size_m);
       })
       .catch(() => {});
   } catch (err) {
