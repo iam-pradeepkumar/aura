@@ -31,7 +31,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-25"
+PROCESSOR_VERSION = "2026.08.31-26"
 
 
 def _wimans_label_from_uploads(video_name: str, mat_name: str, npy_name: str) -> str:
@@ -114,8 +114,9 @@ def _get_hardware_node(node_id: int) -> NodePipelineState:
         hardware_nodes[node_id] = NodePipelineState(
             node_id,
             pipe,
-            min_packets=int(hw_cfg.get("min_packets", 64)),
-            refresh_every=int(hw_cfg.get("refresh_every", 32)),
+            min_packets=int(hw_cfg.get("min_packets", 80)),
+            refresh_every=int(hw_cfg.get("refresh_every", 40)),
+            motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 0.85)),
         )
     return hardware_nodes[node_id]
 
@@ -365,10 +366,10 @@ def process_hardware_snapshot() -> dict:
     cfg = load_config()
     area = cfg.get("area_size_m", 10.0)
     hw_cfg = cfg.get("hardware", {})
-    min_pkts = int(hw_cfg.get("min_packets", 64))
-    window_pkts = int(hw_cfg.get("window_packets", 128))
+    min_pkts = int(hw_cfg.get("min_packets", 80))
+    window_pkts = int(hw_cfg.get("window_packets", 200))
 
-    active = wireless.active_nodes()
+    active = wireless.active_nodes(timeout_sec=float(hw_cfg.get("link_timeout_sec", 5.0)))
     all_target_dicts: list[dict] = []
     total_count = 0
     resp_bpm = 0.0
@@ -379,16 +380,19 @@ def process_hardware_snapshot() -> dict:
     node_status = []
     events: list[str] = []
     primary_pipe = None
+    session_confidence = 0.0
 
     for nid in active:
         win = wireless.get_node_window(nid, n=window_pkts)
         rssi = wireless.node_rssi(nid)
+        link = wireless.link_health(nid)
         if win is None:
             buf_len = wireless.buffer_length(nid)
             node_status.append({
                 "id": nid,
                 "status": f"buffering ({buf_len}/{min_pkts})",
                 "rssi": rssi,
+                "link": link,
             })
             continue
 
@@ -396,15 +400,20 @@ def process_hardware_snapshot() -> dict:
         state = _get_hardware_node(nid)
         res = state.process(csi, ts)
         primary_pipe = state.pipeline
+        session_confidence = max(session_confidence, state.pipeline.session_confidence)
 
         if res is None:
-            node_status.append({"id": nid, "status": "warming up", "rssi": rssi})
+            node_status.append({"id": nid, "status": "warming up", "rssi": rssi, "link": link})
             continue
 
         motion = motion or res.motion_detected
         resp_bpm = max(resp_bpm, res.respiration_bpm)
         hr_bpm = max(hr_bpm, res.heartbeat_bpm)
-        all_target_dicts.extend(target_to_dict(t) for t in res.targets)
+        for t in res.targets:
+            td = target_to_dict(t)
+            td["source_node"] = nid
+            td["confidence"] = round(res.confidence, 2)
+            all_target_dicts.append(td)
         events.extend(res.events[-2:])
 
         if res.respiration_waveform is not None and len(resp_wave) == 0:
@@ -416,8 +425,10 @@ def process_hardware_snapshot() -> dict:
             "id": nid,
             "status": "active",
             "rssi": rssi,
+            "link": link,
             "motion": res.motion_detected,
             "count": res.target_count,
+            "confidence": round(res.confidence, 2),
             "respiration_bpm": round(res.respiration_bpm, 1),
             "heartbeat_bpm": round(res.heartbeat_bpm, 1),
         })
@@ -431,6 +442,7 @@ def process_hardware_snapshot() -> dict:
         "active_nodes": len(active),
         "motion_detected": motion,
         "target_count": total_count,
+        "confidence": round(session_confidence, 2),
         "respiration_bpm": round(resp_bpm, 1),
         "heartbeat_bpm": round(hr_bpm, 1),
         "respiration_waveform": resp_wave,

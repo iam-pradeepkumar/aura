@@ -352,34 +352,3 @@ class AURAPipeline:
 
         return results
 
-    def _result_from_detections(self, detections: list[dict], base: SensingResult) -> SensingResult:
-        display = [
-            Target(
-                id=i + 1,
-                x_m=d["x_m"],
-                y_m=d["y_m"],
-                velocity_mps=d.get("velocity_mps", 0),
-                respiration_bpm=d.get("respiration_bpm", 0),
-                heartbeat_bpm=d.get("heartbeat_bpm", 0),
-                respiration_waveform=d.get("respiration_waveform"),
-                heartbeat_waveform=d.get("heartbeat_waveform"),
-                is_moving=d.get("velocity_mps", 0) > 0.12,
-            )
-            for i, d in enumerate(detections)
-        ]
-        r_vals = [t.respiration_bpm for t in display if t.respiration_bpm > 0]
-        h_vals = [t.heartbeat_bpm for t in display if t.heartbeat_bpm > 0]
-        return SensingResult(
-            timestamp_sec=base.timestamp_sec,
-            motion_detected=base.motion_detected or bool(detections),
-            motion_energy=base.motion_energy,
-            target_count=len(detections),
-            targets=display,
-            respiration_bpm=float(np.median(r_vals)) if r_vals else 0.0,
-            heartbeat_bpm=float(np.median(h_vals)) if h_vals else 0.0,
-            respiration_waveform=None,
-            heartbeat_waveform=None,
-            delay_doppler_map=base.delay_doppler_map,
-            events=base.events,
-            confidence=base.confidence,
-        )

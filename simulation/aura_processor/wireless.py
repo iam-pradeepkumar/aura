@@ -3,17 +3,16 @@
 from __future__ import annotations
 
 import socket
-import struct
 import threading
 import time
 from collections import defaultdict, deque
 
 import numpy as np
 
-AURA_MAGIC = 0x41555241
-HEADER_FMT = "<IBBBBIIbBHHI"
-HEADER_SIZE = struct.calcsize(HEADER_FMT)
+from .aura_protocol import AURA_MAGIC, HEADER_SIZE, header_fields, unpack_header
+
 DEFAULT_UDP_PORT = 5555
+PENDING_TTL_SEC = 0.25
 
 
 class WirelessReceiver:
@@ -21,8 +20,11 @@ class WirelessReceiver:
         self.port = port
         self.sock: socket.socket | None = None
         self.lock = threading.Lock()
-        self.node_buffers: dict[int, deque] = defaultdict(lambda: deque(maxlen=256))
+        self.node_buffers: dict[int, deque] = defaultdict(lambda: deque(maxlen=512))
         self.node_last_seen: dict[int, float] = {}
+        self.node_packet_count: dict[int, int] = defaultdict(int)
+        self.node_rate_window: dict[int, deque] = defaultdict(lambda: deque(maxlen=60))
+        self._pending: dict[tuple, tuple] = {}
         self.running = False
         self._thread: threading.Thread | None = None
 
@@ -47,36 +49,72 @@ class WirelessReceiver:
             self.sock = None
 
     def _parse_loop(self) -> None:
-        buf = bytearray()
         while self.running and self.sock:
             try:
-                data, _addr = self.sock.recvfrom(4096)
+                data, addr = self.sock.recvfrom(4096)
             except socket.timeout:
+                self._expire_pending()
                 continue
             except OSError:
                 break
-            buf.extend(data)
-            while len(buf) >= HEADER_SIZE:
-                hdr = struct.unpack_from(HEADER_FMT, buf, 0)
-                magic, _, node_id, _, _, ts_ms, rssi, ch, _sc, payload_bytes = hdr
+            self._handle_datagram(data, addr)
+            self._expire_pending()
+
+    def _expire_pending(self) -> None:
+        now = time.time()
+        stale = [k for k, (_, t) in self._pending.items() if now - t > PENDING_TTL_SEC]
+        for k in stale:
+            self._pending.pop(k, None)
+
+    def _handle_datagram(self, data: bytes, addr) -> None:
+        if len(data) < 4:
+            return
+
+        # Combined frame: header + I/Q payload (preferred, post-firmware fix)
+        if len(data) >= HEADER_SIZE:
+            magic = unpack_header(data, 0)[0]
+            if magic == AURA_MAGIC:
+                hdr = header_fields(data, 0)
+                payload_bytes = int(hdr["payload_bytes"])
                 total = HEADER_SIZE + payload_bytes
-                if magic != AURA_MAGIC or len(buf) < total:
-                    if magic != AURA_MAGIC:
-                        del buf[0]
-                    break
-                iq = bytes(buf[HEADER_SIZE:total])
-                del buf[:total]
-                imag = np.frombuffer(iq[0::2], dtype=np.int8).astype(np.float32)
-                real = np.frombuffer(iq[1::2], dtype=np.int8).astype(np.float32)
-                csi_row = real + 1j * imag
-                with self.lock:
-                    self.node_buffers[node_id].append({
-                        "csi": csi_row,
-                        "timestamp_ms": ts_ms,
-                        "rssi": rssi,
-                        "channel": ch,
-                    })
-                    self.node_last_seen[node_id] = time.time()
+                if payload_bytes > 0 and len(data) >= total:
+                    self._store_frame(hdr, data[HEADER_SIZE:total])
+                    if len(data) > total:
+                        self._handle_datagram(data[total:], addr)
+                    return
+                if len(data) == HEADER_SIZE:
+                    key = (addr, hdr["node_id"])
+                    self._pending[key] = (hdr, time.time())
+                    return
+
+        # Legacy firmware: payload-only second UDP packet
+        for key, (hdr, _) in list(self._pending.items()):
+            if key[0] != addr:
+                continue
+            payload_bytes = int(hdr["payload_bytes"])
+            if len(data) == payload_bytes:
+                self._store_frame(hdr, data)
+                self._pending.pop(key, None)
+                return
+
+    def _store_frame(self, hdr: dict, iq: bytes) -> None:
+        if not iq:
+            return
+        imag = np.frombuffer(iq[0::2], dtype=np.int8).astype(np.float32)
+        real = np.frombuffer(iq[1::2], dtype=np.int8).astype(np.float32)
+        csi_row = real + 1j * imag
+        node_id = int(hdr["node_id"])
+        now = time.time()
+        with self.lock:
+            self.node_buffers[node_id].append({
+                "csi": csi_row,
+                "timestamp_ms": int(hdr["timestamp_ms"]),
+                "rssi": int(hdr["rssi"]),
+                "channel": int(hdr["channel"]),
+            })
+            self.node_last_seen[node_id] = now
+            self.node_packet_count[node_id] += 1
+            self.node_rate_window[node_id].append(now)
 
     def get_node_window(self, node_id: int, n: int = 128) -> tuple[np.ndarray, np.ndarray] | None:
         with self.lock:
@@ -88,7 +126,7 @@ class WirelessReceiver:
         ts = np.array([f["timestamp_ms"] for f in recent], dtype=np.float64)
         return csi, ts
 
-    def active_nodes(self, timeout_sec: float = 3.0) -> list[int]:
+    def active_nodes(self, timeout_sec: float = 5.0) -> list[int]:
         now = time.time()
         with self.lock:
             return sorted(nid for nid, t in self.node_last_seen.items() if now - t < timeout_sec)
@@ -103,3 +141,35 @@ class WirelessReceiver:
     def buffer_length(self, node_id: int) -> int:
         with self.lock:
             return len(self.node_buffers.get(node_id, []))
+
+    def packet_rate_hz(self, node_id: int) -> float:
+        now = time.time()
+        with self.lock:
+            times = [t for t in self.node_rate_window.get(node_id, []) if now - t < 3.0]
+        if len(times) < 2:
+            return 0.0
+        span = max(times[-1] - times[0], 0.001)
+        return float((len(times) - 1) / span)
+
+    def link_health(self, node_id: int) -> dict:
+        rssi = self.node_rssi(node_id)
+        rate = self.packet_rate_hz(node_id)
+        with self.lock:
+            last = self.node_last_seen.get(node_id)
+            total = self.node_packet_count.get(node_id, 0)
+        age = time.time() - last if last else 999.0
+        if age > 5.0:
+            status = "offline"
+        elif rate < 8.0:
+            status = "weak"
+        elif rssi is not None and rssi < -78:
+            status = "weak"
+        else:
+            status = "good"
+        return {
+            "status": status,
+            "rssi": rssi,
+            "packet_rate_hz": round(rate, 1),
+            "packets_total": total,
+            "last_seen_sec": round(age, 2),
+        }

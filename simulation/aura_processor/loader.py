@@ -11,9 +11,7 @@ import pandas as pd
 
 from .csi_orient import combine_amplitude_phase, orient_csi, COMMON_SUBCARRIERS
 
-AURA_MAGIC = 0x41555241
-HEADER_FMT = "<IBBBBIIbBHHI"
-HEADER_SIZE = struct.calcsize(HEADER_FMT)
+from .aura_protocol import AURA_MAGIC, HEADER_FMT, HEADER_SIZE
 
 AMP_KEYS = ("amplitude", "csi_amp", "csi_amplitude", "amp", "A", "magnitude", "mag")
 PHASE_KEYS = ("phase", "csi_phase", "ph", "P", "angle", "csi_angle", "phase_rad")
@@ -974,7 +972,7 @@ def load_csi_binary(path: str | Path) -> dict:
 
     while offset + HEADER_SIZE <= len(data):
         hdr = struct.unpack_from(HEADER_FMT, data, offset)
-        magic, version, node_id, _, _, ts_ms, rssi, ch, sc_count, payload_bytes = hdr
+        magic, version, node_id, link_id, reserved, ts_ms, rssi, ch, sc_count, payload_bytes = hdr
         offset += HEADER_SIZE
         if magic != AURA_MAGIC:
             offset += 1
@@ -1008,7 +1006,7 @@ def iter_csi_frames_binary(path: str | Path) -> Iterator[dict]:
             if len(hdr_bytes) < HEADER_SIZE:
                 break
             hdr = struct.unpack(HEADER_FMT, hdr_bytes)
-            magic, _, node_id, _, _, ts_ms, _, _, _, payload_bytes = hdr
+            magic, version, node_id, link_id, reserved, ts_ms, rssi, ch, sc_count, payload_bytes = hdr
             if magic != AURA_MAGIC:
                 continue
             payload = f.read(payload_bytes)

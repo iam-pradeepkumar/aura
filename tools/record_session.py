@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""Record CSI from AURA ESP32 RX node over UART to CSV."""
+"""Record CSI from AURA ESP32 RX node over UART to binary/CSV."""
 
 from __future__ import annotations
 
 import argparse
-import struct
 import sys
 import time
 from pathlib import Path
 
 import numpy as np
 
-HEADER_FMT = "<IBBBBIIbBHHI"
-HEADER_SIZE = struct.calcsize(HEADER_FMT)
-AURA_MAGIC = 0x41555241
+sys.path.insert(0, str(Path(__file__).parent.parent / "simulation"))
+from aura_processor.aura_protocol import AURA_MAGIC, HEADER_SIZE, unpack_header
 
 
 def record_binary(port: str, baud: int, duration_sec: float, out_path: Path):
@@ -38,14 +36,13 @@ def record_binary(port: str, baud: int, duration_sec: float, out_path: Path):
 
 
 def export_csv_from_binary(raw: bytes, csv_path: Path):
-    """Convert binary stream to CSV for simulation viewer."""
+    """Convert binary stream to CSV for offline replay."""
     offset = 0
     rows = []
-    max_sc = 0
 
     while offset + HEADER_SIZE <= len(raw):
-        hdr = struct.unpack_from(HEADER_FMT, raw, offset)
-        magic, _, node_id, _, _, ts_ms, rssi, ch, sc_count, payload_bytes = hdr
+        hdr = unpack_header(raw, offset)
+        magic, version, node_id, link_id, reserved, ts_ms, rssi, ch, sc_count, payload_bytes = hdr
         offset += HEADER_SIZE
         if magic != AURA_MAGIC:
             offset += 1
@@ -54,30 +51,29 @@ def export_csv_from_binary(raw: bytes, csv_path: Path):
             break
         iq = np.frombuffer(raw[offset : offset + payload_bytes], dtype=np.int8)
         offset += payload_bytes
-        max_sc = max(max_sc, len(iq) // 2)
         rows.append((ts_ms, node_id, rssi, ch, iq.tolist()))
 
     if not rows:
-        print("Warning: no frames parsed", file=sys.stderr)
+        print("No frames found in recording")
         return
 
-    with csv_path.open("w") as f:
-        header = ["timestamp_ms", "node_id", "rssi", "channel", "iq"]
-        f.write(",".join(header) + "\n")
-        for ts_ms, node_id, rssi, ch, iq_list in rows:
-            f.write(f"{ts_ms},{node_id},{rssi},{ch},\"{iq_list}\"\n")
-    print(f"Exported CSV: {csv_path} ({len(rows)} frames)")
+    import csv
+
+    with csv_path.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["timestamp_ms", "node_id", "rssi", "channel", "iq"])
+        w.writerows(rows)
+    print(f"Exported {len(rows)} frames → {csv_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Record AURA CSI from ESP32 UART")
-    parser.add_argument("-p", "--port", required=True, help="Serial port e.g. /dev/ttyUSB0")
-    parser.add_argument("-d", "--duration", type=float, default=3.0, help="Seconds to record")
-    parser.add_argument("-o", "--output", default="session.bin", help="Output binary path")
-    parser.add_argument("-b", "--baud", type=int, default=921600)
+    parser = argparse.ArgumentParser(description="Record AURA CSI from UART")
+    parser.add_argument("--port", required=True, help="Serial port e.g. /dev/ttyUSB0")
+    parser.add_argument("--baud", type=int, default=921600)
+    parser.add_argument("--duration", type=float, default=60.0)
+    parser.add_argument("--out", default="session.bin")
     args = parser.parse_args()
-
-    record_binary(args.port, args.baud, args.duration, Path(args.output))
+    record_binary(args.port, args.baud, args.duration, Path(args.out))
 
 
 if __name__ == "__main__":

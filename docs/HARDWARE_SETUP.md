@@ -26,7 +26,7 @@ This guide walks you through building and deploying AURA ESP32 nodes for **offli
 | Role | Firmware folder | Purpose |
 |------|-----------------|---------|
 | **TX (Transmitter)** | `firmware/aura_tx` | Sends WiFi probe frames on channel 6 — **no network** |
-| **RX (Receiver)** | `firmware/aura_rx` | Captures CSI in promiscuous mode, streams via USB-UART |
+| **RX (Receiver)** | `firmware/aura_rx` | Captures CSI, streams over WiFi UDP to laptop hub (`AURA_HUB`) |
 
 **Minimum deployment:** 1 TX + 3 RX (triangle) for basic XY. **Recommended:** 1 TX + 4 RX (square perimeter) for multilateration and people counting.
 

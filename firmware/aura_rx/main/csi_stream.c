@@ -69,9 +69,11 @@ void csi_stream_wifi_connect(void)
     ESP_LOGI(TAG, "Connecting to laptop hub SSID=%s (local only, no internet)", AURA_HUB_SSID);
 }
 
+#define AURA_MAX_CSI_BYTES 512
+
 void csi_stream_on_frame(const int8_t *iq, size_t len, int8_t rssi, uint8_t channel, uint32_t ts_ms)
 {
-    if (len == 0 || iq == NULL) {
+    if (len == 0 || iq == NULL || len > AURA_MAX_CSI_BYTES) {
         return;
     }
 
@@ -89,8 +91,11 @@ void csi_stream_on_frame(const int8_t *iq, size_t len, int8_t rssi, uint8_t chan
     };
 
     if (s_udp_sock >= 0) {
-        sendto(s_udp_sock, &hdr, sizeof(hdr), 0, (struct sockaddr *)&s_hub_addr, sizeof(s_hub_addr));
-        sendto(s_udp_sock, iq, len, 0, (struct sockaddr *)&s_hub_addr, sizeof(s_hub_addr));
+        uint8_t packet[sizeof(aura_csi_header_t) + AURA_MAX_CSI_BYTES];
+        memcpy(packet, &hdr, sizeof(hdr));
+        memcpy(packet + sizeof(hdr), iq, len);
+        sendto(s_udp_sock, packet, sizeof(hdr) + len, 0,
+               (struct sockaddr *)&s_hub_addr, sizeof(s_hub_addr));
     }
 
 #if CONFIG_AURA_USE_UART

@@ -17,8 +17,10 @@ tx_position: [5.0, -2.0]
 # WiFi channel (must match firmware AURA_WIFI_CHANNEL)
 wifi_channel: 6
 
-# Live hardware CSI buffering
+# Live hardware CSI buffering (outdoor disaster field)
 hardware:
-  min_packets: 64        # packets before first detection
-  window_packets: 128    # CSI window size per analysis
-  refresh_every: 32      # recompute session targets every N updates
+  min_packets: 80          # ~4 s at 20 Hz before first detection
+  window_packets: 200      # ~10 s window for vitals at 20 Hz
+  refresh_every: 40        # recompute session targets periodically
+  motion_threshold_scale: 0.85   # slightly more sensitive outdoors
+  link_timeout_sec: 5.0
