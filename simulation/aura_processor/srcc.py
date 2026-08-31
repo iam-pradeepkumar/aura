@@ -24,13 +24,13 @@ def srcc(csi: np.ndarray) -> np.ndarray:
     csi: (T, N_subcarriers) complex
   Returns cleaned CSI same shape.
     """
-    out = np.zeros_like(csi)
+    out = np.zeros_like(csi, dtype=np.complex64)
     for t in range(csi.shape[0]):
         ref = reconstruct_csi(csi[t])
         out[t] = csi[t] * np.conj(ref)
         denom = np.abs(ref) + 1e-8
         out[t] /= denom
-    return out
+    return np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def amplitude(csi: np.ndarray) -> np.ndarray:

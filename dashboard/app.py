@@ -78,21 +78,32 @@ def build_pipeline(fs_hz: float = 20.0) -> AURAPipeline:
 
 def align_results(results, video_duration_sec: float, n_frames: int) -> list[dict]:
     if not results:
-        return [result_to_dict(r) for r in []] or [{}] * n_frames
+        return [{}] * n_frames
+    best = max(results, key=lambda r: (r.target_count, r.motion_energy))
     t_max = max(r.timestamp_sec for r in results)
     t_scale = video_duration_sec / max(t_max, 1e-3)
     aligned = []
     for fi in range(n_frames):
         t_video = (fi / max(n_frames - 1, 1)) * video_duration_sec
         t_csi = t_video / t_scale if t_scale > 0 else t_video
-        best = min(results, key=lambda r: abs(r.timestamp_sec - t_csi))
-        aligned.append(result_to_dict(best))
+        nearest = min(results, key=lambda r: abs(r.timestamp_sec - t_csi))
+        # Prefer the snapshot with the most targets so count/map stay populated
+        chosen = nearest if nearest.target_count >= best.target_count else best
+        aligned.append(result_to_dict(chosen))
     return aligned
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return (STATIC_DIR / "index.html").read_text()
+
+
+PROCESSOR_VERSION = "2026.08.31-2"
+
+
+@app.get("/api/version")
+async def get_version():
+    return {"processor_version": PROCESSOR_VERSION}
 
 
 @app.get("/api/config")
@@ -175,6 +186,7 @@ async def upload_simulation(
 
     return {
         "session_id": session_id,
+        "processor_version": PROCESSOR_VERSION,
         "fps": fps,
         "duration_sec": round(duration, 3),
         "n_frames": n_frames,

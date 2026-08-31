@@ -83,6 +83,11 @@ def _to_complex_2d(arr: np.ndarray) -> np.ndarray:
 
     if out.ndim != 2:
         out = out.reshape(out.shape[0], -1)
+
+    # Common mistake: (subcarriers, packets) instead of (packets, subcarriers)
+    if out.shape[0] < out.shape[1] and out.shape[0] <= 256 and out.shape[1] >= 500:
+        out = out.T
+
     return out.astype(np.complex64)
 
 

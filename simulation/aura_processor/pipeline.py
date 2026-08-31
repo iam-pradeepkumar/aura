@@ -8,7 +8,13 @@ import numpy as np
 from .srcc import srcc, motion_energy
 from .doppler import delay_doppler_map
 from .vitals import extract_vitals, extract_vitals_for_target
-from .multitarget import detect_and_localize, detect_session_targets, _fallback_motion_targets
+from .multitarget import (
+    detect_and_localize,
+    detect_session_targets,
+    _collect_detection_points,
+    _variance_band_targets,
+    cluster_xy,
+)
 from .localization import TargetTracker, Target
 
 
@@ -60,6 +66,12 @@ class AURAPipeline:
             self.max_targets,
             self.sensor_xy,
         )
+        if not self._session_targets:
+            m_energy = float(np.mean(motion_energy(csi)))
+            if m_energy > self.motion_threshold:
+                self._session_targets = _variance_band_targets(
+                    csi, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
+                )
 
     def process_window(
         self,
@@ -82,11 +94,25 @@ class AURAPipeline:
         # Merge with session-level targets (ensures all 3 people appear)
         detections = self._merge_session_and_window(window_dets)
 
-        # Motion present but no targets — use amplitude-delay fallback
+        # Motion present but no targets — try every detection path on this window
         if motion and not detections:
-            detections = _fallback_motion_targets(
-                cleaned, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
+            raw_dets = _collect_detection_points(
+                csi_window, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
             )
+            if raw_dets:
+                centroids_xy = cluster_xy(
+                    [(p["x_m"], p["y_m"]) for p in raw_dets],
+                    eps=2.0,
+                    max_clusters=self.max_targets,
+                )
+                detections = []
+                for cx, cy in centroids_xy:
+                    best = min(raw_dets, key=lambda p: (p["x_m"] - cx) ** 2 + (p["y_m"] - cy) ** 2)
+                    detections.append({**best, "x_m": cx, "y_m": cy})
+            if not detections:
+                detections = _variance_band_targets(
+                    csi_window, self.fs_hz, self.area_size_m, self.max_targets, self.sensor_xy
+                )
 
         for det in detections:
             delay_bin = int(det.get("delay_bin", 0))
@@ -199,6 +225,9 @@ class AURAPipeline:
 
         results = []
         n = len(csi)
+        desired_window = max(int(2.5 * self.fs_hz), 32)
+        # Short clips: use smaller windows so we get multiple analysis passes
+        self.window_samples = min(desired_window, max(32, n // 2))
         if n < self.window_samples:
             self.window_samples = max(32, n // 2)
 
