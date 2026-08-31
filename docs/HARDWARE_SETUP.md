@@ -1,49 +1,56 @@
-# AURA Hardware Setup Guide (Beginner)
+# AURA Hardware Setup Guide
 
-This guide walks you through building and deploying AURA ESP32 nodes for **offline** disaster survivor detection using WiFi CSI only.
+Complete guide for building and deploying AURA ESP32 nodes in an **outdoor disaster field** — wireless CSI streaming to a laptop, no internet required.
 
 ---
 
-## 1. Components List
+## 1. Components list
+
+### Required
+
+| Item | Qty | Est. cost | Notes |
+|------|-----|-----------|-------|
+| **ESP32-C6** dev kit | 5 | ~$8–15 each | Best RF; also ESP32 / ESP32-C3 supported |
+| **External 2.4 GHz antenna** (U.FL/IPX) | 5 | ~$3–8 each | PCB antennas fail through rubble — use external |
+| **5V USB power banks** (10,000 mAh+) | 5 | ~$15–25 each | 8+ hours field use per node |
+| **Laptop** (Linux / macOS / Windows) | 1 | — | Python 3.10+, WiFi hotspot capability |
+| **Measuring tape** | 1 | — | Record node XY for `config.yaml` |
+
+### Recommended
 
 | Item | Qty | Notes |
 |------|-----|-------|
-| **ESP32-C6** dev board (or ESP32 / ESP32-C3) | 5 minimum | C6 has best RF; use external antenna in rubble |
-| **External 2.4 GHz WiFi antenna** (U.FL/IPX) | 5 | PCB antennas are weak through debris |
-| **USB cables** (data-capable) | 5 | Power + UART for one recording node |
-| **5V USB power banks** | 5 | 10,000 mAh+ for field deployment |
-| **Tripods / magnetic mounts** | 5 | Mount nodes at 1–2 m height around perimeter |
-| **Laptop** (Linux/macOS/Windows) | 1 | Python 3.10+, ESP-IDF v5.1+ |
-| **Measuring tape** | 1 | Record node XY positions for `config.yaml` |
-| **Phone/camera** | 1 | Optional 3 s scene video for simulation sync |
+| Tripods or magnetic mounts | 5 | Mount nodes 1–2 m height at perimeter |
+| USB cables (data-capable) | 2 | Flashing firmware + optional UART backup |
+| Phone / camera | 1 | Optional scene video for post-mission simulation replay |
+| Portable WiFi hotspot or laptop hotspot | 1 | SSID `AURA_HUB` (built into laptop is fine) |
 
-**Optional:** microSD on coordinator node for standalone logging (future firmware extension).
+### Optional
 
----
-
-## 2. Node Roles
-
-| Role | Firmware folder | Purpose |
-|------|-----------------|---------|
-| **TX (Transmitter)** | `firmware/aura_tx` | Sends WiFi probe frames on channel 6 — **no network** |
-| **RX (Receiver)** | `firmware/aura_rx` | Captures CSI, streams over WiFi UDP to laptop hub (`AURA_HUB`) |
-
-**Minimum deployment:** 1 TX + 3 RX (triangle) for basic XY. **Recommended:** 1 TX + 4 RX (square perimeter) for multilateration and people counting.
+| Item | Notes |
+|------|-------|
+| UART recording | `tools/record_session.py` if UDP link fails |
+| Second laptop | Monitor + command post separately |
 
 ---
 
-## 3. Wiring & Connections
+## 2. Node roles
 
-ESP32 dev boards need **no extra wiring** for CSI sensing:
+| Role | Firmware | Count | Purpose |
+|------|----------|-------|---------|
+| **TX (Transmitter)** | `firmware/aura_tx` | 1 | Broadcasts 802.11 probe frames on **channel 6** (~20 Hz) |
+| **RX (Receiver)** | `firmware/aura_rx` | 3–4 | Captures CSI, streams to laptop via **WiFi UDP** |
 
-```
-ESP32-C6 DevKit
-├── USB ──────────> Laptop (RX node #1 only, for recording)
-├── Antenna ──────> External 2.4 GHz (screw onto U.FL connector)
-└── Power bank ───> USB (all nodes in field)
-```
+**Minimum:** 1 TX + 3 RX (triangle perimeter)  
+**Recommended:** 1 TX + 4 RX (square perimeter, 10 m × 10 m search area)
 
-**Physical layout (10 m × 10 m example):**
+RX nodes join the laptop hotspot (`AURA_HUB`) and send CSI to **UDP port 5555**. No USB cable is needed during live operation.
+
+---
+
+## 3. Physical layout
+
+Example **10 m × 10 m** disaster search cell:
 
 ```
         Node 4 (0,10) ───────────── Node 3 (10,10)
@@ -53,18 +60,41 @@ ESP32-C6 DevKit
               │                           │
         Node 1 (0,0) ────────────── Node 2 (10,0)
 
-        TX probe: place OUTSIDE perimeter, 2 m from Node 1
-                   e.g. position (5, -2) in config.yaml
+        TX probe: outside perimeter, ~2 m from edge
+                   e.g. (5, -2) in config.yaml
 ```
 
-Measure and enter positions in `simulation/config.yaml`.
+1. Measure each node position in meters (origin = southwest corner).
+2. Enter values in `simulation/config.yaml`:
+
+```yaml
+area_size_m: 10.0
+motion_threshold: 0.02
+max_people: 8
+
+node_positions:
+  1: [0.0, 0.0]      # southwest
+  2: [10.0, 0.0]     # southeast
+  3: [10.0, 10.0]    # northeast
+  4: [0.0, 10.0]     # northwest
+
+tx_position: [5.0, -2.0]   # informational
+
+hardware:
+  min_packets: 80          # ~4 s buffer before first detection
+  window_packets: 200      # ~10 s window for vitals at 20 Hz
+  refresh_every: 40
+  motion_threshold_scale: 0.85   # slightly more sensitive outdoors
+  link_timeout_sec: 5.0
+```
+
+Accurate positions are critical — each RX node localizes survivors **from its own corner**, then results are fused across nodes.
 
 ---
 
-## 4. Install ESP-IDF (One-Time)
+## 4. Install ESP-IDF (one-time)
 
 ```bash
-# Linux/macOS — follow Espressif official guide
 git clone -b v5.1.4 --recursive https://github.com/espressif/esp-idf.git
 cd esp-idf && ./install.sh esp32,esp32c6
 . ./export.sh
@@ -74,9 +104,9 @@ Verify: `idf.py --version`
 
 ---
 
-## 5. Flash Firmware
+## 5. Flash firmware
 
-### TX Node (1 board)
+### TX node (1 board)
 
 ```bash
 cd firmware/aura_tx
@@ -84,83 +114,136 @@ idf.py set-target esp32c6    # or esp32
 idf.py build flash -p /dev/ttyUSB0 monitor
 ```
 
-You should see: `AURA probe transmitter running — pair with RX nodes on ch 6`
+Expected log: `AURA probe transmitter running — pair with RX nodes on ch 6`
 
-Press `Ctrl+]` to exit monitor.
+Press `Ctrl+]` to exit monitor. Power from USB bank in the field.
 
-### RX Nodes (4 boards, set unique NODE_ID)
-
-Edit `firmware/aura_rx/main/main.c` — change `CONFIG_AURA_NODE_ID` or add to `sdkconfig`:
+### RX nodes (one unique ID per board)
 
 ```bash
 cd firmware/aura_rx
 idf.py set-target esp32c6
+
 idf.py -D CONFIG_AURA_NODE_ID=1 build flash -p /dev/ttyUSB0   # Node 1
-# Repeat for nodes 2, 3, 4 on different boards/ports
+idf.py -D CONFIG_AURA_NODE_ID=2 build flash -p /dev/ttyUSB1   # Node 2
+idf.py -D CONFIG_AURA_NODE_ID=3 build flash -p /dev/ttyUSB2   # Node 3
+idf.py -D CONFIG_AURA_NODE_ID=4 build flash -p /dev/ttyUSB3   # Node 4
 ```
 
-Label each board with its node ID.
+Label each board with its node ID (1–4).
+
+### Protocol note
+
+Firmware sends **one UDP datagram per CSI frame**: 18-byte header + I/Q payload.  
+Defined in `firmware/common/aura_protocol.h`, parsed by `simulation/aura_processor/wireless.py`.
+
+If your laptop hotspot IP is not `192.168.4.1`, edit before flashing:
+
+```c
+// firmware/common/aura_protocol.h
+#define AURA_HUB_IP "192.168.137.1"   // your hotspot gateway IP
+```
 
 ---
 
-## 6. Field Deployment Procedure
+## 6. Laptop hotspot setup
 
-1. **Power on TX first**, then all RX nodes (fixed channel 6, no pairing needed).
-2. Place nodes at measured positions; antennas vertical, line-of-sight to search area where possible.
-3. Connect **one RX node** (or rotate USB) to laptop.
-4. Record CSI while rescuers simulate survivor motion OR during live search:
+| Setting | Value |
+|---------|-------|
+| SSID | `AURA_HUB` |
+| Password | `aura2026` |
+| Gateway IP | `192.168.4.1` (typical; verify with `ip addr` / `ifconfig`) |
+| UDP port | `5555` (allow in firewall) |
+
+**Windows:** Settings → Mobile hotspot → configure SSID/password  
+**macOS:** System Settings → Sharing → Internet Sharing (or create hotspot)  
+**Linux:** `nmcli` or `create_ap` — ensure gateway is reachable by ESP32 nodes
+
+---
+
+## 7. Live field deployment
+
+### Power-on sequence
+
+1. Start laptop hotspot **`AURA_HUB`**
+2. Start dashboard or wireless hub on laptop
+3. Power **TX** node first
+4. Power all **RX** nodes — they connect to hotspot and begin UDP streaming (~20 Hz)
+5. Wait ~4–10 s per node for buffer fill, then sensing appears
+
+### Option A — Web dashboard (recommended)
 
 ```bash
-pip install pyserial numpy pandas
-python tools/record_session.py -p /dev/ttyUSB0 -d 3 -o session.bin
+pip install -r simulation/requirements.txt
+pip install -r dashboard/requirements.txt
+python dashboard/run.py --port 8848
 ```
 
-This creates `session.bin` and `session.csv` (3 seconds at ~20 Hz ≈ 60 frames).
+1. Open **http://127.0.0.1:8848**
+2. Click **Live Hardware** tab
+3. Click **Start Listening**
+4. Power on nodes
 
-5. **Film the same 3 seconds** with your phone from above (for simulation overlay).
-6. Transfer `session.csv` + `rescue.mp4` to laptop.
+Dashboard shows per node:
+- Link status (`good` / `weak` / `offline`)
+- RSSI and packet rate (Hz)
+- Motion, count, respiration BPM, heartbeat BPM
+- Fused survivor map across all nodes
 
----
-
-## 7. Process Real Results
+### Option B — CLI wireless hub
 
 ```bash
-cd simulation
-pip install -r requirements.txt
-python ../tools/validate_csi.py ../session.csv
-python run_simulation.py --video ../rescue.mp4 --csi ../session.csv --config config.yaml
+python tools/wireless_hub.py
 ```
 
-The viewer shows:
-- Video frame sync
-- Survivor count (CSI peak count)
-- XY map with moving (red) / static (orange) markers
-- Respiration & heartbeat waveforms with BPM
+Opens a matplotlib window with live map, count, vitals, and node status.
 
 ---
 
-## 8. Troubleshooting
+## 8. Optional: UART backup recording
+
+If WiFi link is unreliable, enable UART in firmware (`CONFIG_AURA_USE_UART=1`) and record:
+
+```bash
+pip install pyserial
+python tools/record_session.py --port /dev/ttyUSB0 --duration 60 --out field_session.bin
+```
+
+Replay later via simulation tools or `simulation/aura_processor/loader.py` binary loader.
+
+---
+
+## 9. Post-mission simulation replay
+
+If you filmed the scene during the exercise, replay through the simulation dashboard with matching CSI files for after-action review. See [SIMULATION_GUIDE.md](SIMULATION_GUIDE.md).
+
+---
+
+## 10. Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| No CSI frames in recording | Ensure TX is powered; same channel 6; RX in promiscuous mode |
-| `validate_csi.py` fails | Check baud 921600; close `idf.py monitor` before recording |
-| Zero people detected | Lower `motion_threshold` in config.yaml; move TX closer; check antenna |
-| Vital signs noisy | Increase window to 2+ s; survivor within 3–5 m of at least one link |
-| Phase jumps | Normal at boot — discard first 2 s of recording |
+| Nodes not in dashboard | Check hotspot SSID/password; firewall UDP **5555**; verify `AURA_HUB_IP` in firmware |
+| `buffering (N/80)` stuck | TX not powered; wrong channel; antenna disconnected |
+| `link: weak` / low packet rate | Move node closer to laptop; external antenna; reduce WiFi interference |
+| Count always 0 outdoors | Lower `motion_threshold` in config; survivor within 3–8 m of a link; wait full 10 s window |
+| Wrong positions on map | Re-measure and update `node_positions` in `config.yaml`; restart hardware session |
+| Vitals noisy | Need ~10 s of still subject; `window_packets: 200` helps at 20 Hz |
+| After firmware update, no data | Re-flash all RX nodes; confirm single-datagram UDP (header+payload together) |
+| Phase jumps at boot | Normal — discard first few seconds after power-on |
 
 ---
 
-## 9. Safety & Ethics
+## 11. Safety & ethics
 
-- AURA is a **research/demonstration** platform — not a certified life-detection device.
-- Always use alongside acoustic, canine, and thermal search methods.
-- Obtain authorization before transmitting WiFi in disaster zones (some jurisdictions restrict RF).
+- AURA is **not certified** for life detection — use alongside acoustic, canine, and thermal SAR methods.
+- Obtain authorization before transmitting WiFi in disaster zones.
+- Label nodes clearly; coordinate with incident command before deploying RF equipment.
 
 ---
 
-## 10. Next Steps
+## 12. Related docs
 
-- Deploy all 4 RX nodes simultaneously with ESP-NOW aggregation (roadmap)
-- Add SD-card logging for fully untethered nodes
-- See [BENCHMARKS.md](BENCHMARKS.md) for expected range and accuracy
+- [WIRELESS_AND_SIMULATION.md](WIRELESS_AND_SIMULATION.md) — combined reference
+- [BENCHMARKS.md](BENCHMARKS.md) — expected range and accuracy
+- [firmware/README.md](../firmware/README.md) — build details
