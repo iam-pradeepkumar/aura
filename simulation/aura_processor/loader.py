@@ -18,7 +18,7 @@ HEADER_SIZE = struct.calcsize(HEADER_FMT)
 AMP_KEYS = ("amplitude", "csi_amp", "csi_amplitude", "amp", "A", "magnitude", "mag")
 PHASE_KEYS = ("phase", "csi_phase", "ph", "P", "angle", "csi_angle", "phase_rad")
 CSI_KEYS = (
-    "trace", "csi", "CSI", "data", "H", "csi_data", "cfm", "csi_all", "wifi_csi",
+    "csi", "CSI", "data", "H", "csi_data", "cfm", "csi_all", "wifi_csi",
     "csi_complex", "channel_state", "cfm_data",
 )
 TIMESTAMP_KEYS = ("timestamp_ms", "timestamps_ms", "timestamp", "timestamps", "ts", "time", "t")
@@ -192,62 +192,189 @@ def _normalize_amplitude_csi(arr: np.ndarray) -> np.ndarray:
     return a.reshape(a.shape[0], -1)
 
 
-def _wimans_extract_packet(cell: object) -> np.ndarray | None:
-    """Extract one WiMANS trace cell: trace[t][0][0][0][-1] (complex subcarriers)."""
+def _is_mat_struct(obj: object) -> bool:
+    try:
+        from scipy.io.matlab import mat_struct
+
+        return isinstance(obj, mat_struct)
+    except ImportError:
+        return False
+
+
+def _mat_struct_complex(obj: object) -> complex | None:
+    if not _is_mat_struct(obj):
+        return None
+    names = getattr(obj, "_fieldnames", None) or []
+    if "real" in names and "imag" in names:
+        return complex(float(getattr(obj, "real")), float(getattr(obj, "imag")))
+    return None
+
+
+def _packet_from_object_grid(cell: np.ndarray) -> np.ndarray | None:
+    """Parse (rx, tx, sc) grids of mat_struct {real, imag} scalars."""
+    if cell.dtype != object or cell.size == 0:
+        return None
+    if not _is_mat_struct(cell.ravel()[0]):
+        return None
+    vals = np.empty(cell.size, dtype=np.complex128)
+    for i, item in enumerate(cell.ravel()):
+        cpx = _mat_struct_complex(item)
+        if cpx is None:
+            return None
+        vals[i] = cpx
+    return _coerce_complex_1d(vals.reshape(cell.shape), depth=1)
+
+
+def _coerce_complex_1d(pkt: object, depth: int = 0) -> np.ndarray | None:
+    """Reduce a WiMANS / Intel CSI packet to 1-D complex subcarriers."""
+    if pkt is None or depth > 16:
+        return None
+
+    cpx = _mat_struct_complex(pkt)
+    if cpx is not None:
+        return np.array([cpx], dtype=np.complex64)
+
+    try:
+        arr = np.asarray(pkt, dtype=object) if isinstance(pkt, (list, tuple)) else np.asarray(pkt)
+    except (TypeError, ValueError):
+        return None
+
+    if getattr(arr, "dtype", None) is not None and arr.dtype.names:
+        if "real" in arr.dtype.names and "imag" in arr.dtype.names:
+            arr = arr["real"] + 1j * arr["imag"]
+        else:
+            return None
+
+    if arr.dtype == object:
+        grid_pkt = _packet_from_object_grid(arr)
+        if grid_pkt is not None:
+            return grid_pkt
+        if arr.size == 0:
+            return None
+        return _coerce_complex_1d(arr.item() if arr.ndim == 0 else arr.ravel()[0], depth=depth + 1)
+
+    try:
+        arr = np.asarray(arr, dtype=np.complex128)
+    except (TypeError, ValueError):
+        return None
+
+    arr = np.squeeze(arr)
+    if arr.ndim == 0:
+        return None
+    while arr.ndim > 1:
+        if arr.shape[-1] <= 128:
+            arr = arr[-1]
+        else:
+            arr = arr.reshape(-1, arr.shape[-1])[-1]
+    if arr.size == 0:
+        return None
+    return arr.astype(np.complex64)
+
+
+def _wimans_packet_from_cell(cell: object) -> np.ndarray | None:
+    """Extract one packet using WiMANS preprocess path trace[t][0][0][0][-1]."""
+    if cell is None:
+        return None
+
+    direct = _coerce_complex_1d(cell)
+    if direct is not None:
+        return direct
+
+    try:
+        from scipy.io.matlab import mat_struct
+
+        if isinstance(cell, mat_struct):
+            for fname in getattr(cell, "_fieldnames", []) or []:
+                pkt = _wimans_packet_from_cell(getattr(cell, fname, None))
+                if pkt is not None:
+                    return pkt
+    except ImportError:
+        pass
+
+    # WiMANS benchmark/wifi_csi/preprocess.py access pattern
+    try:
+        return _coerce_complex_1d(cell[0][0][0][-1])
+    except (IndexError, TypeError, ValueError):
+        pass
+
     cur = cell
-    for _ in range(10):
+    for _ in range(12):
         if isinstance(cur, np.ndarray):
-            if cur.dtype == object:
-                if cur.size == 0:
-                    return None
-                if cur.ndim >= 4:
-                    try:
-                        pkt = cur[0][0][0][-1]
-                        return np.asarray(pkt, dtype=np.complex128)
-                    except (IndexError, TypeError, ValueError):
-                        pass
-                cur = cur.flat[0]
+            if cur.dtype.names:
+                return _coerce_complex_1d(cur)
+            if cur.dtype != object:
+                return _coerce_complex_1d(cur)
+            if cur.size == 0:
+                return None
+            if cur.ndim == 0:
+                cur = cur.item()
                 continue
-            return np.asarray(cur, dtype=np.complex128)
+            cur = cur.flat[0]
+            continue
         if isinstance(cur, (list, tuple)):
             if not cur:
                 return None
             cur = cur[0]
             continue
+        if _is_mat_struct(cur):
+            cpx = _mat_struct_complex(cur)
+            if cpx is not None:
+                return np.array([cpx], dtype=np.complex64)
+            cur = getattr(cur, cur._fieldnames[0]) if cur._fieldnames else None
+            continue
         break
+
+    return _coerce_complex_1d(cur)
+
+
+def _iter_trace_cells(trace_raw: object) -> list[object]:
+    """Normalize WiMANS `trace` field to a list of per-packet cells."""
+    if trace_raw is None:
+        return []
+
     try:
-        return np.asarray(cur, dtype=np.complex128)
-    except (TypeError, ValueError):
-        return None
+        from scipy.io.matlab import mat_struct
+
+        if isinstance(trace_raw, mat_struct):
+            if getattr(trace_raw, "_fieldnames", None):
+                return _iter_trace_cells(getattr(trace_raw, trace_raw._fieldnames[0]))
+            return []
+    except ImportError:
+        pass
+
+    if isinstance(trace_raw, list):
+        return trace_raw
+
+    arr = np.asarray(trace_raw, dtype=object)
+    if arr.ndim == 0:
+        return [arr.item()]
+    return [arr.ravel()[i] for i in range(arr.size)]
 
 
 def _load_wimans_trace(meta: dict) -> tuple[np.ndarray | None, dict]:
     """Parse WiMANS / Intel-style nested `trace` cell arrays into (packets, subcarriers)."""
     if "trace" not in meta:
         return None, {}
-    trace = np.asarray(meta["trace"], dtype=object)
-    if trace.size == 0:
+
+    cells = _iter_trace_cells(meta["trace"])
+    if not cells:
         return None, {}
 
     packets: list[np.ndarray] = []
-    for t in range(trace.shape[0]):
-        cell = trace[t]
-        pkt: np.ndarray | None = None
-        if isinstance(cell, np.ndarray) and cell.dtype != object:
-            pkt = np.asarray(cell, dtype=np.complex128)
-        else:
-            pkt = _wimans_extract_packet(cell)
-        if pkt is None:
-            continue
-        pkt = np.asarray(pkt, dtype=np.complex128).squeeze()
-        if pkt.ndim == 0:
-            continue
-        while pkt.ndim > 1:
-            pkt = pkt[-1]
-        packets.append(pkt.astype(np.complex64))
+    for cell in cells:
+        pkt = _wimans_packet_from_cell(cell)
+        if pkt is not None:
+            packets.append(pkt)
 
     if not packets:
-        return None, {}
+        sample = cells[0]
+        return None, {
+            "trace_debug": (
+                f"cell0_type={type(sample).__name__}, "
+                f"shape={getattr(sample, 'shape', None)}, "
+                f"dtype={getattr(sample, 'dtype', None)}"
+            )
+        }
 
     sc = max(p.shape[-1] for p in packets)
     rows: list[np.ndarray] = []
@@ -613,8 +740,9 @@ def _load_mat_meta(path: Path) -> dict:
 
     errors: list[str] = []
     for kwargs in (
+        {"squeeze_me": True, "struct_as_record": False, "simplify_cells": False},
         {"squeeze_me": True, "struct_as_record": False, "simplify_cells": True},
-        {"squeeze_me": True, "struct_as_record": True},
+        {"squeeze_me": True, "struct_as_record": True, "simplify_cells": False},
     ):
         try:
             mat = loadmat(path, **kwargs)
@@ -664,6 +792,13 @@ def load_csi_mat(path: str | Path, sample_rate_hz: float | None = None) -> dict:
         return _pack_load_result(
             wimans_csi, wimans_info, meta, len(wimans_csi), sample_rate_hz, str(path),
             source_field="trace",
+        )
+
+    if "trace" in meta:
+        dbg = wimans_info.get("trace_debug", "unknown cell layout")
+        raise ValueError(
+            f"Found WiMANS 'trace' in {path.name} but could not parse CSI packets. "
+            f"{dbg}. Ensure this is a raw WiMANS act_*.mat from wifi_csi/mat/."
         )
 
     raw, source_field = _find_csi_array(meta)
