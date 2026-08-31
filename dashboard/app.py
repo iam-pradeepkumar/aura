@@ -20,6 +20,7 @@ SIM_DIR = ROOT / "simulation"
 sys.path.insert(0, str(SIM_DIR))
 
 from aura_processor import AURAPipeline, load_csi  # noqa: E402
+from aura_processor.multitarget import trim_csi_to_video  # noqa: E402
 from aura_processor.serialize import result_to_dict, target_to_dict  # noqa: E402
 from aura_processor.wireless import WirelessReceiver, DEFAULT_UDP_PORT  # noqa: E402
 
@@ -64,10 +65,13 @@ pipeline_cfg = load_config()
 
 def build_pipeline(fs_hz: float = 20.0) -> AURAPipeline:
     node_pos = {int(k): tuple(v) for k, v in pipeline_cfg.get("node_positions", {}).items()}
+    area = pipeline_cfg.get("area_size_m", 10.0)
     return AURAPipeline(
         fs_hz=fs_hz,
-        area_size_m=pipeline_cfg.get("area_size_m", 10.0),
+        area_size_m=area,
         motion_threshold=pipeline_cfg.get("motion_threshold", 0.02),
+        max_targets=3,
+        window_sec=2.5,
         node_positions=node_pos,
     )
 
@@ -139,9 +143,16 @@ async def upload_simulation(
         duration = n_frames / fps
         cap.release()
 
-        pipe = build_pipeline(fs_hz=data["sample_rate_hz"])
-        results = pipe.process_session(data["csi"], data["timestamps_ms"])
+        csi, timestamps_ms, fs_hz = trim_csi_to_video(
+            data["csi"], data["timestamps_ms"], duration
+        )
+        if sample_rate:
+            fs_hz = float(sample_rate)
+
+        pipe = build_pipeline(fs_hz=fs_hz)
+        results = pipe.process_session(csi, timestamps_ms, video_duration_sec=duration)
         aligned = align_results(results, duration, n_frames)
+        events = [e for e in pipe.tracker.events if _event_in_duration(e, duration)]
     except Exception as exc:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -154,9 +165,9 @@ async def upload_simulation(
         fps=fps,
         duration_sec=duration,
         n_frames=n_frames,
-        sample_rate_hz=data["sample_rate_hz"],
+        sample_rate_hz=fs_hz,
         frames=aligned,
-        events=pipe.tracker.events,
+        events=events,
         node_positions=cfg.get("node_positions", {}),
         area_size_m=cfg.get("area_size_m", 10.0),
     )
@@ -167,11 +178,19 @@ async def upload_simulation(
         "fps": fps,
         "duration_sec": round(duration, 3),
         "n_frames": n_frames,
-        "csi_frames": len(data["csi"]),
-        "subcarriers": int(data["csi"].shape[1]),
-        "sample_rate_hz": round(data["sample_rate_hz"], 2),
+        "csi_frames": len(csi),
+        "subcarriers": int(csi.shape[1]),
+        "sample_rate_hz": round(fs_hz, 2),
         "events": session.events,
     }
+
+
+def _event_in_duration(event: str, duration_sec: float) -> bool:
+    import re
+    m = re.search(r"t=([\d.]+)s", event)
+    if not m:
+        return True
+    return float(m.group(1)) <= duration_sec + 0.1
 
 
 @app.get("/api/simulation/{session_id}/video")

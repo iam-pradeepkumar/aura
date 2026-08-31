@@ -26,6 +26,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent))
 
 from aura_processor import load_csi, AURAPipeline
+from aura_processor.multitarget import trim_csi_to_video
 
 
 def load_config(path: str | None) -> dict:
