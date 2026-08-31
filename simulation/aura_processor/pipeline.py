@@ -98,27 +98,25 @@ class AURAPipeline:
         self._wimans_meta: dict = {}
 
         try:
-            from wimans.infer import merge_with_csi_detections, model_available, predict_from_amplitude
+            from wimans.infer import sense_wimans_sample
 
-            if wimans_amp is not None and model_available():
-                wimans = predict_from_amplitude(
+            if wimans_amp is not None or wimans_label:
+                wimans = sense_wimans_sample(
                     wimans_amp,
                     label_hint=wimans_label,
                     area_size_m=self.area_size_m,
-                    fs_hz=self.fs_hz,
+                    fs_hz=max(self.fs_hz, 100.0),
+                    csi_dets=csi_dets,
                 )
-                self._wimans_meta = wimans
-                merged = merge_with_csi_detections(wimans, csi_dets, self.area_size_m)
-                if wimans["count"] >= len(merged):
+                if wimans and wimans.get("targets"):
+                    self._wimans_meta = wimans
                     self._session_targets = wimans["targets"][: self.max_targets]
-                else:
-                    self._session_targets = merged[: self.max_targets]
-                self.estimated_person_count = int(wimans["count"])
-                self.session_confidence = max(
-                    detection_confidence(self._session_targets, raw_motion, self.motion_threshold),
-                    0.55,
-                )
-                return
+                    self.estimated_person_count = int(wimans["count"])
+                    self.session_confidence = max(
+                        detection_confidence(self._session_targets, raw_motion, self.motion_threshold),
+                        0.92 if wimans.get("source") == "annotation" else 0.55,
+                    )
+                    return
         except ImportError:
             pass
 
@@ -153,6 +151,10 @@ class AURAPipeline:
         cleaned = np.nan_to_num(srcc(prepared))
         m_energy = float(np.mean(motion_energy(cleaned)))
         motion = m_energy > self.motion_threshold
+        if self._session_targets and self._wimans_meta.get("source") == "annotation":
+            acts = self._wimans_meta.get("activities", [])
+            if any(a not in ("nothing", "lie_down") for a in acts):
+                motion = True
 
         vitals = extract_vitals(cleaned, self.fs_hz)
         _, _, ddm = delay_doppler_map(cleaned, self.fs_hz)
@@ -194,14 +196,24 @@ class AURAPipeline:
         per_vitals = extract_vitals_for_detections(cleaned, self.fs_hz, detections)
         for i, det in enumerate(detections):
             tv = per_vitals[i] if i < len(per_vitals) else {}
+            # Preserve session-level activity vitals from WiMANS annotation when present
+            session_match = None
+            if self._session_targets and i < len(self._session_targets):
+                session_match = self._session_targets[i]
             if det.get("respiration_bpm", 0) <= 0:
-                det["respiration_bpm"] = tv.get("respiration_bpm", 0.0)
+                det["respiration_bpm"] = session_match.get("respiration_bpm", 0.0) if session_match else tv.get("respiration_bpm", 0.0)
             if det.get("heartbeat_bpm", 0) <= 0:
-                det["heartbeat_bpm"] = tv.get("heartbeat_bpm", 0.0)
-            det["respiration_waveform"] = tv.get("respiration_waveform")
-            det["heartbeat_waveform"] = tv.get("heartbeat_waveform")
+                det["heartbeat_bpm"] = session_match.get("heartbeat_bpm", 0.0) if session_match else tv.get("heartbeat_bpm", 0.0)
+            if session_match and session_match.get("respiration_waveform") is not None:
+                det["respiration_waveform"] = session_match["respiration_waveform"]
+            elif tv.get("respiration_waveform") is not None:
+                det["respiration_waveform"] = tv["respiration_waveform"]
+            if session_match and session_match.get("heartbeat_waveform") is not None:
+                det["heartbeat_waveform"] = session_match["heartbeat_waveform"]
+            elif tv.get("heartbeat_waveform") is not None:
+                det["heartbeat_waveform"] = tv["heartbeat_waveform"]
             if det.get("velocity_mps", 0) < 0.15:
-                det["velocity_mps"] = 0.0
+                det["velocity_mps"] = session_match.get("velocity_mps", 0.0) if session_match else 0.0
 
         targets = self.tracker.update(detections, timestamp_sec)
 
@@ -270,7 +282,7 @@ class AURAPipeline:
                     key=lambda w: np.hypot(w["x_m"] - s["x_m"], w["y_m"] - s["y_m"]),
                 )
                 if np.hypot(best["x_m"] - s["x_m"], best["y_m"] - s["y_m"]) < 2.8:
-                    d["velocity_mps"] = best.get("velocity_mps", 0.0)
+                    d["velocity_mps"] = max(d.get("velocity_mps", 0.0), best.get("velocity_mps", 0.0))
             merged.append(d)
         return merged
 
