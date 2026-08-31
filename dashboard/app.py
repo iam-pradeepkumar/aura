@@ -31,7 +31,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-6"
+PROCESSOR_VERSION = "2026.08.31-7"
 
 
 def load_config() -> dict:
@@ -65,14 +65,15 @@ hardware_nodes: dict[int, NodePipelineState] = {}
 pipeline_cfg = load_config()
 
 
-def build_pipeline(fs_hz: float = 20.0, max_targets: int = 3) -> AURAPipeline:
+def build_pipeline(fs_hz: float = 20.0, max_targets: int | None = None) -> AURAPipeline:
     node_pos = {int(k): tuple(v) for k, v in pipeline_cfg.get("node_positions", {}).items()}
     area = pipeline_cfg.get("area_size_m", 10.0)
+    max_p = max_targets or int(pipeline_cfg.get("max_people", 6))
     return AURAPipeline(
         fs_hz=fs_hz,
         area_size_m=area,
         motion_threshold=pipeline_cfg.get("motion_threshold", 0.02),
-        max_targets=max_targets,
+        max_targets=max_p,
         window_sec=2.5,
         node_positions=node_pos,
     )
@@ -212,6 +213,7 @@ async def upload_simulation(
         "subcarriers": int(csi.shape[1]),
         "sample_rate_hz": round(fs_hz, 2),
         "target_count": preview.get("target_count", 0),
+        "csi_person_estimate": pipe.estimated_person_count,
         "targets": preview.get("targets", []),
         "motion_detected": preview.get("motion_detected", False),
         "respiration_bpm": preview.get("respiration_bpm", 0),

@@ -8,7 +8,7 @@ import numpy as np
 from .srcc import srcc, motion_energy
 from .doppler import delay_doppler_map
 from .vitals import extract_vitals, extract_vitals_for_target
-from .multitarget import detect_and_localize, detect_session_targets
+from .multitarget import detect_and_localize, detect_session_targets, estimate_person_count, preprocess_csi
 from .localization import TargetTracker, Target
 
 
@@ -48,6 +48,7 @@ class AURAPipeline:
         }
         self.sensor_xy = (area_size_m / 2.0, 0.0)
         self._session_targets: list[dict] = []
+        self.estimated_person_count: int = 0
 
     def reset(self) -> None:
         self.tracker.reset()
@@ -63,11 +64,19 @@ class AURAPipeline:
     ) -> None:
         """Pre-compute stable CSI-only survivor positions from buffered packets."""
         xy = sensor_xy or self.sensor_xy
+        prepared = np.nan_to_num(srcc(preprocess_csi(csi)))
+        raw_motion = float(np.mean(motion_energy(np.nan_to_num(srcc(csi)))))
+        self.estimated_person_count = estimate_person_count(
+            prepared, raw_motion, self.motion_threshold, max_people=self.max_targets
+        )
+        if self.estimated_person_count == 0 and raw_motion >= self.motion_threshold:
+            self.estimated_person_count = 1
+        active_max = self.estimated_person_count if self.estimated_person_count > 0 else self.max_targets
         self._session_targets = detect_session_targets(
             csi,
             self.fs_hz,
             self.area_size_m,
-            self.max_targets,
+            active_max,
             xy,
             motion_threshold=self.motion_threshold,
         )
@@ -79,18 +88,35 @@ class AURAPipeline:
         node_id: int = 1,
     ) -> SensingResult:
         sensor_xy = self._sensor_xy(node_id)
-        cleaned = np.nan_to_num(srcc(csi_window))
-        m_energy = float(np.mean(motion_energy(cleaned)))
+        prepared = preprocess_csi(csi_window)
+        cleaned = np.nan_to_num(srcc(prepared))
+        m_energy = float(np.mean(motion_energy(np.nan_to_num(srcc(csi_window)))))
         motion = m_energy > self.motion_threshold
 
         vitals = extract_vitals(cleaned, self.fs_hz)
         _, _, ddm = delay_doppler_map(cleaned, self.fs_hz)
 
+        if not motion and self.estimated_person_count == 0:
+            return SensingResult(
+                timestamp_sec=timestamp_sec,
+                motion_detected=False,
+                motion_energy=m_energy,
+                target_count=0,
+                targets=[],
+                respiration_bpm=vitals["respiration_bpm"],
+                heartbeat_bpm=vitals["heartbeat_bpm"],
+                respiration_waveform=vitals["respiration_waveform"],
+                heartbeat_waveform=vitals["heartbeat_waveform"],
+                delay_doppler_map=ddm,
+                events=list(self.tracker.events),
+            )
+
+        active_max = self.estimated_person_count if self.estimated_person_count > 0 else self.max_targets
         window_dets = detect_and_localize(
             cleaned,
             self.fs_hz,
             self.area_size_m,
-            self.max_targets,
+            active_max,
             sensor_xy,
             skip_srcc=True,
             require_motion=True,
@@ -103,14 +129,19 @@ class AURAPipeline:
         if not detections and self._session_targets:
             detections = [dict(s) for s in self._session_targets[: self.max_targets]]
 
-        # Motion confirmed but no peaks yet — retry on full window with relaxed gates
+        if self.estimated_person_count > 0 and len(detections) > self.estimated_person_count:
+            detections = sorted(
+                detections,
+                key=lambda d: -float(d.get("confidence", d.get("weight", 0))),
+            )[: self.estimated_person_count]
+
+        # Motion confirmed but no peaks yet — retry with relaxed gates
         if motion and not detections:
-            from .multitarget import detect_and_localize as _detect
-            detections = _detect(
+            detections = detect_and_localize(
                 cleaned,
                 self.fs_hz,
                 self.area_size_m,
-                self.max_targets,
+                active_max,
                 sensor_xy,
                 skip_srcc=True,
                 require_motion=True,
@@ -178,6 +209,10 @@ class AURAPipeline:
             delay_doppler_map=ddm,
             events=list(self.tracker.events),
         )
+
+    @property
+    def person_count_estimate(self) -> int:
+        return self.estimated_person_count or len(self._session_targets)
 
     def _merge_session_and_window(self, window_dets: list[dict]) -> list[dict]:
         if not self._session_targets:
