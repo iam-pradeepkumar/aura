@@ -6,6 +6,8 @@ let simWs = null;
 let simFps = 30;
 let hwWs = null;
 
+const PERSON_COLORS = ["#10b981", "#34d399", "#6ee7b7", "#f59e0b", "#fbbf24", "#a78bfa"];
+
 const plotLayout = {
   paper_bgcolor: "transparent",
   plot_bgcolor: "#020617",
@@ -50,7 +52,9 @@ function renderMap(elId, data, nodePositions, areaSize) {
   if (moving.length) {
     traces.push({
       x: moving.map((t) => t.x_m), y: moving.map((t) => t.y_m),
-      mode: "markers", name: "Move", marker: { size: 12, color: "#ef4444" },
+      mode: "markers+text", name: "Move",
+      marker: { size: 12, color: "#ef4444" },
+      text: moving.map((t) => `#${t.id}`), textposition: "top center", textfont: { size: 8, color: "#fca5a5" },
     });
     moving.forEach((t) => {
       if (t.trajectory?.length > 1) {
@@ -64,7 +68,9 @@ function renderMap(elId, data, nodePositions, areaSize) {
   if (staticT.length) {
     traces.push({
       x: staticT.map((t) => t.x_m), y: staticT.map((t) => t.y_m),
-      mode: "markers", name: "Static", marker: { size: 12, color: "#f59e0b", symbol: "triangle-up" },
+      mode: "markers+text", name: "Static",
+      marker: { size: 12, color: "#f59e0b", symbol: "triangle-up" },
+      text: staticT.map((t) => `#${t.id}`), textposition: "top center", textfont: { size: 8, color: "#fcd34d" },
     });
   }
   Plotly.react(elId, traces, {
@@ -75,30 +81,83 @@ function renderMap(elId, data, nodePositions, areaSize) {
   }, { responsive: true, displayModeBar: false });
 }
 
-function renderWaveform(elId, wave, bpm, color) {
-  if (!wave?.length) return;
-  const x = wave.map((_, i) => i / Math.max(wave.length - 1, 1));
-  Plotly.react(elId, [{ x, y: wave, type: "scatter", mode: "lines", line: { color, width: 1.5 } }], {
+function renderPerPersonWaveforms(elId, targets, kind) {
+  const el = document.getElementById(elId);
+  if (!el || !targets?.length) return;
+
+  const isResp = kind === "resp";
+  const traces = [];
+  const annotations = [];
+
+  targets.forEach((t, i) => {
+    const wave = isResp ? t.respiration_waveform : t.heartbeat_waveform;
+    const bpm = isResp ? t.respiration_bpm : t.heartbeat_bpm;
+    const color = PERSON_COLORS[i % PERSON_COLORS.length];
+    if (wave?.length) {
+      const x = wave.map((_, j) => j / Math.max(wave.length - 1, 1));
+      traces.push({
+        x, y: wave, type: "scatter", mode: "lines",
+        name: `#${t.id}`,
+        line: { color, width: 1.5 },
+      });
+    }
+    annotations.push({
+      text: `#${t.id}: ${bpm || "—"} BPM`,
+      xref: "paper", yref: "paper",
+      x: 1, y: 1 - i * 0.12,
+      showarrow: false,
+      xanchor: "right",
+      font: { size: 8, color },
+    });
+  });
+
+  if (!traces.length) {
+    Plotly.react(elId, [], { ...plotLayout, annotations }, { responsive: true, displayModeBar: false });
+    return;
+  }
+
+  Plotly.react(elId, traces, {
     ...plotLayout,
-    annotations: [{ text: `${bpm} BPM`, xref: "paper", yref: "paper", x: 1, y: 1, showarrow: false, font: { size: 9, color: "#94a3b8" } }],
+    annotations,
+    showlegend: traces.length > 1,
+    legend: { orientation: "h", y: 1.15, font: { size: 8 } },
   }, { responsive: true, displayModeBar: false });
+}
+
+function vitalsSummary(targets, kind) {
+  if (!targets?.length) return "—";
+  const vals = targets
+    .map((t) => (kind === "resp" ? t.respiration_bpm : t.heartbeat_bpm))
+    .filter((v) => v > 0);
+  if (!vals.length) return "—";
+  if (vals.length === 1) return `${vals[0]}`;
+  return vals.map((v) => v.toFixed(0)).join(" / ");
 }
 
 function renderTargets(elId, targets) {
   const el = document.getElementById(elId);
   if (!el) return;
   if (!targets?.length) { el.innerHTML = "<span class='text-slate-600'>No targets</span>"; return; }
-  el.innerHTML = targets.map((t) => `
-    <div class="border-b border-slate-800 py-1">
-      <b class="text-white">#${t.id}</b> ${t.is_moving ? "🔴" : "🟠"}
-      (${t.x_m}, ${t.y_m}) v=${t.velocity_mps} a=${t.acceleration_mps2}
-      <span class="text-slate-500">R${t.respiration_bpm} HR${t.heartbeat_bpm}</span>
-    </div>`).join("");
+  el.innerHTML = targets.map((t, i) => {
+    const color = PERSON_COLORS[i % PERSON_COLORS.length];
+    return `
+    <div class="border-b border-slate-800 py-1.5" style="border-left: 3px solid ${color}; padding-left: 6px;">
+      <div><b class="text-white">Person #${t.id}</b> ${t.is_moving ? "🔴 moving" : "🟠 static"}
+        <span class="text-slate-500">@ (${Number(t.x_m).toFixed(1)}, ${Number(t.y_m).toFixed(1)})</span></div>
+      <div class="text-slate-400 mt-0.5">
+        <span style="color:${color}">Resp ${t.respiration_bpm || "—"} BPM</span>
+        <span class="mx-1">·</span>
+        <span style="color:${color}">HR ${t.heartbeat_bpm || "—"} BPM</span>
+        <span class="text-slate-600 ml-1">v=${t.velocity_mps}</span>
+      </div>
+    </div>`;
+  }).join("");
 }
 
 function updateSensingUI(prefix, data, nodePositions, areaSize) {
+  const targets = data.targets || [];
   const countEl = document.getElementById(`${prefix}-count`);
-  if (countEl) countEl.textContent = data.target_count ?? 0;
+  if (countEl) countEl.textContent = data.target_count ?? targets.length ?? 0;
 
   const motionEl = document.getElementById(`${prefix}-motion`);
   if (motionEl) {
@@ -108,13 +167,13 @@ function updateSensingUI(prefix, data, nodePositions, areaSize) {
 
   const respEl = document.getElementById(`${prefix}-resp`);
   const hrEl = document.getElementById(`${prefix}-hr`);
-  if (respEl) respEl.textContent = `${data.respiration_bpm ?? 0}`;
-  if (hrEl) hrEl.textContent = `${data.heartbeat_bpm ?? 0}`;
+  if (respEl) respEl.textContent = vitalsSummary(targets, "resp");
+  if (hrEl) hrEl.textContent = vitalsSummary(targets, "hr");
 
   renderMap(`${prefix}-map`, data, nodePositions, areaSize);
-  renderTargets(`${prefix}-targets`, data.targets);
-  renderWaveform(`${prefix}-resp-chart`, data.respiration_waveform, data.respiration_bpm, "#10b981");
-  renderWaveform(`${prefix}-hr-chart`, data.heartbeat_waveform, data.heartbeat_bpm, "#8b5cf6");
+  renderTargets(`${prefix}-targets`, targets);
+  renderPerPersonWaveforms(`${prefix}-resp-chart`, targets, "resp");
+  renderPerPersonWaveforms(`${prefix}-hr-chart`, targets, "hr");
 }
 
 // --- Simulation ---
@@ -153,15 +212,10 @@ document.getElementById("btn-run-simulation").onclick = async () => {
     document.getElementById("sim-events").innerHTML =
       (json.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
 
-    // Show results immediately (don't wait for video timeupdate)
     updateSensingUI("sim", {
       target_count: json.target_count ?? json.csi_person_estimate ?? 0,
       motion_detected: json.motion_detected,
-      respiration_bpm: json.respiration_bpm,
-      heartbeat_bpm: json.heartbeat_bpm,
       targets: json.targets || [],
-      respiration_waveform: [],
-      heartbeat_waveform: [],
     }, config.node_positions, config.area_size_m);
 
     videoEl.src = `/api/simulation/${simSessionId}/video`;
@@ -177,7 +231,6 @@ document.getElementById("btn-run-simulation").onclick = async () => {
       }
     };
 
-    // Load waveforms from first aligned frame
     fetch(`/api/simulation/${simSessionId}/frame?index=0`)
       .then((r) => r.json())
       .then((fr) => {
@@ -226,8 +279,6 @@ function connectHardwareWs() {
     const d = msg.data;
     document.getElementById("hw-nodes-count").textContent = d.active_nodes;
     document.getElementById("hw-count").textContent = d.target_count;
-    document.getElementById("hw-resp").textContent = d.respiration_bpm;
-    document.getElementById("hw-hr").textContent = d.heartbeat_bpm;
     updateSensingUI("hw", d, d.node_positions, d.area_size_m);
     document.getElementById("hw-nodes").innerHTML = (d.node_status || []).map((n) => `
       <li class="flex justify-between"><span>Node ${n.id}</span><span class="text-slate-500">${n.rssi ?? "—"} dBm · ${n.count ?? 0}</span></li>

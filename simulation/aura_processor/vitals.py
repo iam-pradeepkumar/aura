@@ -120,6 +120,59 @@ def extract_vitals_for_target(csi: np.ndarray, fs_hz: float, delay_bin: int, n_s
     return extract_vitals(csi[:, lo:hi], fs_hz, motion_cutoff_hz=1.5 if fs_hz < 100 else 2.5)
 
 
+def _svd_phase_sources(csi: np.ndarray, n_sources: int) -> list[np.ndarray]:
+    """Return per-source phase matrices from SVD decomposition."""
+    phase = np.angle(csi)
+    phase = detrend(phase, axis=0, type="linear")
+    phase = phase - phase.mean(axis=0, keepdims=True)
+    try:
+        u, s, vh = np.linalg.svd(phase, full_matrices=False)
+    except np.linalg.LinAlgError:
+        return []
+    sources = []
+    for i in range(min(n_sources, len(s))):
+        if s[i] < 0.05 * s[0]:
+            continue
+        comp = (u[:, i : i + 1] * s[i]) @ vh[i : i + 1, :]
+        sources.append(comp)
+    return sources
+
+
+def extract_vitals_for_detections(
+    csi: np.ndarray,
+    fs_hz: float,
+    detections: list[dict],
+) -> list[dict]:
+    """
+    Extract isolated respiration/heartbeat for each detected person.
+    Uses SVD motion sources and staggered subcarrier bands to avoid blending.
+    """
+    if not detections:
+        return []
+
+    n_sc = csi.shape[1]
+    n_targets = len(detections)
+    sources = _svd_phase_sources(csi, n_targets)
+    results: list[dict] = []
+
+    for i, det in enumerate(detections):
+        delay_bin = int(det.get("delay_bin", 0))
+        if i < len(sources):
+            comp = sources[i]
+            pseudo = np.exp(1j * np.angle(comp))
+            v = extract_vitals(pseudo, fs_hz, motion_cutoff_hz=1.35 if fs_hz < 100 else 2.0)
+        else:
+            band_w = max(6, n_sc // max(n_targets * 2, 4))
+            offset = (i * max(4, band_w // 2)) % max(1, n_sc - band_w)
+            lo = max(0, min(delay_bin - band_w // 2, n_sc - band_w) + offset // 2)
+            hi = min(n_sc, lo + band_w)
+            v = extract_vitals(csi[:, lo:hi], fs_hz, motion_cutoff_hz=1.35 if fs_hz < 100 else 2.0)
+
+        results.append(v)
+
+    return results
+
+
 def _bpm_from_psd(sig: np.ndarray, fs: float, f_lo: float, f_hi: float) -> float:
     min_len = max(int(fs * 0.35), 8)
     if len(sig) < min_len:

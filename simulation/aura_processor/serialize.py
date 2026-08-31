@@ -9,7 +9,7 @@ from .localization import Target
 
 
 def target_to_dict(t: Target) -> dict:
-    return {
+    out = {
         "id": t.id,
         "x_m": round(t.x_m, 3),
         "y_m": round(t.y_m, 3),
@@ -20,6 +20,15 @@ def target_to_dict(t: Target) -> dict:
         "heartbeat_bpm": round(t.heartbeat_bpm, 1),
         "trajectory": [(round(x, 3), round(y, 3)) for x, y in t.trajectory[-40:]],
     }
+    if t.respiration_waveform is not None and len(t.respiration_waveform):
+        out["respiration_waveform"] = _downsample(t.respiration_waveform)
+    else:
+        out["respiration_waveform"] = []
+    if t.heartbeat_waveform is not None and len(t.heartbeat_waveform):
+        out["heartbeat_waveform"] = _downsample(t.heartbeat_waveform)
+    else:
+        out["heartbeat_waveform"] = []
+    return out
 
 
 def result_to_dict(res: SensingResult, include_waveforms: bool = True) -> dict:
@@ -34,14 +43,9 @@ def result_to_dict(res: SensingResult, include_waveforms: bool = True) -> dict:
         "events": res.events[-5:],
     }
     if include_waveforms:
-        if res.respiration_waveform is not None:
-            out["respiration_waveform"] = _downsample(res.respiration_waveform)
-        else:
-            out["respiration_waveform"] = []
-        if res.heartbeat_waveform is not None:
-            out["heartbeat_waveform"] = _downsample(res.heartbeat_waveform)
-        else:
-            out["heartbeat_waveform"] = []
+        out["respiration_waveform"] = []
+        out["heartbeat_waveform"] = []
+        # Per-person waveforms live on each target; aggregate charts use targets[]
     return out
 
 

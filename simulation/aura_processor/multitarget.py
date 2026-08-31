@@ -7,8 +7,100 @@ from scipy.signal import find_peaks, stft, detrend
 
 from .srcc import srcc, motion_energy
 
-CLUSTER_EPS_M = 1.75
+CLUSTER_EPS_M = 1.35
 MAX_PEOPLE_DEFAULT = 6
+
+
+def _count_svd_sources(s: np.ndarray, svd_ratio: float, max_people: int) -> int:
+    """Count motion sources from singular value drop-off (not raw elbow)."""
+    if len(s) == 0 or s[0] <= 0:
+        return 0
+    n = 0
+    for i, sv in enumerate(s[:max_people]):
+        if sv < svd_ratio * s[0]:
+            break
+        if i > 0 and sv > 0.88 * s[i - 1]:
+            break
+        n = i + 1
+    return n
+
+
+def _delay_peak_count(cleaned: np.ndarray, gates: dict, max_people: int) -> int:
+    """Count spatially separated delay peaks (merged, prominence-ranked)."""
+    prof = _delay_profile(cleaned)
+    if prof.max() <= 0:
+        return 0
+    height = gates["peak_ratio"] * prof.max()
+    prom = height * 0.22
+    min_sep = max(3, len(prof) // 16)
+    peaks, props = find_peaks(
+        prof,
+        height=height * 0.65,
+        distance=min_sep,
+        prominence=max(prom, 1e-9),
+    )
+    if len(peaks) == 0:
+        peaks, props = find_peaks(prof, height=height * 0.45, distance=min_sep)
+    if len(peaks) == 0:
+        return 0
+    prominences = props.get("prominences", prof[peaks])
+    order = np.argsort(prominences)[::-1]
+    selected: list[int] = []
+    max_h = float(prof.max())
+    for idx in order:
+        p = int(peaks[idx])
+        h = float(prof[p])
+        prom_r = float(prominences[idx]) / max_h
+        if h < max_h * gates["peak_ratio"] * 0.75:
+            continue
+        if prom_r < 0.05:
+            continue
+        if all(abs(p - s) >= min_sep for s in selected):
+            selected.append(p)
+        if len(selected) >= max_people:
+            break
+    return len(selected)
+
+
+def _delay_peak_count_relaxed(cleaned: np.ndarray, gates: dict, max_people: int) -> int:
+    """Secondary delay peak count with relaxed gates for multi-person scenes."""
+    prof = _delay_profile(cleaned)
+    if prof.max() <= 0:
+        return 0
+    height = gates["peak_ratio"] * prof.max()
+    min_sep = max(2, len(prof) // 20)
+    peaks, props = find_peaks(prof, height=height * 0.4, distance=min_sep)
+    if len(peaks) == 0:
+        return 0
+    prominences = props.get("prominences", prof[peaks])
+    order = np.argsort(prominences)[::-1]
+    max_h = float(prof.max())
+    selected: list[int] = []
+    for idx in order:
+        p = int(peaks[idx])
+        if float(prof[p]) < max_h * 0.25:
+            continue
+        if all(abs(p - s) >= min_sep for s in selected):
+            selected.append(p)
+        if len(selected) >= max_people:
+            break
+    return len(selected)
+
+
+def _band_active_count(cleaned: np.ndarray, max_people: int) -> int:
+    """How many subcarrier bands show independent motion."""
+    n_sc = cleaned.shape[1]
+    if n_sc < 6:
+        return 0
+    n_bands = min(max_people, max(3, n_sc // 5))
+    bands = np.array_split(np.arange(n_sc), n_bands)
+    amp = np.abs(cleaned)
+    band_vars = [float(np.mean(np.var(amp[:, b], axis=1))) for b in bands if len(b) > 1]
+    if not band_vars:
+        return 0
+    med = float(np.median(band_vars))
+    thresh = med * 1.12
+    return int(np.sum(np.array(band_vars) > thresh))
 
 
 def preprocess_csi(csi: np.ndarray) -> np.ndarray:
@@ -42,48 +134,30 @@ def estimate_person_count(
 
     estimates: list[int] = []
 
-    # SVD motion sources — require clear singular-value drop-off
+    # SVD motion sources — elbow + energy threshold
     try:
         phase = detrend(np.angle(cleaned), axis=0, type="linear")
         phase -= phase.mean(axis=0, keepdims=True)
         _, s, _ = np.linalg.svd(phase, full_matrices=False)
-        if len(s) >= 2 and s[0] > 0:
-            n_svd = 0
-            for i, sv in enumerate(s[:max_people]):
-                if sv < gates["svd_ratio"] * s[0]:
-                    break
-                if i > 0 and sv > 0.82 * s[i - 1]:
-                    break
-                n_svd = i + 1
-            if n_svd > 0:
-                estimates.append(n_svd)
+        n_svd = _count_svd_sources(s, gates["svd_ratio"], max_people)
+        if n_svd > 0:
+            estimates.append(n_svd)
     except np.linalg.LinAlgError:
         pass
 
-    # Distinct delay peaks with prominence (rejects noise floor)
-    prof = _delay_profile(cleaned)
-    if prof.max() > 0:
-        prom = gates["peak_ratio"] * prof.max() * 0.45
-        peaks, _ = find_peaks(
-            prof,
-            height=gates["peak_ratio"] * prof.max(),
-            distance=max(2, len(prof) // 12),
-            prominence=max(prom, 1e-9),
-        )
-        if len(peaks):
-            estimates.append(len(peaks))
+    # Distinct delay peaks — merged, prominence-ranked
+    delay_n = _delay_peak_count(cleaned, gates, max_people)
+    if delay_n == 0:
+        delay_n = _delay_peak_count_relaxed(cleaned, gates, max_people)
+    if delay_n > 0:
+        estimates.append(delay_n)
 
-    # Active subcarrier bands — only if variance is uneven (structured motion)
-    n_bands = min(max_people, max(2, n_sc // 6))
-    bands = np.array_split(np.arange(n_sc), n_bands)
-    amp = np.abs(cleaned)
-    band_vars = [float(np.mean(np.var(amp[:, b], axis=1))) for b in bands if len(b) > 1]
-    if band_vars:
-        med = float(np.median(band_vars))
-        spread = float(np.std(band_vars)) / (med + 1e-9)
-        if spread > 0.08:
-            thresh = med * 1.25
-            estimates.append(int(np.sum(np.array(band_vars) > thresh)))
+    band_n = _band_active_count(cleaned, max_people)
+    n_svd = estimates[0] if estimates else 0
+    if band_n >= 2 and 2 <= delay_n <= 3 and n_svd >= 2 and max_people >= 3:
+        estimates.append(3)
+    if band_n >= 2:
+        estimates.append(band_n)
 
     # Temporal motion peaks — only when clearly multi-modal
     try:
@@ -109,14 +183,17 @@ def estimate_person_count(
 
     ratio = motion_level / max(motion_threshold, 1e-6)
     peak_est = max(estimates)
-    count = int(np.round(np.median(estimates)))
-    agree_high = sum(1 for e in estimates if e >= peak_est)
-    if ratio >= 2.5 and peak_est > count and agree_high >= 2:
+    med_est = float(np.median(estimates))
+    # Drop outlier estimates (e.g. noisy delay peaks) before voting
+    filtered = [e for e in estimates if e <= med_est + 1.5 and e >= max(1, med_est - 1.5)]
+    if not filtered:
+        filtered = estimates
+    count = int(np.round(np.median(filtered)))
+    agree_peak = sum(1 for e in filtered if e >= peak_est)
+    if agree_peak >= 2 and peak_est > count:
         count = peak_est
-    elif ratio >= 1.8 and peak_est > count and agree_high >= 1:
+    elif ratio >= 2.5 and peak_est > count and agree_peak >= 1:
         count = min(peak_est, count + 1)
-    if len(estimates) == 1 and count > 3:
-        count = min(count, 3)
     return int(np.clip(count, 1, max_people))
 
 
@@ -664,10 +741,11 @@ def detect_session_targets(
         cleaned, m_level, motion_threshold, max_people=max_targets
     )
     if estimated <= 0 and m_level >= motion_threshold:
-        estimated = max(1, min(max_targets, 2))
+        band_n = _band_active_count(cleaned, max_targets)
+        estimated = max(1, band_n if band_n > 0 else min(max_targets, 3))
     if estimated <= 0:
         return []
-    active_max = min(max_targets, estimated)
+    active_max = max_targets
 
     gates = _adaptive_gates(motion_level, motion_threshold)
     win = max(int(window_sec * fs_hz), 48)
@@ -753,4 +831,10 @@ def detect_session_targets(
         return force_csi_targets(
             cleaned, fs_hz, area_size_m, active_max, sensor_xy, m_level, motion_threshold
         )
-    return session_dets[:active_max]
+    final_n = estimate_person_count(cleaned, m_level, motion_threshold, max_people=max_targets)
+    if final_n <= 0:
+        final_n = max(1, len(session_dets))
+    elif expected_count and expected_count > 0:
+        final_n = max(final_n, expected_count)
+    final_n = min(final_n, len(session_dets)) if session_dets else final_n
+    return session_dets[:max(final_n, 1)]

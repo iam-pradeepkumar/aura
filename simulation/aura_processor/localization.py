@@ -16,6 +16,8 @@ class Target:
     is_moving: bool = True
     respiration_bpm: float = 0.0
     heartbeat_bpm: float = 0.0
+    respiration_waveform: np.ndarray | None = None
+    heartbeat_waveform: np.ndarray | None = None
     trajectory: list[tuple[float, float]] = field(default_factory=list)
 
 
@@ -77,6 +79,10 @@ class TargetTracker:
                 tgt.is_moving = vel > 0.08 or det.get("velocity_mps", 0) > 0.08
                 tgt.respiration_bpm = det.get("respiration_bpm", tgt.respiration_bpm)
                 tgt.heartbeat_bpm = det.get("heartbeat_bpm", tgt.heartbeat_bpm)
+                if det.get("respiration_waveform") is not None:
+                    tgt.respiration_waveform = det["respiration_waveform"]
+                if det.get("heartbeat_waveform") is not None:
+                    tgt.heartbeat_waveform = det["heartbeat_waveform"]
                 assigned.add(tid)
                 matched_ids.add(tid)
 
