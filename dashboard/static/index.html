@@ -24,32 +24,43 @@
   <!-- SIMULATION: single-screen grid -->
   <main id="panel-simulation" class="panel flex-1 min-h-0 p-2 grid-dashboard-sim">
     <!-- Row 1: upload | video | stats -->
-    <div class="card compact">
+    <div class="card compact upload-card">
       <h2 class="card-title">Upload</h2>
-      <p class="upload-hint">Video + matching CSI file (same recording session)</p>
+      <p class="upload-hint">One dataset — synchronized 3s sample: video + raw CSI (.mat) + preprocessed amp (.npy)</p>
 
-      <label class="upload-field">
-        <span class="upload-label">1. Scene video</span>
-        <span class="upload-formats">.mp4, .mov, .avi</span>
-        <input type="file" id="sim-video" accept="video/*,.mp4,.mov,.avi,.mkv,.webm" class="file-input" />
-        <span id="sim-video-name" class="upload-filename">No file chosen</span>
-      </label>
+      <div class="upload-fields">
+        <label class="upload-field">
+          <span class="upload-label">1. Scene video</span>
+          <span class="upload-formats">.mp4 — visual reference / ground truth</span>
+          <input type="file" id="sim-video" accept="video/*,.mp4,.mov,.avi,.mkv,.webm" class="file-input" />
+          <span id="sim-video-name" class="upload-filename">No file chosen</span>
+        </label>
 
-      <label class="upload-field">
-        <span class="upload-label">2. CSI dataset</span>
-        <span class="upload-formats">.mat · .npy · .npz · .csv · .bin</span>
-        <input type="file" id="sim-csi" accept=".mat,.MAT,.npy,.npz,.csv,.bin,application/octet-stream" class="file-input" />
-        <span id="sim-csi-name" class="upload-filename">No file chosen</span>
-      </label>
+        <label class="upload-field">
+          <span class="upload-label">2. Raw CSI (.mat)</span>
+          <span class="upload-formats">complex amplitude + phase · ~3000×30</span>
+          <input type="file" id="sim-csi-mat" accept=".mat,.MAT" class="file-input" />
+          <span id="sim-csi-mat-name" class="upload-filename">No file chosen</span>
+        </label>
 
-      <label class="upload-field">
-        <span class="upload-label">Sample rate (optional)</span>
-        <span class="upload-formats">Hz — auto from .mat timestamps if blank</span>
-        <input type="number" id="sim-fs" placeholder="e.g. 955" class="file-input" step="0.1" />
-      </label>
+        <label class="upload-field">
+          <span class="upload-label">3. Preprocessed CSI (.npy)</span>
+          <span class="upload-formats">amplitude only (phase discarded) · same session</span>
+          <input type="file" id="sim-csi-npy" accept=".npy,.NPY" class="file-input" />
+          <span id="sim-csi-npy-name" class="upload-filename">No file chosen</span>
+        </label>
 
-      <button id="btn-run-simulation" class="btn-primary w-full text-sm py-2 mt-1">Run Simulation</button>
-      <p id="sim-status" class="text-xs mt-2 text-slate-500 truncate"></p>
+        <label class="upload-field upload-field-compact">
+          <span class="upload-label">Sample rate (optional)</span>
+          <span class="upload-formats">Hz — auto ~1000 from .mat if blank</span>
+          <input type="number" id="sim-fs" placeholder="e.g. 1000" class="file-input" step="0.1" />
+        </label>
+      </div>
+
+      <div class="upload-actions">
+        <button id="btn-run-simulation" class="btn-primary w-full text-sm py-2">Run Simulation</button>
+        <p id="sim-status" class="text-xs mt-1 text-slate-500 truncate"></p>
+      </div>
     </div>
 
     <div class="card compact span-2">

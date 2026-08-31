@@ -222,9 +222,11 @@ function updateSensingUI(prefix, data, nodePositions, areaSize, store = true) {
 // --- Simulation ---
 const videoEl = document.getElementById("sim-video-player");
 const videoInput = document.getElementById("sim-video");
-const csiInput = document.getElementById("sim-csi");
+const csiMatInput = document.getElementById("sim-csi-mat");
+const csiNpyInput = document.getElementById("sim-csi-npy");
 const videoNameEl = document.getElementById("sim-video-name");
-const csiNameEl = document.getElementById("sim-csi-name");
+const csiMatNameEl = document.getElementById("sim-csi-mat-name");
+const csiNpyNameEl = document.getElementById("sim-csi-npy-name");
 
 function bindFileLabel(input, labelEl) {
   if (!input || !labelEl) return;
@@ -235,23 +237,29 @@ function bindFileLabel(input, labelEl) {
   });
 }
 bindFileLabel(videoInput, videoNameEl);
-bindFileLabel(csiInput, csiNameEl);
+bindFileLabel(csiMatInput, csiMatNameEl);
+bindFileLabel(csiNpyInput, csiNpyNameEl);
 
 document.getElementById("btn-run-simulation").onclick = async () => {
   const videoFile = videoInput?.files?.[0];
-  const csiFile = csiInput?.files?.[0];
+  const matFile = csiMatInput?.files?.[0];
+  const npyFile = csiNpyInput?.files?.[0];
   const fsVal = document.getElementById("sim-fs").value;
   const status = document.getElementById("sim-status");
 
-  if (!videoFile || !csiFile) {
-    status.textContent = "Select scene video (.mp4) and CSI (.mat or .npy).";
+  if (!videoFile || !matFile || !npyFile) {
+    status.textContent = "Select all three: video (.mp4), raw CSI (.mat), and preprocessed (.npy).";
     return;
   }
 
-  const csiExt = (csiFile.name.split(".").pop() || "").toLowerCase();
-  const allowedCsi = ["mat", "npy", "npz", "csv", "bin"];
-  if (!allowedCsi.includes(csiExt)) {
-    status.textContent = `Unsupported CSI type .${csiExt} — use .mat, .npy, .npz, .csv, or .bin`;
+  const matExt = (matFile.name.split(".").pop() || "").toLowerCase();
+  const npyExt = (npyFile.name.split(".").pop() || "").toLowerCase();
+  if (matExt !== "mat") {
+    status.textContent = "File 2 must be a .mat raw CSI file.";
+    return;
+  }
+  if (npyExt !== "npy") {
+    status.textContent = "File 3 must be a .npy preprocessed amplitude file.";
     return;
   }
 
@@ -260,7 +268,8 @@ document.getElementById("btn-run-simulation").onclick = async () => {
   lastSensing.sim = null;
   const form = new FormData();
   form.append("video", videoFile);
-  form.append("csi", csiFile);
+  form.append("csi_mat", matFile);
+  form.append("csi_npy", npyFile);
   if (fsVal) form.append("sample_rate", fsVal);
 
   try {
@@ -281,6 +290,7 @@ document.getElementById("btn-run-simulation").onclick = async () => {
     document.getElementById("sim-meta").textContent =
       `${json.duration_sec}s · ${json.n_frames} frames · count ${json.target_count ?? 0}` +
       (json.csi_load?.frames ? ` · CSI ${json.csi_load.frames}×${json.csi_load.subcarriers}` : "") +
+      (json.csi_load?.merged_with_npy ? " · mat+npy fused" : "") +
       (json.csi_load?.has_phase === false ? " · ⚠ no phase" : "") +
       (json.confidence != null ? ` · conf ${(json.confidence * 100).toFixed(0)}%` : "") +
       (json.reliable === false ? " · ⚠ low confidence" : "");

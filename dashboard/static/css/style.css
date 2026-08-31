@@ -72,8 +72,38 @@ html, body { height: 100%; margin: 0; font-family: "Inter", system-ui, sans-seri
 
 .upload-field {
   display: block;
-  margin-bottom: 0.45rem;
+  margin-bottom: 0.35rem;
   cursor: pointer;
+}
+
+.upload-field-compact {
+  margin-bottom: 0.2rem;
+}
+
+.upload-card {
+  overflow: hidden;
+}
+
+.upload-fields {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.15rem;
+  margin-bottom: 0.25rem;
+}
+
+.upload-actions {
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 0.35rem;
+  border-top: 1px solid #1e293b;
+  background: #0f172a;
+}
+
+.upload-actions .btn-primary {
+  min-height: 2rem;
+  font-weight: 600;
 }
 
 .upload-label {

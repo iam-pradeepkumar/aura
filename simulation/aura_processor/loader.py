@@ -176,6 +176,93 @@ def _pack_load_result(
     }
 
 
+def _align_csi_pair(
+    mat_csi: np.ndarray,
+    npy_amp: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Trim/pad mat and npy amplitude arrays to a common (frames, subcarriers) shape."""
+    mat_csi = np.asarray(mat_csi)
+    npy_amp = np.asarray(npy_amp, dtype=np.float64)
+    if np.iscomplexobj(npy_amp):
+        npy_amp = np.abs(npy_amp)
+
+    n_frames = min(mat_csi.shape[0], npy_amp.shape[0])
+    sc = min(mat_csi.shape[1], npy_amp.shape[1])
+    return mat_csi[:n_frames, :sc], npy_amp[:n_frames, :sc]
+
+
+def merge_csi_mat_npy(
+    mat_data: dict,
+    npy_data: dict,
+    sample_rate_hz: float | None = None,
+) -> dict:
+    """
+    Fuse one dataset's .mat (complex CSI with phase) and .npy (amplitude-only).
+
+    Phase comes from .mat; magnitude is taken from the preprocessed .npy so motion
+    energy matches the lab pipeline while localization/vitals keep phase information.
+    """
+    mat_csi = mat_data["csi"]
+    npy_raw = npy_data["csi"]
+    mat_csi, npy_amp = _align_csi_pair(mat_csi, npy_raw)
+
+    if mat_csi.size == 0 or npy_amp.size == 0:
+        raise ValueError("Empty CSI after aligning .mat and .npy shapes")
+
+    phase = np.angle(mat_csi)
+    fused = (npy_amp * np.exp(1j * phase)).astype(np.complex64)
+
+    n = len(fused)
+    mat_ts = np.asarray(mat_data.get("timestamps_ms", []), dtype=np.float64).ravel()
+    npy_ts = np.asarray(npy_data.get("timestamps_ms", []), dtype=np.float64).ravel()
+    if len(mat_ts) >= n:
+        timestamps = mat_ts[:n]
+        fs = float(mat_data.get("sample_rate_hz", 20.0))
+    elif len(npy_ts) >= n:
+        timestamps = npy_ts[:n]
+        fs = float(npy_data.get("sample_rate_hz", 20.0))
+    else:
+        fs = sample_rate_hz or float(mat_data.get("sample_rate_hz") or npy_data.get("sample_rate_hz") or 1000.0)
+        timestamps = np.arange(n, dtype=np.float64) * (1000.0 / fs)
+
+    if sample_rate_hz:
+        fs = float(sample_rate_hz)
+    elif len(timestamps) >= 2:
+        fs = _estimate_fs(timestamps)
+
+    mat_ids = np.asarray(mat_data.get("node_ids", np.zeros(n)), dtype=np.int32).ravel()
+    node_ids = mat_ids[:n] if len(mat_ids) >= n else np.zeros(n, dtype=np.int32)
+
+    mat_info = mat_data.get("load_info", {})
+    npy_info = npy_data.get("load_info", {})
+    orient_info = {
+        **mat_info,
+        "merged_with_npy": True,
+        "mat_frames": int(mat_data["csi"].shape[0]),
+        "npy_frames": int(npy_data["csi"].shape[0]),
+        "fused_frames": n,
+        "fused_subcarriers": int(fused.shape[1]),
+        "amplitude_source": "npy",
+        "phase_source": "mat",
+        "npy_source_field": npy_info.get("source_field", ""),
+        "has_phase": bool(np.std(phase) > 1e-4),
+        "n_frames": n,
+        "n_subcarriers": int(fused.shape[1]),
+        "output_shape": fused.shape,
+    }
+
+    return {
+        "csi": fused,
+        "timestamps_ms": timestamps,
+        "node_ids": node_ids,
+        "sample_rate_hz": fs,
+        "source": f"{mat_data.get('source', 'mat')}+{npy_data.get('source', 'npy')}",
+        "load_info": orient_info,
+        "mat_csi": mat_csi,
+        "npy_amplitude": npy_amp,
+    }
+
+
 def load_csi_npy(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     """
     Load .npy CSI array (also handles misnamed .npz files).

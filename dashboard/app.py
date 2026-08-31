@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SIM_DIR = ROOT / "simulation"
 sys.path.insert(0, str(SIM_DIR))
 
-from aura_processor import AURAPipeline, load_csi  # noqa: E402
+from aura_processor import AURAPipeline, load_csi_mat, load_csi_npy, merge_csi_mat_npy  # noqa: E402
 from aura_processor.multitarget import trim_csi_to_video  # noqa: E402
 from aura_processor.serialize import result_to_dict, target_to_dict  # noqa: E402
 from aura_processor.hardware_state import NodePipelineState, fuse_multinode_targets  # noqa: E402
@@ -31,7 +31,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-14"
+PROCESSOR_VERSION = "2026.08.31-15"
 
 
 def load_config() -> dict:
@@ -46,7 +46,8 @@ def load_config() -> dict:
 class SimulationSession:
     session_id: str
     video_path: Path
-    csi_path: Path
+    csi_mat_path: Path
+    csi_npy_path: Path
     fps: float
     duration_sec: float
     n_frames: int
@@ -140,7 +141,8 @@ async def favicon():
 @app.post("/api/simulation/upload")
 async def upload_simulation(
     video: UploadFile = File(...),
-    csi: UploadFile = File(...),
+    csi_mat: UploadFile = File(...),
+    csi_npy: UploadFile = File(...),
     sample_rate: float | None = Form(None),
 ):
     import shutil
@@ -151,18 +153,23 @@ async def upload_simulation(
     session_dir.mkdir(parents=True, exist_ok=True)
 
     video_ext = Path(video.filename or "video.mp4").suffix or ".mp4"
-    csi_ext = Path(csi.filename or "csi.npy").suffix or ".npy"
+    mat_path = session_dir / f"csi{Path(csi_mat.filename or 'raw.mat').suffix or '.mat'}"
+    npy_path = session_dir / f"csi_amp{Path(csi_npy.filename or 'amp.npy').suffix or '.npy'}"
     video_path = session_dir / f"video{video_ext}"
-    csi_path = session_dir / f"csi{csi_ext}"
 
     try:
         with video_path.open("wb") as f:
             shutil.copyfileobj(video.file, f)
-        with csi_path.open("wb") as f:
-            shutil.copyfileobj(csi.file, f)
+        with mat_path.open("wb") as f:
+            shutil.copyfileobj(csi_mat.file, f)
+        with npy_path.open("wb") as f:
+            shutil.copyfileobj(csi_npy.file, f)
 
-        data = load_csi(csi_path, sample_rate_hz=sample_rate)
+        mat_data = load_csi_mat(mat_path, sample_rate_hz=sample_rate)
+        npy_data = load_csi_npy(npy_path, sample_rate_hz=sample_rate)
+        data = merge_csi_mat_npy(mat_data, npy_data, sample_rate_hz=sample_rate)
         load_info = data.get("load_info", {})
+
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             raise ValueError("Cannot open video file")
@@ -186,6 +193,19 @@ async def upload_simulation(
         aligned = align_results(results, duration, n_frames)
         assessment = pipe.session_assessment or {}
         events = [e for e in pipe.tracker.events if _event_in_duration(e, duration)]
+
+        warnings = list(assessment.get("warnings", []))
+        v_stem = Path(video.filename or "").stem.lower()
+        m_stem = Path(csi_mat.filename or "").stem.lower()
+        n_stem = Path(csi_npy.filename or "").stem.lower()
+        if v_stem and m_stem and n_stem:
+            common = max(
+                len(set(v_stem.split("_")) & set(m_stem.split("_"))),
+                len(set(v_stem.split("_")) & set(n_stem.split("_"))),
+                len(set(m_stem.split("_")) & set(n_stem.split("_"))),
+            )
+            if common == 0 and v_stem != m_stem and m_stem != n_stem:
+                warnings.append("Filenames may be from different sessions — verify video, .mat, and .npy match.")
     except Exception as exc:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -194,7 +214,8 @@ async def upload_simulation(
     session = SimulationSession(
         session_id=session_id,
         video_path=video_path,
-        csi_path=csi_path,
+        csi_mat_path=mat_path,
+        csi_npy_path=npy_path,
         fps=fps,
         duration_sec=duration,
         n_frames=n_frames,
@@ -224,14 +245,17 @@ async def upload_simulation(
         "sync_score": assessment.get("sync_score", 1.0),
         "confidence": assessment.get("confidence", preview.get("confidence", 0)),
         "reliable": assessment.get("reliable", True),
-        "warnings": assessment.get("warnings", []),
+        "warnings": warnings,
         "csi_load": {
-            "format": load_info.get("format", csi_ext),
+            "format": "mat+npy",
             "source_field": load_info.get("source_field", ""),
             "input_shape": list(load_info.get("input_shape", [])),
-            "frames": load_info.get("n_frames", len(csi)),
-            "subcarriers": load_info.get("n_subcarriers", int(csi.shape[1])),
+            "frames": load_info.get("fused_frames", len(csi)),
+            "subcarriers": load_info.get("fused_subcarriers", int(csi.shape[1])),
             "has_phase": load_info.get("has_phase", True),
+            "merged_with_npy": load_info.get("merged_with_npy", True),
+            "mat_frames": load_info.get("mat_frames"),
+            "npy_frames": load_info.get("npy_frames"),
             "combined_antennas": load_info.get("combined_antennas"),
         },
         "targets": preview.get("targets", []),
