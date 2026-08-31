@@ -7,11 +7,6 @@ from scipy.signal import find_peaks, stft, detrend
 
 from .srcc import srcc, motion_energy
 
-# Tunable CSI detection gates (reduce false positives)
-PEAK_HEIGHT_RATIO = 0.15
-SVD_SINGULAR_RATIO = 0.10
-MIN_DETECTION_SCORE = 0.12
-SESSION_VOTE_MIN_WINDOWS = 2
 CLUSTER_EPS_M = 2.0
 
 
@@ -49,6 +44,18 @@ def trim_csi_to_video(
         fs = implied_fs
 
     return csi, timestamps_ms, float(np.clip(fs, 10.0, 2000.0))
+
+
+def _adaptive_gates(motion_level: float, motion_threshold: float) -> dict:
+    """Relax CSI peak gates when motion is clearly present."""
+    ratio = motion_level / max(motion_threshold, 1e-6)
+    if ratio >= 4.0:
+        return {"peak_ratio": 0.07, "min_score": 0.035, "svd_ratio": 0.05, "vote_windows": 1}
+    if ratio >= 2.0:
+        return {"peak_ratio": 0.09, "min_score": 0.055, "svd_ratio": 0.07, "vote_windows": 1}
+    if ratio >= 1.0:
+        return {"peak_ratio": 0.11, "min_score": 0.08, "svd_ratio": 0.08, "vote_windows": 2}
+    return {"peak_ratio": 0.15, "min_score": 0.12, "svd_ratio": 0.10, "vote_windows": 2}
 
 
 def _delay_profile(csi: np.ndarray) -> np.ndarray:
@@ -90,8 +97,8 @@ def cluster_xy(
 
 
 def _score_detection(cleaned: np.ndarray, det: dict) -> float:
-    """Higher = more likely a real person (not noise)."""
-    prof_max = float(_delay_profile(cleaned).max()) + 1e-9
+    prof = _delay_profile(cleaned)
+    prof_max = float(prof.max()) + 1e-9
     peak_ratio = float(det.get("weight", 0)) / prof_max
 
     db = int(det.get("delay_bin", 0))
@@ -99,33 +106,39 @@ def _score_detection(cleaned: np.ndarray, det: dict) -> float:
     lo, hi = max(0, db - 3), min(n_sc, db + 4)
     seg = cleaned[:, lo:hi]
     if seg.size == 0:
-        return peak_ratio * 0.5
+        return peak_ratio
 
     amp_var = float(np.var(np.abs(seg)))
     phase_var = float(np.var(np.diff(np.angle(seg), axis=0)))
-    motion_band = float(np.mean(np.var(np.abs(seg), axis=1)))
+    t_var = float(np.mean(np.var(np.abs(seg), axis=1)))
+    baseline = float(np.var(np.abs(cleaned))) + 1e-9
 
-    score = peak_ratio * 0.45 + amp_var * 0.25 + phase_var * 0.15 + motion_band * 0.15
+    score = (
+        peak_ratio * 0.40
+        + min(amp_var / baseline, 3.0) * 0.20
+        + min(phase_var, 1.0) * 0.20
+        + min(t_var / baseline, 3.0) * 0.20
+    )
     return float(score)
 
 
 def filter_confident_detections(
     detections: list[dict],
     cleaned: np.ndarray,
-    min_score: float = MIN_DETECTION_SCORE,
+    min_score: float,
     max_targets: int = 3,
 ) -> list[dict]:
     if not detections:
         return []
-    scored = [( _score_detection(cleaned, d), d) for d in detections]
+    scored = [(_score_detection(cleaned, d), d) for d in detections]
     scored.sort(key=lambda x: -x[0])
     out = []
     for score, det in scored:
         if score < min_score:
             continue
-        det = dict(det)
-        det["confidence"] = score
-        out.append(det)
+        d = dict(det)
+        d["confidence"] = score
+        out.append(d)
         if len(out) >= max_targets:
             break
     return out
@@ -176,6 +189,7 @@ def _iterative_delay_peaks(
     area_size_m: float,
     max_targets: int,
     sensor_xy: tuple[float, float],
+    peak_ratio: float,
 ) -> list[dict]:
     delay_prof = _delay_profile(cleaned)
     residual = delay_prof.copy()
@@ -187,7 +201,7 @@ def _iterative_delay_peaks(
             break
         peak = int(np.argmax(residual))
         height = float(delay_prof[peak])
-        if height < PEAK_HEIGHT_RATIO * delay_prof.max():
+        if height < peak_ratio * delay_prof.max():
             break
         dets.append(_localize_from_delay_bin(cleaned, peak, height, fs_hz, area_size_m, sensor_xy))
         lo = max(0, peak - max(2, n_bins // 12))
@@ -197,7 +211,67 @@ def _iterative_delay_peaks(
     return dets
 
 
-def _svd_motion_sources(csi: np.ndarray, n_sources: int = 3) -> list[np.ndarray]:
+def _delay_peak_candidates(
+    cleaned: np.ndarray,
+    fs_hz: float,
+    area_size_m: float,
+    max_targets: int,
+    sensor_xy: tuple[float, float],
+    peak_ratio: float,
+) -> list[dict]:
+    """Find multiple delay peaks via scipy find_peaks (robust on real CSI)."""
+    prof = _delay_profile(cleaned)
+    if prof.max() <= 0:
+        return []
+    peaks, _ = find_peaks(
+        prof,
+        height=peak_ratio * prof.max(),
+        distance=max(2, len(prof) // 14),
+    )
+    if len(peaks) == 0:
+        peaks = np.argsort(prof)[-max_targets:]
+    dets = []
+    for peak in peaks[:max_targets]:
+        dets.append(_localize_from_delay_bin(cleaned, int(peak), float(prof[peak]), fs_hz, area_size_m, sensor_xy))
+    return dets
+
+
+def _band_motion_sources(
+    cleaned: np.ndarray,
+    fs_hz: float,
+    area_size_m: float,
+    max_targets: int,
+    sensor_xy: tuple[float, float],
+) -> list[dict]:
+    """Separate people via subcarrier bands with independent temporal motion."""
+    n_sc = cleaned.shape[1]
+    if n_sc < 6:
+        return []
+    bands = np.array_split(np.arange(n_sc), max_targets)
+    dets = []
+    amp = np.abs(cleaned)
+    band_vars = []
+    for band in bands:
+        if len(band) < 2:
+            continue
+        sub = cleaned[:, band]
+        var_t = float(np.mean(np.var(amp[:, band], axis=1)))
+        band_vars.append((var_t, sub, band))
+    band_vars.sort(key=lambda x: -x[0])
+    for var_t, sub, band in band_vars[:max_targets]:
+        if var_t < 1e-8:
+            continue
+        prof = _delay_profile(sub)
+        peak = int(np.argmax(prof))
+        global_bin = int(band[min(peak, len(band) - 1)])
+        det = _localize_from_delay_bin(sub, peak, float(prof[peak]), fs_hz, area_size_m, sensor_xy)
+        det["delay_bin"] = global_bin
+        det["weight"] = float(prof[peak] * (1.0 + var_t))
+        dets.append(det)
+    return dets
+
+
+def _svd_motion_sources(csi: np.ndarray, n_sources: int, svd_ratio: float) -> list[np.ndarray]:
     phase = np.angle(csi)
     phase = detrend(phase, axis=0, type="linear")
     phase = phase - phase.mean(axis=0, keepdims=True)
@@ -208,7 +282,7 @@ def _svd_motion_sources(csi: np.ndarray, n_sources: int = 3) -> list[np.ndarray]
 
     sources = []
     for i in range(min(n_sources, len(s))):
-        if s[i] < SVD_SINGULAR_RATIO * s[0]:
+        if s[i] < svd_ratio * s[0]:
             continue
         comp = (u[:, i : i + 1] * s[i]) @ vh[i : i + 1, :]
         sources.append(comp)
@@ -242,24 +316,33 @@ def detect_and_localize(
     motion_level: float = 0.0,
     motion_threshold: float = 0.02,
 ) -> list[dict]:
-    """CSI-only detection: SVD sources + delay peaks, confidence-filtered."""
+    """CSI-only detection with motion-adaptive thresholds."""
     cleaned = csi if skip_srcc else srcc(csi)
     cleaned = np.nan_to_num(cleaned)
     t_len, n_sc = cleaned.shape
     if t_len < 16 or n_sc < 4:
         return []
 
-    if require_motion and motion_level < motion_threshold * 0.8:
+    if require_motion and motion_level < motion_threshold * 0.7:
         return []
 
+    gates = _adaptive_gates(motion_level, motion_threshold)
     raw_points: list[dict] = []
 
-    for src in _svd_motion_sources(cleaned, n_sources=max_targets):
+    for src in _svd_motion_sources(cleaned, max_targets, gates["svd_ratio"]):
         det = _localize_from_source(src, fs_hz, area_size_m, sensor_xy)
         if det:
             raw_points.append(det)
 
-    raw_points.extend(_iterative_delay_peaks(cleaned, fs_hz, area_size_m, max_targets, sensor_xy))
+    raw_points.extend(_iterative_delay_peaks(
+        cleaned, fs_hz, area_size_m, max_targets, sensor_xy, gates["peak_ratio"]
+    ))
+    raw_points.extend(_delay_peak_candidates(
+        cleaned, fs_hz, area_size_m, max_targets, sensor_xy, gates["peak_ratio"] * 0.85
+    ))
+
+    if motion_level >= motion_threshold:
+        raw_points.extend(_band_motion_sources(cleaned, fs_hz, area_size_m, max_targets, sensor_xy))
 
     if not raw_points:
         return []
@@ -270,7 +353,7 @@ def detect_and_localize(
         best = min(raw_points, key=lambda p: (p["x_m"] - cx) ** 2 + (p["y_m"] - cy) ** 2)
         merged.append({**best, "x_m": cx, "y_m": cy})
 
-    return filter_confident_detections(merged, cleaned, max_targets=max_targets)
+    return filter_confident_detections(merged, cleaned, gates["min_score"], max_targets)
 
 
 def detect_session_targets(
@@ -282,19 +365,17 @@ def detect_session_targets(
     window_sec: float = 0.5,
     motion_threshold: float = 0.02,
 ) -> list[dict]:
-    """
-    Aggregate confident CSI detections across sliding windows (temporal voting).
-    Returns only targets confirmed in multiple windows or with high confidence.
-    """
+    """Aggregate CSI detections across sliding windows with temporal voting."""
     t_len = len(csi)
     if t_len < 32:
         return []
 
     cleaned = np.nan_to_num(srcc(csi))
     motion_level = float(np.mean(motion_energy(cleaned)))
-    if motion_level < motion_threshold * 0.75:
+    if motion_level < motion_threshold * 0.65:
         return []
 
+    gates = _adaptive_gates(motion_level, motion_threshold)
     win = max(int(window_sec * fs_hz), 48)
     hop = max(win // 4, 16)
 
@@ -303,42 +384,42 @@ def detect_session_targets(
         chunk = cleaned[start : start + win]
         m_chunk = float(np.mean(motion_energy(chunk)))
         dets = detect_and_localize(
-            chunk,
-            fs_hz,
-            area_size_m,
-            max_targets,
-            sensor_xy,
-            skip_srcc=True,
-            require_motion=True,
-            motion_level=m_chunk,
-            motion_threshold=motion_threshold,
+            chunk, fs_hz, area_size_m, max_targets, sensor_xy,
+            skip_srcc=True, require_motion=True,
+            motion_level=m_chunk, motion_threshold=motion_threshold,
         )
         if dets:
             window_hits.append(dets)
 
-    # Full-session pass
     full_dets = detect_and_localize(
-        cleaned,
-        fs_hz,
-        area_size_m,
-        max_targets,
-        sensor_xy,
-        skip_srcc=True,
-        require_motion=True,
-        motion_level=motion_level,
-        motion_threshold=motion_threshold,
+        cleaned, fs_hz, area_size_m, max_targets, sensor_xy,
+        skip_srcc=True, require_motion=True,
+        motion_level=motion_level, motion_threshold=motion_threshold,
     )
     if full_dets:
         window_hits.append(full_dets)
 
+    if not window_hits and motion_level >= motion_threshold:
+        fallback = filter_confident_detections(
+            _band_motion_sources(cleaned, fs_hz, area_size_m, max_targets, sensor_xy)
+            + _delay_peak_candidates(cleaned, fs_hz, area_size_m, max_targets, sensor_xy, gates["peak_ratio"] * 0.7),
+            cleaned,
+            gates["min_score"] * 0.8,
+            max_targets,
+        )
+        if fallback:
+            return fallback
+
     if not window_hits:
         return []
 
-    # Vote: cluster all confident points, keep clusters seen in >= SESSION_VOTE_MIN_WINDOWS
     all_points: list[dict] = [d for group in window_hits for d in group]
     centroids = cluster_xy([(p["x_m"], p["y_m"]) for p in all_points], eps=CLUSTER_EPS_M, max_clusters=max_targets)
 
     session_dets: list[dict] = []
+    min_votes = gates["vote_windows"]
+    conf_floor = gates["min_score"] * 1.5
+
     for cx, cy in centroids:
         nearby = [p for p in all_points if (p["x_m"] - cx) ** 2 + (p["y_m"] - cy) ** 2 < 4.0]
         windows_with_hit = sum(
@@ -347,7 +428,7 @@ def detect_session_targets(
         )
         best = max(nearby, key=lambda p: p.get("confidence", p.get("weight", 0)))
         conf = float(best.get("confidence", _score_detection(cleaned, best)))
-        if windows_with_hit < SESSION_VOTE_MIN_WINDOWS and conf < 0.28:
+        if windows_with_hit < min_votes and conf < conf_floor:
             continue
         vel = float(np.median([p["velocity_mps"] for p in nearby])) if nearby else 0.0
         session_dets.append({

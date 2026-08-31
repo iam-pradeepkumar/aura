@@ -103,6 +103,21 @@ class AURAPipeline:
         if not detections and self._session_targets:
             detections = [dict(s) for s in self._session_targets[: self.max_targets]]
 
+        # Motion confirmed but no peaks yet — retry on full window with relaxed gates
+        if motion and not detections:
+            from .multitarget import detect_and_localize as _detect
+            detections = _detect(
+                cleaned,
+                self.fs_hz,
+                self.area_size_m,
+                self.max_targets,
+                sensor_xy,
+                skip_srcc=True,
+                require_motion=True,
+                motion_level=m_energy * 1.1,
+                motion_threshold=self.motion_threshold * 0.8,
+            )
+
         for det in detections:
             delay_bin = int(det.get("delay_bin", 0))
             tv = extract_vitals_for_target(cleaned, self.fs_hz, delay_bin)
