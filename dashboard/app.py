@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -102,6 +102,11 @@ async def get_config():
     }
 
 
+@app.get("/favicon.ico")
+async def favicon():
+    return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
+
+
 @app.post("/api/simulation/upload")
 async def upload_simulation(
     video: UploadFile = File(...),
@@ -117,26 +122,29 @@ async def upload_simulation(
     video_path = session_dir / f"video{video_ext}"
     csi_path = session_dir / f"csi{csi_ext}"
 
-    with video_path.open("wb") as f:
-        shutil.copyfileobj(video.file, f)
-    with csi_path.open("wb") as f:
-        shutil.copyfileobj(csi.file, f)
+    try:
+        with video_path.open("wb") as f:
+            shutil.copyfileobj(video.file, f)
+        with csi_path.open("wb") as f:
+            shutil.copyfileobj(csi.file, f)
 
-    import cv2
+        import cv2
 
-    data = load_csi(csi_path, sample_rate_hz=sample_rate)
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
+        data = load_csi(csi_path, sample_rate_hz=sample_rate)
+        cap = cv2.VideoCapture(str(video_path))
+        if not cap.isOpened():
+            raise ValueError("Cannot open video file")
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        duration = n_frames / fps
+        cap.release()
+
+        pipe = build_pipeline(fs_hz=data["sample_rate_hz"])
+        results = pipe.process_session(data["csi"], data["timestamps_ms"])
+        aligned = align_results(results, duration, n_frames)
+    except Exception as exc:
         shutil.rmtree(session_dir, ignore_errors=True)
-        return {"error": "Cannot open video file"}
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
-    duration = n_frames / fps
-    cap.release()
-
-    pipe = build_pipeline(fs_hz=data["sample_rate_hz"])
-    results = pipe.process_session(data["csi"], data["timestamps_ms"])
-    aligned = align_results(results, duration, n_frames)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     cfg = load_config()
     session = SimulationSession(

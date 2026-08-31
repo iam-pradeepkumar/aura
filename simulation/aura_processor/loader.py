@@ -15,15 +15,22 @@ HEADER_SIZE = struct.calcsize(HEADER_FMT)
 
 
 def load_csi(path: str | Path, sample_rate_hz: float | None = None) -> dict:
-    """Auto-detect format from extension and load CSI session."""
+    """Auto-detect format from extension and file content."""
     path = Path(path)
     ext = path.suffix.lower()
+
+    # Sniff: .npy extension may contain NPZ (zip) data
+    if ext == ".npy":
+        with path.open("rb") as f:
+            magic = f.read(2)
+        if magic == b"PK":
+            return load_csi_npz(path, sample_rate_hz=sample_rate_hz)
+        return load_csi_npy(path, sample_rate_hz=sample_rate_hz)
+
     if ext == ".bin":
         return load_csi_binary(path)
     if ext == ".csv":
         return load_csi_csv(path)
-    if ext == ".npy":
-        return load_csi_npy(path, sample_rate_hz=sample_rate_hz)
     if ext == ".npz":
         return load_csi_npz(path, sample_rate_hz=sample_rate_hz)
     if ext == ".mat":
@@ -85,7 +92,7 @@ def _extract_timestamps(
     sample_rate_hz: float | None,
 ) -> tuple[np.ndarray, float]:
     """Find timestamps in metadata dict or synthesize from sample rate."""
-    for key in ("timestamp_ms", "timestamps_ms", "timestamp", "timestamps", "ts", "time"):
+    for key in TIMESTAMP_KEYS:
         if key in meta:
             ts = np.asarray(meta[key], dtype=np.float64).ravel()
             if key in ("timestamp", "timestamps", "ts", "time") and ts.max() < 1000:
@@ -109,37 +116,67 @@ def _extract_node_ids(meta: dict, n_frames: int) -> np.ndarray:
     return np.zeros(n_frames, dtype=np.int32)
 
 
+CSI_KEYS = ("csi", "CSI", "data", "H", "csi_data", "cfm", "amplitude", "csi_amp", "csi_all")
+TIMESTAMP_KEYS = ("timestamp_ms", "timestamps_ms", "timestamp", "timestamps", "ts", "time", "t")
+
+
+def _meta_from_npz(data: np.lib.npyio.NpzFile) -> dict:
+    return {k: data[k] for k in data.files}
+
+
+def _find_csi_key(meta: dict) -> str | None:
+    for k in CSI_KEYS:
+        if k in meta:
+            return k
+    # Fuzzy: any array key containing 'csi'
+    for k in meta:
+        if "csi" in k.lower() and hasattr(meta[k], "shape"):
+            return k
+    # Largest numeric array fallback
+    best, best_size = None, 0
+    for k, v in meta.items():
+        try:
+            arr = np.asarray(v)
+            if arr.ndim >= 2 and arr.size > best_size:
+                best, best_size = k, arr.size
+        except Exception:
+            continue
+    return best
+
+
 def load_csi_npy(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     """
-    Load .npy CSI array.
-
-    Supported shapes:
-      - (frames, subcarriers) complex
-      - (frames, subcarriers, 2) or (frames, 2, subcarriers) real/imag
-      - (frames, tones, nrx, ntx) Intel/csiread style
-
-    Optional companion: same basename + _meta.npy with timestamps/node_id keys.
+    Load .npy CSI array (also handles misnamed .npz files).
     """
     path = Path(path)
     raw = np.load(path, allow_pickle=True)
 
+    # NPZ saved with .npy extension
+    if isinstance(raw, np.lib.npyio.NpzFile):
+        return load_csi_npz(path, sample_rate_hz=sample_rate_hz)
+
     meta: dict = {}
-    if raw.dtype == object:
-        raw = raw.item()
-        if isinstance(raw, dict):
-            meta = raw
-            csi_key = next((k for k in ("csi", "CSI", "data", "H") if k in meta), None)
+    if isinstance(raw, np.ndarray) and raw.dtype == object:
+        item = raw.item()
+        if isinstance(item, dict):
+            meta = item
+            csi_key = _find_csi_key(meta)
             if csi_key is None:
-                raise ValueError(f".npy dict must contain 'csi' key. Found: {list(meta.keys())}")
+                raise ValueError(f".npy dict must contain CSI array. Keys: {list(meta.keys())}")
             arr = meta[csi_key]
         else:
-            arr = raw
+            arr = item
     else:
         arr = raw
         meta_path = path.with_name(path.stem + "_meta.npy")
         if meta_path.exists():
             meta_obj = np.load(meta_path, allow_pickle=True)
-            meta = meta_obj.item() if meta_obj.dtype == object else {"meta": meta_obj}
+            if isinstance(meta_obj, np.lib.npyio.NpzFile):
+                meta = _meta_from_npz(meta_obj)
+            elif isinstance(meta_obj, np.ndarray) and meta_obj.dtype == object:
+                meta = meta_obj.item() if isinstance(meta_obj.item(), dict) else {"meta": meta_obj}
+            else:
+                meta = {"meta": meta_obj}
 
     csi = _to_complex_2d(arr)
     timestamps, fs = _extract_timestamps(meta, len(csi), sample_rate_hz)
@@ -158,10 +195,10 @@ def load_csi_npz(path: str | Path, sample_rate_hz: float | None = None) -> dict:
     """Load .npz with keys like csi, timestamp_ms, node_id."""
     path = Path(path)
     data = np.load(path, allow_pickle=True)
-    meta = {k: data[k] for k in data.files}
-    csi_key = next((k for k in ("csi", "CSI", "data", "H") if k in meta), None)
+    meta = _meta_from_npz(data)
+    csi_key = _find_csi_key(meta)
     if csi_key is None:
-        raise ValueError(f".npz must contain 'csi' array. Found: {list(meta.keys())}")
+        raise ValueError(f".npz must contain CSI array. Found keys: {list(meta.keys())}")
     csi = _to_complex_2d(meta[csi_key])
     timestamps, fs = _extract_timestamps(meta, len(csi), sample_rate_hz)
     node_ids = _extract_node_ids(meta, len(csi))
