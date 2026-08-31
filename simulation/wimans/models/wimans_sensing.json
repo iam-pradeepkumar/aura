@@ -1,0 +1,8 @@
+{
+  "in_dim": 83,
+  "annotation": "/workspace/simulation/wimans/data/annotation.csv",
+  "trained_samples": 11286,
+  "real_amp_dir": null,
+  "use_synthetic": true,
+  "test_count_acc": 0.9621973037719727
+}

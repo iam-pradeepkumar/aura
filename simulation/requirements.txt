@@ -10,3 +10,5 @@ mat73>=0.65
 fastapi>=0.110
 uvicorn[standard]>=0.27
 python-multipart>=0.0.9
+scikit-learn>=1.4
+torch>=2.1

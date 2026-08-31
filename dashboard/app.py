@@ -31,7 +31,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-21"
+PROCESSOR_VERSION = "2026.08.31-22"
 
 
 def load_config() -> dict:
@@ -204,9 +204,12 @@ async def upload_simulation(
         )
 
         pipe = build_pipeline(fs_hz=fs_hz)
+        label_stem = Path(csi_npy.filename or csi_mat.filename or video.filename or "").stem
         results = pipe.process_session(
             csi, timestamps_ms, video_duration_sec=duration, video_path=str(video_path),
             amplitude_count=amp_count if amp_count > 0 else None,
+            wimans_amp=data.get("npy_amplitude", npy_data["csi"]),
+            wimans_label=label_stem,
         )
         aligned = align_results(results, duration, n_frames)
         assessment = pipe.session_assessment or {}
@@ -257,7 +260,8 @@ async def upload_simulation(
         "csi_frames": len(csi),
         "subcarriers": int(csi.shape[1]),
         "sample_rate_hz": round(fs_hz, 2),
-        "amplitude_count": amp_count,
+        "wimans_sensing": bool(getattr(pipe, "_wimans_meta", {})),
+        "wimans_count": getattr(pipe, "_wimans_meta", {}).get("count"),
         "target_count": effective_count,
         "csi_person_estimate": pipe.estimated_person_count,
         "csi_fingerprint": assessment.get("csi_fingerprint", ""),

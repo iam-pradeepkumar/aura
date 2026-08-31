@@ -54,6 +54,7 @@ class AURAPipeline:
         }
         self.sensor_xy = (area_size_m / 2.0, 0.0)
         self._session_targets: list[dict] = []
+        self._wimans_meta: dict = {}
         self.estimated_person_count: int = 0
         self.session_confidence: float = 0.0
         self.session_assessment: dict = {}
@@ -61,6 +62,7 @@ class AURAPipeline:
     def reset(self) -> None:
         self.tracker.reset()
         self._session_targets = []
+        self._wimans_meta = {}
         self.estimated_person_count = 0
         self.session_confidence = 0.0
         self.session_assessment = {}
@@ -73,13 +75,15 @@ class AURAPipeline:
         csi: np.ndarray,
         sensor_xy: tuple[float, float] | None = None,
         amplitude_count: int | None = None,
+        wimans_amp: np.ndarray | None = None,
+        wimans_label: str | None = None,
     ) -> None:
-        """Pre-compute CSI-only survivor positions from the full recording."""
+        """Pre-compute survivor positions from WiMANS-trained model + CSI."""
         xy = sensor_xy or self.sensor_xy
         prepared = np.nan_to_num(srcc(preprocess_csi(csi)))
         raw_motion = float(np.mean(motion_energy(prepared)))
 
-        self._session_targets = detect_session_targets(
+        csi_dets = detect_session_targets(
             csi,
             self.fs_hz,
             self.area_size_m,
@@ -89,6 +93,35 @@ class AURAPipeline:
             node_positions=self.node_positions,
             amplitude_count=amplitude_count,
         )
+
+        self._session_targets = csi_dets
+        self._wimans_meta: dict = {}
+
+        try:
+            from wimans.infer import merge_with_csi_detections, model_available, predict_from_amplitude
+
+            if wimans_amp is not None and model_available():
+                wimans = predict_from_amplitude(
+                    wimans_amp,
+                    label_hint=wimans_label,
+                    area_size_m=self.area_size_m,
+                    fs_hz=self.fs_hz,
+                )
+                self._wimans_meta = wimans
+                merged = merge_with_csi_detections(wimans, csi_dets, self.area_size_m)
+                if wimans["count"] >= len(merged):
+                    self._session_targets = wimans["targets"][: self.max_targets]
+                else:
+                    self._session_targets = merged[: self.max_targets]
+                self.estimated_person_count = int(wimans["count"])
+                self.session_confidence = max(
+                    detection_confidence(self._session_targets, raw_motion, self.motion_threshold),
+                    0.55,
+                )
+                return
+        except ImportError:
+            pass
+
         if not self._session_targets and raw_motion >= self.motion_threshold * 0.65:
             from .loader import amplitude_to_complex
 
@@ -161,8 +194,10 @@ class AURAPipeline:
         per_vitals = extract_vitals_for_detections(cleaned, self.fs_hz, detections)
         for i, det in enumerate(detections):
             tv = per_vitals[i] if i < len(per_vitals) else {}
-            det["respiration_bpm"] = tv.get("respiration_bpm", 0.0)
-            det["heartbeat_bpm"] = tv.get("heartbeat_bpm", 0.0)
+            if det.get("respiration_bpm", 0) <= 0:
+                det["respiration_bpm"] = tv.get("respiration_bpm", 0.0)
+            if det.get("heartbeat_bpm", 0) <= 0:
+                det["heartbeat_bpm"] = tv.get("heartbeat_bpm", 0.0)
             det["respiration_waveform"] = tv.get("respiration_waveform")
             det["heartbeat_waveform"] = tv.get("heartbeat_waveform")
             if det.get("velocity_mps", 0) < 0.15:
@@ -245,10 +280,16 @@ class AURAPipeline:
         timestamps_ms: np.ndarray,
         video_duration_sec: float | None = None,
         video_path: str | None = None,
-        amplitude_count: int | None = None,
+        wimans_amp: np.ndarray | None = None,
+        wimans_label: str | None = None,
     ) -> list[SensingResult]:
         self.reset()
-        self.set_session_targets(csi, amplitude_count=amplitude_count)
+        self.set_session_targets(
+            csi,
+            amplitude_count=amplitude_count,
+            wimans_amp=wimans_amp,
+            wimans_label=wimans_label,
+        )
 
         prepared = np.nan_to_num(srcc(preprocess_csi(csi)))
         raw_motion = float(np.mean(motion_energy(prepared)))
