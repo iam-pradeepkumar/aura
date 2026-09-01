@@ -12,13 +12,10 @@
 #include "nvs_flash.h"
 
 #include "../../common/aura_protocol.h"
+#include "aura_node_config.h"
 #include "csi_stream.h"
 
 static const char *TAG = "aura_rx";
-
-#ifndef AURA_RX_NODE_ID
-#define AURA_RX_NODE_ID 1
-#endif
 
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
