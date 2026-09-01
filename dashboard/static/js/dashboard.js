@@ -95,11 +95,13 @@ function renderMap(elId, data, nodePositions, areaSize, prefix) {
       textfont: { size: 9, color: selected ? "#fff" : color },
       customdata: [[t.id]],
     });
-    if (t.trajectory?.length > 1) {
+    if t.trajectory?.length > 1) {
+      const trailWidth = prefix === "hw" ? 2.5 : 1;
+      const trailAlpha = prefix === "hw" ? "99" : "66";
       traces.push({
         x: t.trajectory.map((p) => p[0]), y: t.trajectory.map((p) => p[1]),
         mode: "lines",
-        line: { color: color + "66", width: 1 },
+        line: { color: color + trailAlpha, width: trailWidth },
         showlegend: false,
         hoverinfo: "skip",
       });
@@ -163,7 +165,8 @@ function renderTargets(elId, targets, prefix) {
       <div class="target-row ${selected ? "selected" : ""}" data-person-id="${t.id}" data-prefix="${prefix}"
            style="border-left: 3px solid ${color};">
         <div><b class="text-white">Person #${t.id}</b> ${t.is_moving ? "🔴 moving" : "🟠 static"}
-          <span class="text-slate-500">@ (${Number(t.x_m).toFixed(1)}, ${Number(t.y_m).toFixed(1)})</span></div>
+          <span class="text-slate-500">@ (${Number(t.x_m).toFixed(1)}, ${Number(t.y_m).toFixed(1)})</span>
+          ${t.velocity_mps > 0.1 ? `<span class="text-slate-500"> · ${Number(t.velocity_mps).toFixed(2)} m/s</span>` : ""}</div>
         <div class="text-slate-400 mt-0.5">
           <span style="color:${RESP_COLOR}">Resp ${t.respiration_bpm || "—"} BPM</span>
           <span class="mx-1">·</span>

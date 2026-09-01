@@ -21,6 +21,7 @@ from aura_processor import AURAPipeline, load_csi_mat, load_csi_npy, merge_csi_m
 from aura_processor.multitarget import estimate_count_from_amplitude, trim_csi_to_video  # noqa: E402
 from aura_processor.serialize import result_to_dict, target_to_dict  # noqa: E402
 from aura_processor.hardware_state import NodePipelineState, fuse_multinode_targets  # noqa: E402
+from aura_processor.hardware_tracker import FieldTracker  # noqa: E402
 from aura_processor.wireless import WirelessReceiver, DEFAULT_UDP_PORT  # noqa: E402
 
 
@@ -31,7 +32,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-26"
+PROCESSOR_VERSION = "2026.08.31-27"
 
 
 def _wimans_label_from_uploads(video_name: str, mat_name: str, npy_name: str) -> str:
@@ -72,6 +73,7 @@ wireless = WirelessReceiver()
 hardware_clients: set[WebSocket] = set()
 hardware_task: asyncio.Task | None = None
 hardware_nodes: dict[int, NodePipelineState] = {}
+field_tracker = FieldTracker()
 pipeline_cfg = load_config()
 
 
@@ -434,24 +436,24 @@ def process_hardware_snapshot() -> dict:
         })
 
     fused = fuse_multinode_targets(all_target_dicts)
-    total_count = len(fused)
+    tracked = field_tracker.update(fused)
 
     return {
         "mode": "hardware",
         "processor_version": PROCESSOR_VERSION,
         "active_nodes": len(active),
-        "motion_detected": motion,
-        "target_count": total_count,
+        "motion_detected": motion or any(t.get("is_moving") for t in tracked),
+        "target_count": len(tracked),
         "confidence": round(session_confidence, 2),
         "respiration_bpm": round(resp_bpm, 1),
         "heartbeat_bpm": round(hr_bpm, 1),
         "respiration_waveform": resp_wave,
         "heartbeat_waveform": hr_wave,
-        "targets": fused,
+        "targets": tracked,
         "node_status": node_status,
         "node_positions": cfg.get("node_positions", {}),
         "area_size_m": area,
-        "events": (primary_pipe.tracker.events[-5:] if primary_pipe else events[-5:]),
+        "events": (field_tracker.events[-8:] or (primary_pipe.tracker.events[-5:] if primary_pipe else events[-5:])),
     }
 
 
@@ -472,7 +474,12 @@ async def hardware_broadcast_loop():
 
 @app.post("/api/hardware/start")
 async def start_hardware():
-    global hardware_task
+    global hardware_task, field_tracker
+    cfg = load_config()
+    field_tracker = FieldTracker(
+        area_size_m=float(cfg.get("area_size_m", 10.0)),
+        trail_len=int(cfg.get("hardware", {}).get("trail_length", 80)),
+    )
     if not wireless.running:
         wireless.start()
     if hardware_task is None or hardware_task.done():
@@ -482,8 +489,10 @@ async def start_hardware():
 
 @app.post("/api/hardware/stop")
 async def stop_hardware():
+    global field_tracker
     wireless.stop()
     hardware_nodes.clear()
+    field_tracker.reset()
     return {"status": "stopped"}
 
 

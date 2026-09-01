@@ -10,7 +10,8 @@ Complete documentation for the **Adaptive Urban Rescue Array** — ESP32 WiFi CS
 |------------|------|
 | Get started quickly | [../README.md](../README.md) |
 | Run WiMANS simulation in browser | [SIMULATION_GUIDE.md](SIMULATION_GUIDE.md) |
-| Deploy ESP32 nodes in the field | [HARDWARE_SETUP.md](HARDWARE_SETUP.md) |
+| Deploy ESP32 nodes in the field | **[HARDWARE_FIELD_DEPLOYMENT.md](HARDWARE_FIELD_DEPLOYMENT.md)** ← start here |
+| Deploy ESP32 nodes (reference) | [HARDWARE_SETUP.md](HARDWARE_SETUP.md) |
 | Stream live CSI from all nodes | [WIRELESS_AND_SIMULATION.md](WIRELESS_AND_SIMULATION.md) → Part 1 |
 | Train on WiMANS `.npy` files | [WIMANS_TRAINING.md](WIMANS_TRAINING.md) |
 | Flash ESP32 firmware | [../firmware/README.md](../firmware/README.md) |
@@ -29,6 +30,7 @@ python dashboard/run.py
 
 # Live hardware CLI
 python tools/wireless_hub.py
+python tools/field_live.py    # matplotlib trails animation
 
 # WiMANS simulation CLI
 cd simulation && python run_simulation.py --data-dir ../my_data/

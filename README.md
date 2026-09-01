@@ -95,8 +95,17 @@ See **[docs/SIMULATION_GUIDE.md](docs/SIMULATION_GUIDE.md)** and **[docs/WIMANS_
 4. Power TX, then all RX nodes — they join the hotspot and stream CSI via **UDP port 5555**
 5. Dashboard → **Live Hardware** → **Start Listening**
 
+### Option B — CLI with motion trails (matplotlib)
+
 ```bash
-# Alternative: standalone CLI hub (no browser)
+python tools/field_live.py
+```
+
+Full-screen animated map with colored trail lines for each moving person.
+
+### Option C — CLI wireless hub
+
+```bash
 python tools/wireless_hub.py
 ```
 

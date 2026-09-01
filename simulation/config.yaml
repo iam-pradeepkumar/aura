@@ -24,3 +24,4 @@ hardware:
   refresh_every: 40        # recompute session targets periodically
   motion_threshold_scale: 0.85   # slightly more sensitive outdoors
   link_timeout_sec: 5.0
+  trail_length: 80        # motion trail points on live map
