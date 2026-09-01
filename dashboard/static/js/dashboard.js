@@ -95,7 +95,7 @@ function renderMap(elId, data, nodePositions, areaSize, prefix) {
       textfont: { size: 9, color: selected ? "#fff" : color },
       customdata: [[t.id]],
     });
-    if t.trajectory?.length > 1) {
+    if (t.trajectory?.length > 1) {
       const trailWidth = prefix === "hw" ? 2.5 : 1;
       const trailAlpha = prefix === "hw" ? "99" : "66";
       traces.push({
