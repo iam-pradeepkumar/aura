@@ -1,0 +1,10 @@
+menu "AURA RX Configuration"
+
+    config AURA_NODE_ID
+        int "ESP32 RX node ID (unique per board)"
+        range 1 8
+        default 1
+        help
+            Set a different ID for each receiver board (1-4 for corner deployment).
+
+endmenu
