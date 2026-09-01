@@ -41,6 +41,13 @@ void csi_stream_init(uint8_t node_id)
 {
     s_node_id = node_id;
     uart_init_optional();
+}
+
+void csi_stream_open_udp(void)
+{
+    if (s_udp_sock >= 0) {
+        return;
+    }
 
     s_udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
     if (s_udp_sock < 0) {

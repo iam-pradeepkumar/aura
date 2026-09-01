@@ -4,6 +4,7 @@
 #include <string.h>
 #include "esp_event.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
@@ -94,6 +95,7 @@ void app_main(void)
 
     csi_stream_init(CONFIG_AURA_NODE_ID);
     wifi_init_rx();
+    csi_stream_open_udp();
 
     ESP_LOGI(TAG, "AURA RX node %d active — no USB cable needed", CONFIG_AURA_NODE_ID);
     while (true) {
