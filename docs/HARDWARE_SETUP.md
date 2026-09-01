@@ -141,6 +141,8 @@ AURA_NODE_ID=4 idf.py -b 115200 build flash -p /dev/ttyUSB0   # Node 4
 
 Set the node ID with the **`AURA_NODE_ID=N`** environment variable (not `-D CONFIG_AURA_NODE_ID=N`).
 
+After flash, verify in monitor: `UDP hub → ... (node 2, DHCP gateway)`. If it still says `node 1`, run `idf.py fullclean` then re-flash that board.
+
 Label each board with its node ID (1–4).
 
 ### Protocol note

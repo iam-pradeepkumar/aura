@@ -50,11 +50,12 @@ Press `Ctrl+]` to exit monitor.
 Set per board at flash time with the **`AURA_NODE_ID`** environment variable:
 
 ```bash
-AURA_NODE_ID=2 idf.py -b 115200 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=2 idf.py -b 57600 build flash -p /dev/ttyUSB0
 ```
 
-Do **not** use `-D CONFIG_AURA_NODE_ID=N` — CMake does not pick that up.  
-Default in `aura_rx/main/main.c` is node 1 if `AURA_NODE_ID` is omitted.
+Do **not** use `-D CONFIG_AURA_NODE_ID=N`. After flash, monitor must show **`node 2`** in the log — if it still says `node 1`, run `idf.py fullclean` then flash again.
+
+Default is node 1 if `AURA_NODE_ID` is omitted.
 
 **Label each physical board** with its ID — must match `node_positions` in `simulation/config.yaml`.
 

@@ -16,8 +16,8 @@
 
 static const char *TAG = "aura_rx";
 
-#ifndef CONFIG_AURA_NODE_ID
-#define CONFIG_AURA_NODE_ID 1
+#ifndef AURA_RX_NODE_ID
+#define AURA_RX_NODE_ID 1
 #endif
 
 static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
@@ -84,7 +84,7 @@ static void wifi_init_rx(void)
     ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
     esp_wifi_set_promiscuous_rx_cb(wifi_promiscuous_cb);
 
-    ESP_LOGI(TAG, "RX node %d — wireless CSI to laptop hub", CONFIG_AURA_NODE_ID);
+    ESP_LOGI(TAG, "RX node %d — wireless CSI to laptop hub", AURA_RX_NODE_ID);
 }
 
 void app_main(void)
@@ -95,10 +95,10 @@ void app_main(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    csi_stream_init(CONFIG_AURA_NODE_ID);
+    csi_stream_init((uint8_t)AURA_RX_NODE_ID);
     wifi_init_rx();
 
-    ESP_LOGI(TAG, "AURA RX node %d starting — waiting for hotspot IP...", CONFIG_AURA_NODE_ID);
+    ESP_LOGI(TAG, "AURA RX node %d starting — waiting for hotspot IP...", AURA_RX_NODE_ID);
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
