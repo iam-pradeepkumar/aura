@@ -393,6 +393,7 @@ def process_hardware_snapshot() -> dict:
             node_status.append({
                 "id": nid,
                 "status": f"buffering ({buf_len}/{min_pkts})",
+                "ip": wireless.node_source_ip(nid),
                 "rssi": rssi,
                 "link": link,
             })
@@ -405,7 +406,7 @@ def process_hardware_snapshot() -> dict:
         session_confidence = max(session_confidence, state.pipeline.session_confidence)
 
         if res is None:
-            node_status.append({"id": nid, "status": "warming up", "rssi": rssi, "link": link})
+            node_status.append({"id": nid, "status": "warming up", "ip": wireless.node_source_ip(nid), "rssi": rssi, "link": link})
             continue
 
         motion = motion or res.motion_detected
@@ -426,6 +427,7 @@ def process_hardware_snapshot() -> dict:
         node_status.append({
             "id": nid,
             "status": "active",
+            "ip": wireless.node_source_ip(nid),
             "rssi": rssi,
             "link": link,
             "motion": res.motion_detected,
@@ -442,6 +444,13 @@ def process_hardware_snapshot() -> dict:
         "mode": "hardware",
         "processor_version": PROCESSOR_VERSION,
         "active_nodes": len(active),
+        "connected_devices": wireless.connected_device_count(
+            timeout_sec=float(hw_cfg.get("link_timeout_sec", 5.0))
+        ),
+        "warnings": wireless.duplicate_node_warnings(),
+        "recent_sources": wireless.recent_sources(
+            timeout_sec=float(hw_cfg.get("link_timeout_sec", 5.0))
+        ),
         "motion_detected": motion or any(t.get("is_moving") for t in tracked),
         "target_count": len(tracked),
         "confidence": round(session_confidence, 2),

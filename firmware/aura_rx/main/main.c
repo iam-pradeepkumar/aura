@@ -29,7 +29,9 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
-        ESP_LOGI(TAG, "Wireless link OK — IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG, "Wireless link OK — IP: " IPSTR ", gateway: " IPSTR,
+                 IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.gw));
+        csi_stream_open_udp_gateway(event->ip_info.gw);
     }
 }
 
@@ -95,9 +97,8 @@ void app_main(void)
 
     csi_stream_init(CONFIG_AURA_NODE_ID);
     wifi_init_rx();
-    csi_stream_open_udp();
 
-    ESP_LOGI(TAG, "AURA RX node %d active — no USB cable needed", CONFIG_AURA_NODE_ID);
+    ESP_LOGI(TAG, "AURA RX node %d starting — waiting for hotspot IP...", CONFIG_AURA_NODE_ID);
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(1000));
     }

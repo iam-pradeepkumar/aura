@@ -6,6 +6,7 @@
 #include "csi_stream.h"
 #include "driver/uart.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_wifi.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
@@ -60,6 +61,28 @@ void csi_stream_open_udp(void)
     inet_pton(AF_INET, AURA_HUB_IP, &s_hub_addr.sin_addr);
 
     ESP_LOGI(TAG, "Wireless stream ready → %s:%d (node %u)", AURA_HUB_IP, AURA_UDP_PORT, s_node_id);
+}
+
+void csi_stream_open_udp_gateway(esp_ip4_addr_t gw)
+{
+    if (s_udp_sock < 0) {
+        s_udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+        if (s_udp_sock < 0) {
+            ESP_LOGE(TAG, "UDP socket failed");
+            return;
+        }
+    }
+
+    s_hub_addr.sin_family = AF_INET;
+    s_hub_addr.sin_port = htons(AURA_UDP_PORT);
+    if (gw.addr != 0) {
+        s_hub_addr.sin_addr.s_addr = gw.addr;
+        ESP_LOGI(TAG, "UDP hub → " IPSTR ":%d (node %u, DHCP gateway)",
+                 IP2STR(&gw), AURA_UDP_PORT, s_node_id);
+    } else {
+        inet_pton(AF_INET, AURA_HUB_IP, &s_hub_addr.sin_addr);
+        ESP_LOGW(TAG, "No gateway — fallback %s:%d (node %u)", AURA_HUB_IP, AURA_UDP_PORT, s_node_id);
+    }
 }
 
 void csi_stream_wifi_connect(void)

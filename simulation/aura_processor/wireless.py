@@ -24,6 +24,10 @@ class WirelessReceiver:
         self.node_last_seen: dict[int, float] = {}
         self.node_packet_count: dict[int, int] = defaultdict(int)
         self.node_rate_window: dict[int, deque] = defaultdict(lambda: deque(maxlen=60))
+        self.node_source_ips: dict[int, set[str]] = defaultdict(set)
+        self.ip_last_seen: dict[str, float] = {}
+        self.ip_node_id: dict[str, int] = {}
+        self.ip_packet_count: dict[str, int] = defaultdict(int)
         self._pending: dict[tuple, tuple] = {}
         self.running = False
         self._thread: threading.Thread | None = None
@@ -78,7 +82,7 @@ class WirelessReceiver:
                 payload_bytes = int(hdr["payload_bytes"])
                 total = HEADER_SIZE + payload_bytes
                 if payload_bytes > 0 and len(data) >= total:
-                    self._store_frame(hdr, data[HEADER_SIZE:total])
+                    self._store_frame(hdr, data[HEADER_SIZE:total], addr)
                     if len(data) > total:
                         self._handle_datagram(data[total:], addr)
                     return
@@ -93,11 +97,11 @@ class WirelessReceiver:
                 continue
             payload_bytes = int(hdr["payload_bytes"])
             if len(data) == payload_bytes:
-                self._store_frame(hdr, data)
+                self._store_frame(hdr, data, addr)
                 self._pending.pop(key, None)
                 return
 
-    def _store_frame(self, hdr: dict, iq: bytes) -> None:
+    def _store_frame(self, hdr: dict, iq: bytes, addr) -> None:
         if not iq:
             return
         imag = np.frombuffer(iq[0::2], dtype=np.int8).astype(np.float32)
@@ -105,7 +109,13 @@ class WirelessReceiver:
         csi_row = real + 1j * imag
         node_id = int(hdr["node_id"])
         now = time.time()
+        src_ip = str(addr[0]) if addr else ""
         with self.lock:
+            if src_ip:
+                self.node_source_ips[node_id].add(src_ip)
+                self.ip_last_seen[src_ip] = now
+                self.ip_node_id[src_ip] = node_id
+                self.ip_packet_count[src_ip] += 1
             self.node_buffers[node_id].append({
                 "csi": csi_row,
                 "timestamp_ms": int(hdr["timestamp_ms"]),
@@ -150,6 +160,53 @@ class WirelessReceiver:
             return 0.0
         span = max(times[-1] - times[0], 0.001)
         return float((len(times) - 1) / span)
+
+    def connected_device_count(self, timeout_sec: float = 5.0) -> int:
+        now = time.time()
+        with self.lock:
+            return sum(1 for t in self.ip_last_seen.values() if now - t < timeout_sec)
+
+    def duplicate_node_warnings(self) -> list[str]:
+        warnings: list[str] = []
+        with self.lock:
+            for nid, ips in self.node_source_ips.items():
+                if len(ips) > 1:
+                    warnings.append(
+                        f"Node ID {nid} is used by {len(ips)} boards ({', '.join(sorted(ips))}). "
+                        f"Re-flash each RX with AURA_NODE_ID=1..4."
+                    )
+            recent_ips = {
+                ip for ip, t in self.ip_last_seen.items() if time.time() - t < 5.0
+            }
+            recent_ids = {self.ip_node_id.get(ip) for ip in recent_ips} - {None}
+        if len(recent_ips) > len(recent_ids) and not warnings:
+            warnings.append(
+                f"{len(recent_ips)} ESP32 devices are sending CSI but only "
+                f"{len(recent_ids)} unique node ID(s). Re-flash with AURA_NODE_ID=1..4."
+            )
+        return warnings
+
+    def node_source_ip(self, node_id: int) -> str | None:
+        with self.lock:
+            ips = self.node_source_ips.get(node_id)
+        if not ips:
+            return None
+        return sorted(ips)[-1]
+
+    def recent_sources(self, timeout_sec: float = 5.0) -> list[dict]:
+        now = time.time()
+        with self.lock:
+            rows = [
+                {
+                    "ip": ip,
+                    "node_id": self.ip_node_id.get(ip),
+                    "packets": self.ip_packet_count.get(ip, 0),
+                    "age_sec": round(now - t, 1),
+                }
+                for ip, t in self.ip_last_seen.items()
+                if now - t < timeout_sec
+            ]
+        return sorted(rows, key=lambda r: (r["node_id"] or 0, r["ip"]))
 
     def link_health(self, node_id: int) -> dict:
         rssi = self.node_rssi(node_id)
