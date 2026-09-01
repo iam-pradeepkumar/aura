@@ -32,12 +32,13 @@ cd firmware/aura_tx
 idf.py set-target esp32c6
 idf.py build flash -p /dev/ttyUSB0 monitor
 
-# Receiver — unique NODE_ID per board
+# Receiver — unique NODE_ID per board (one at a time, same USB port)
 cd ../aura_rx
-idf.py set-target esp32c6
-idf.py -D CONFIG_AURA_NODE_ID=1 build flash -p /dev/ttyUSB0
-idf.py -D CONFIG_AURA_NODE_ID=2 build flash -p /dev/ttyUSB1
-# ... nodes 3, 4
+idf.py set-target esp32    # or esp32c6
+AURA_NODE_ID=1 idf.py -b 115200 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=2 idf.py -b 115200 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=3 idf.py -b 115200 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=4 idf.py -b 115200 build flash -p /dev/ttyUSB0
 ```
 
 Press `Ctrl+]` to exit monitor.
@@ -46,13 +47,14 @@ Press `Ctrl+]` to exit monitor.
 
 ## Node ID
 
-Set at compile time:
+Set per board at flash time with the **`AURA_NODE_ID`** environment variable:
 
 ```bash
-idf.py -D CONFIG_AURA_NODE_ID=3 build flash
+AURA_NODE_ID=2 idf.py -b 115200 build flash -p /dev/ttyUSB0
 ```
 
-Or edit `CONFIG_AURA_NODE_ID` default in `aura_rx/main/main.c`.
+Do **not** use `-D CONFIG_AURA_NODE_ID=N` — CMake does not pick that up.  
+Default in `aura_rx/main/main.c` is node 1 if `AURA_NODE_ID` is omitted.
 
 **Label each physical board** with its ID — must match `node_positions` in `simulation/config.yaml`.
 
@@ -125,7 +127,8 @@ Power from USB bank; place outside search perimeter.
 |-------|-----|
 | RX won't connect to hub | SSID/password match; 2.4 GHz hotspot enabled |
 | No CSI in dashboard | TX powered; same channel 6; check UDP 5555 |
-| Wrong node on map | Re-flash with correct `CONFIG_AURA_NODE_ID` |
+| Wrong node on map | Re-flash with correct `AURA_NODE_ID=N` |
+| Flash fails / no serial data | Use `-b 115200`, hold BOOT, one board at a time |
 | Build fails | Run `idf.py set-target esp32c6` after chip change |
 
 ---

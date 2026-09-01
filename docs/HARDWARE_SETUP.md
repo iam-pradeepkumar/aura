@@ -120,15 +120,23 @@ Press `Ctrl+]` to exit monitor. Power from USB bank in the field.
 
 ### RX nodes (one unique ID per board)
 
-```bash
-cd firmware/aura_rx
-idf.py set-target esp32c6
+Flash **one board at a time** — unplug the previous board, plug in the next, same USB port:
 
-idf.py -D CONFIG_AURA_NODE_ID=1 build flash -p /dev/ttyUSB0   # Node 1
-idf.py -D CONFIG_AURA_NODE_ID=2 build flash -p /dev/ttyUSB1   # Node 2
-idf.py -D CONFIG_AURA_NODE_ID=3 build flash -p /dev/ttyUSB2   # Node 3
-idf.py -D CONFIG_AURA_NODE_ID=4 build flash -p /dev/ttyUSB3   # Node 4
+```bash
+cd ~/aura
+git pull
+
+. ~/esp/esp-idf/export.sh
+cd ~/aura/firmware/aura_rx
+idf.py set-target esp32    # or esp32c6
+
+AURA_NODE_ID=1 idf.py -b 115200 build flash -p /dev/ttyUSB0   # Node 1
+AURA_NODE_ID=2 idf.py -b 115200 build flash -p /dev/ttyUSB0   # Node 2
+AURA_NODE_ID=3 idf.py -b 115200 build flash -p /dev/ttyUSB0   # Node 3
+AURA_NODE_ID=4 idf.py -b 115200 build flash -p /dev/ttyUSB0   # Node 4
 ```
+
+Set the node ID with the **`AURA_NODE_ID=N`** environment variable (not `-D CONFIG_AURA_NODE_ID=N`).
 
 Label each board with its node ID (1–4).
 

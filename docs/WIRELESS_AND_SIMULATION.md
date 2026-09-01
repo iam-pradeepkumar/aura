@@ -23,7 +23,7 @@ Complete reference for **live hardware streaming** and **dataset simulation** in
 | Step | Action |
 |------|--------|
 | 1 | Flash `firmware/aura_tx` on 1 board |
-| 2 | Flash `firmware/aura_rx` on 3–4 boards with `CONFIG_AURA_NODE_ID=1..4` |
+| 2 | Flash `firmware/aura_rx` on 3–4 boards: `AURA_NODE_ID=1` … `AURA_NODE_ID=4` (see [HARDWARE_SETUP.md](HARDWARE_SETUP.md)) |
 | 3 | Set `node_positions` in `simulation/config.yaml` |
 | 4 | Configure laptop hotspot: SSID **`AURA_HUB`**, password **`aura2026`** |
 | 5 | Allow **UDP port 5555** in firewall |

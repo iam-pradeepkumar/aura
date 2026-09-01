@@ -105,24 +105,30 @@ Press `Ctrl+]` to exit monitor. Label board **TX**.
 
 ### Step 2.2 — Flash RX nodes (Boards B–E)
 
-Repeat for each board with a **unique NODE_ID**:
+Repeat for each board with a **unique NODE_ID** (flash **one board at a time** on the same USB port):
 
 ```bash
-cd aura/firmware/aura_rx
-idf.py set-target esp32c6
+cd ~/aura
+git pull
+
+. ~/esp/esp-idf/export.sh
+cd ~/aura/firmware/aura_rx
+idf.py set-target esp32    # use esp32c6 if you have C6 boards
 
 # Board B — southwest (node 1)
-idf.py -D CONFIG_AURA_NODE_ID=1 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=1 idf.py -b 115200 build flash -p /dev/ttyUSB0
 
 # Board C — southeast (node 2)
-idf.py -D CONFIG_AURA_NODE_ID=2 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=2 idf.py -b 115200 build flash -p /dev/ttyUSB0
 
 # Board D — northeast (node 3)
-idf.py -D CONFIG_AURA_NODE_ID=3 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=3 idf.py -b 115200 build flash -p /dev/ttyUSB0
 
 # Board E — northwest (node 4)
-idf.py -D CONFIG_AURA_NODE_ID=4 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=4 idf.py -b 115200 build flash -p /dev/ttyUSB0
 ```
+
+> **Note:** Use the `AURA_NODE_ID=N` environment variable — **not** `-D CONFIG_AURA_NODE_ID=N` (CMake ignores that flag). Use `-b 115200` on classic ESP32 if flash fails at higher baud. Hold **BOOT** while connecting if you see `No serial data received`.
 
 Label each board with permanent marker: **RX-1**, **RX-2**, **RX-3**, **RX-4**.
 
@@ -306,7 +312,7 @@ DASH:     python dashboard/run.py --port 8848
 CLI:      python tools/field_live.py
 CONFIG:   simulation/config.yaml
 FLASH TX: firmware/aura_tx
-FLASH RX: firmware/aura_rx  NODE_ID=1,2,3,4
+FLASH RX: AURA_NODE_ID=1..4 idf.py -b 115200 build flash -p /dev/ttyUSB0
 ```
 
 ---
