@@ -120,13 +120,16 @@ Press `Ctrl+]` to exit monitor. Power from USB bank in the field.
 
 ### RX nodes (one unique ID per board)
 
-Flash **one board at a time** — unplug the previous board, plug in the next, same USB port:
+Flash **one board at a time** — unplug the previous board, plug in the next, same USB port.
+
+**Important:** exit the AURA Python venv before ESP-IDF (`deactivate`). If your prompt shows `(venv)`, `idf.py` will fail with `Cannot import module "esp_idf_monitor"`.
 
 ```bash
 cd ~/aura
 git pull
 
-. ~/esp/esp-idf/export.sh
+deactivate                    # required if prompt shows (venv)
+. ~/esp/esp-idf/export.sh     # must see "Done! You can now compile ESP-IDF projects."
 cd ~/aura/firmware/aura_rx
 idf.py set-target esp32    # or esp32c6
 
@@ -231,7 +234,9 @@ If you filmed the scene during the exercise, replay through the simulation dashb
 
 | Problem | Fix |
 |---------|-----|
-| Nodes not in dashboard | Check hotspot SSID/password; firewall UDP **5555**; verify `AURA_HUB_IP` in firmware |
+| `Cannot import esp_idf_monitor` | Run `deactivate` first (exit AURA `venv`), then `. ~/esp/esp-idf/export.sh` in a **new** terminal |
+| Dashboard shows 1 node, 4 on WiFi | Re-flash each RX with unique `AURA_NODE_ID=1..4`; run `python3 tools/udp_probe.py` |
+| Nodes not in dashboard | Check hotspot SSID/password; firewall UDP **5555**; `git pull` for DHCP gateway UDP fix |
 | `buffering (N/80)` stuck | TX not powered; wrong channel; antenna disconnected |
 | `link: weak` / low packet rate | Move node closer to laptop; external antenna; reduce WiFi interference |
 | Count always 0 outdoors | Lower `motion_threshold` in config; survivor within 3–8 m of a link; wait full 10 s window |
