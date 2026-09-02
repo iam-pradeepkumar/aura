@@ -117,8 +117,8 @@ def main():
             if win is None:
                 status_lines.append(f"  Node {nid}: buffering ({rx.buffer_length(nid)})")
                 continue
-            csi, ts = win
-            res = get_state(nid).process(csi, ts)
+            csi, ts, rssi = win
+            res = get_state(nid).process(csi, ts, rssi)
             if res is None:
                 status_lines.append(f"  Node {nid}: warming up")
                 continue

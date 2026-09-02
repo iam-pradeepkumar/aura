@@ -68,6 +68,8 @@ def detect_hardware_session_targets(
     motion_threshold: float = 0.02,
     area_margin_m: float = 0.4,
     max_per_node: int = 2,
+    motion_score: float = 0.0,
+    force_motion: bool = False,
 ) -> list[dict]:
     """Session-level targets from one ESP32 — tuned for live field CSI."""
     csi = normalize_esp32_csi(csi)
@@ -75,11 +77,11 @@ def detect_hardware_session_targets(
     motion_level = float(np.mean(motion_energy(prepared)))
 
     cap = min(max_targets, max_per_node, 2)
-    if motion_level < motion_threshold * 0.45:
+    if not force_motion and motion_level < motion_threshold * 0.45 and motion_score < 0.45:
         return []
 
     quality = _motion_signal_quality(prepared, motion_threshold)
-    if quality < 0.08 and motion_level < motion_threshold * 0.85:
+    if quality < 0.08 and motion_level < motion_threshold * 0.85 and not force_motion and motion_score < 0.55:
         return []
 
     dets = detect_session_targets(
@@ -126,20 +128,27 @@ def process_hardware_window(
     timestamp_sec: float,
     node_id: int,
     vitals_csi: np.ndarray | None = None,
+    rssi: np.ndarray | None = None,
     area_margin_m: float = 0.4,
     max_per_node: int = 2,
     min_confidence: float = 0.28,
+    motion_info: dict | None = None,
 ) -> SensingResult:
     """Per-node window processing using the receiving ESP32 position."""
+    from .hardware_motion import esp32_motion_score
+
     csi = normalize_esp32_csi(csi)
     sensor_xy = pipeline.node_positions.get(node_id, pipeline.sensor_xy)
     scale = getattr(pipeline, "_hw_motion_scale", 1.0)
     eff_threshold = _hw_threshold(pipeline.motion_threshold, scale)
 
+    if motion_info is None:
+        motion_info = esp32_motion_score(csi, rssi)
+
     prepared = preprocess_csi(csi)
     cleaned = np.nan_to_num(srcc(prepared))
-    m_energy = float(np.mean(motion_energy(cleaned)))
-    motion = m_energy > eff_threshold * 0.72
+    m_energy = float(motion_info.get("energy", np.mean(motion_energy(cleaned))))
+    motion = bool(motion_info.get("motion")) or m_energy > eff_threshold * 0.65
 
     vcsi = normalize_esp32_csi(vitals_csi if vitals_csi is not None and len(vitals_csi) >= 16 else csi)
     vprepared = preprocess_csi(vcsi)
@@ -148,7 +157,7 @@ def process_hardware_window(
     _, _, ddm = delay_doppler_map(cleaned, pipeline.fs_hz)
 
     session = pipeline._session_targets
-    weak_motion = m_energy > eff_threshold * 0.45
+    weak_motion = motion or float(motion_info.get("score", 0)) > 0.4
 
     if not motion and not session and not weak_motion:
         return SensingResult(

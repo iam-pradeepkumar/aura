@@ -354,12 +354,45 @@ function renderHwNodeList(nodeStatus) {
   document.getElementById("hw-nodes").innerHTML = (nodeStatus || []).map((n) => {
     const hz = n.packet_rate_hz ?? n.link?.packet_rate_hz ?? 0;
     const st = n.status || n.link?.status || "?";
+    const mot = n.motion ? " · motion" : "";
+    const score = n.motion_score != null ? ` · m=${n.motion_score}` : "";
     return `
       <li class="flex justify-between gap-2">
         <span>Node ${n.id}${n.ip ? ` · ${n.ip}` : ""}</span>
-        <span class="${statusColor(st)}">${st} · ${hz} Hz</span>
+        <span class="${statusColor(st)}">${st} · ${hz} Hz${mot}${score}</span>
       </li>`;
   }).join("") || "<li class='text-slate-600'>Waiting for nodes...</li>";
+}
+
+function applyHardwareSnapshot(d) {
+  if (!d) return;
+  const expected = d.expected_nodes ?? 4;
+  const online = d.active_nodes ?? 0;
+  document.getElementById("hw-nodes-count").textContent = `${online}/${expected}`;
+  document.getElementById("hw-count").textContent = d.target_count ?? 0;
+  updateSensingUI("hw", d, d.node_positions, d.area_size_m, true);
+  renderHwNodeList(d.node_status);
+
+  const warnEl = document.getElementById("hw-warnings");
+  const warnings = [...(d.warnings || [])];
+  if (d.error) warnings.unshift(String(d.error));
+  if (warnings.length) {
+    warnEl.className = "text-xs mt-2 text-amber-400";
+    warnEl.textContent = warnings.join(" ");
+    warnEl.classList.remove("hidden");
+  } else {
+    const healthy = d.healthy_nodes ?? online;
+    warnEl.textContent = healthy === expected
+      ? `All ${expected} nodes streaming CSI`
+      : `Online ${online}/${expected} — power TX, wait 10s, walk inside area`;
+    warnEl.classList.remove("hidden");
+    warnEl.className = healthy === expected
+      ? "text-xs mt-2 text-emerald-400"
+      : "text-xs mt-2 text-amber-400";
+  }
+
+  document.getElementById("hw-events").innerHTML =
+    (d.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
 }
 
 function startHwStatusPoll() {
@@ -368,23 +401,15 @@ function startHwStatusPoll() {
     try {
       const res = await fetch("/api/hardware/status");
       const d = await res.json();
-      const expected = d.expected_nodes ?? 4;
-      const online = d.active_nodes ?? 0;
-      document.getElementById("hw-nodes-count").textContent = `${online}/${expected}`;
       if (!d.udp_listening) {
         document.getElementById("hw-warnings").textContent =
           "UDP not listening — stop udp_probe.py, restart dashboard.";
         document.getElementById("hw-warnings").className = "text-xs mt-2 text-amber-400";
         document.getElementById("hw-warnings").classList.remove("hidden");
       }
-      renderHwNodeList(d.node_status);
-      // Fallback when WebSocket is slow or disconnected
-      if (d.target_count !== undefined || d.motion_detected !== undefined) {
-        document.getElementById("hw-count").textContent = d.target_count ?? 0;
-        updateSensingUI("hw", d, d.node_positions, d.area_size_m, false);
-      }
+      applyHardwareSnapshot(d);
     } catch (_) { /* ignore transient poll errors */ }
-  }, 1500);
+  }, 500);
 }
 
 function stopHwStatusPoll() {
@@ -435,49 +460,22 @@ function connectHardwareWs() {
   hwWs.onopen = () => { document.getElementById("hw-status").textContent = "Live"; };
   hwWs.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
-    if (msg.type === "status") {
-      document.getElementById("hw-status").textContent = msg.message;
+    if (msg.type === "status" || msg.type === "ping") {
+      if (msg.type === "status" && msg.message) {
+        document.getElementById("hw-status").textContent = "Live";
+      }
       return;
     }
     if (msg.type !== "sensing") return;
     const d = msg.data;
-    if (d.error) {
-      document.getElementById("hw-warnings").textContent = d.error;
-      document.getElementById("hw-warnings").classList.remove("hidden");
-      return;
-    }
-    const expected = d.expected_nodes ?? 4;
-    const online = d.active_nodes ?? 0;
-    const healthy = d.healthy_nodes ?? 0;
-    document.getElementById("hw-nodes-count").textContent = `${online}/${expected}`;
-    document.getElementById("hw-count").textContent = d.target_count;
-    updateSensingUI("hw", d, d.node_positions, d.area_size_m);
-
-    const warnEl = document.getElementById("hw-warnings");
-    const warnings = d.warnings || [];
-    if (warnings.length) {
-      warnEl.className = "text-xs mt-2 text-amber-400";
-      warnEl.textContent = warnings.join(" ");
-      warnEl.classList.remove("hidden");
-    } else {
-      warnEl.textContent = healthy === expected
-        ? `All ${expected} nodes streaming CSI`
-        : `Online ${online}/${expected} — power TX, wait 15s`;
-      warnEl.classList.remove("hidden");
-      warnEl.className = healthy === expected
-        ? "text-xs mt-2 text-emerald-400"
-        : "text-xs mt-2 text-amber-400";
-    }
-
-    renderHwNodeList(d.node_status);
-    document.getElementById("hw-events").innerHTML =
-      (d.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
+    document.getElementById("hw-status").textContent = "Live";
+    applyHardwareSnapshot(d);
   };
   hwWs.onclose = () => {
-    document.getElementById("hw-status").textContent = "Reconnecting…";
+    document.getElementById("hw-status").textContent = "Poll mode";
     setTimeout(() => {
       if (hwPollTimer) connectHardwareWs();
-    }, 2000);
+    }, 3000);
   };
 }
 

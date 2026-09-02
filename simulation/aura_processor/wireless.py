@@ -11,6 +11,8 @@ import numpy as np
 
 from .aura_protocol import AURA_MAGIC, HEADER_SIZE, header_fields, unpack_header
 
+from .hardware_csi import normalize_esp32_csi
+
 DEFAULT_UDP_PORT = 5555
 PENDING_TTL_SEC = 0.25
 
@@ -138,7 +140,7 @@ class WirelessReceiver:
 
     def get_node_window(
         self, node_id: int, n: int = 128, min_packets: int | None = None
-    ) -> tuple[np.ndarray, np.ndarray] | None:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
         need = min_packets if min_packets is not None else n
         with self.lock:
             buf = list(self.node_buffers[node_id])
@@ -146,9 +148,16 @@ class WirelessReceiver:
             return None
         use_n = min(n, len(buf))
         recent = buf[-use_n:]
-        csi = np.stack([f["csi"] for f in recent])
+        rows: list[np.ndarray] = []
+        for f in recent:
+            row = normalize_esp32_csi(f["csi"])
+            if row.ndim == 2 and row.shape[0] == 1:
+                row = row[0]
+            rows.append(row)
+        csi = np.stack(rows)
         ts = np.array([f["timestamp_ms"] for f in recent], dtype=np.float64)
-        return csi, ts
+        rssi = np.array([f["rssi"] for f in recent], dtype=np.float64)
+        return csi, ts, rssi
 
     def active_nodes(self, timeout_sec: float = 5.0) -> list[int]:
         now = time.time()

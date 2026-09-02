@@ -54,7 +54,7 @@ async def _app_lifespan(app: FastAPI):
 app = FastAPI(title="AURA Dashboard", version="1.0.0", lifespan=_app_lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.09.02-32"
+PROCESSOR_VERSION = "2026.09.02-33"
 
 
 def json_safe(obj):
@@ -488,9 +488,9 @@ def process_hardware_snapshot() -> dict:
             })
             continue
 
-        csi, ts = win
+        csi, ts, rssi = win
         state = _get_hardware_node(nid)
-        res = state.process(csi, ts)
+        res = state.process(csi, ts, rssi)
         primary_pipe = state.pipeline
         session_confidence = max(session_confidence, state.pipeline.session_confidence)
 
@@ -536,6 +536,7 @@ def process_hardware_snapshot() -> dict:
             "link": link,
             "packet_rate_hz": rate,
             "motion": res.motion_detected,
+            "motion_score": round(float(state.last_motion_score), 3),
             "motion_energy": round(float(res.motion_energy), 5),
             "count": res.target_count,
             "confidence": round(res.confidence, 2),
@@ -643,18 +644,25 @@ async def hardware_broadcast_loop():
 async def hardware_status():
     diag = hardware_diagnostics()
     if last_hardware_snapshot:
+        snap = last_hardware_snapshot
         diag.update({
-            "target_count": last_hardware_snapshot.get("target_count", 0),
-            "motion_detected": last_hardware_snapshot.get("motion_detected", False),
-            "motion_energy": last_hardware_snapshot.get("motion_energy", 0),
-            "motion_nodes": last_hardware_snapshot.get("motion_nodes", 0),
-            "respiration_bpm": last_hardware_snapshot.get("respiration_bpm", 0),
-            "heartbeat_bpm": last_hardware_snapshot.get("heartbeat_bpm", 0),
-            "targets": last_hardware_snapshot.get("targets", []),
-            "node_positions": last_hardware_snapshot.get("node_positions", {}),
-            "area_size_m": last_hardware_snapshot.get("area_size_m", 10.0),
-            "events": last_hardware_snapshot.get("events", []),
-            "warnings": last_hardware_snapshot.get("warnings", diag.get("warnings", [])),
+            "target_count": snap.get("target_count", 0),
+            "motion_detected": snap.get("motion_detected", False),
+            "motion_energy": snap.get("motion_energy", 0),
+            "motion_nodes": snap.get("motion_nodes", 0),
+            "respiration_bpm": snap.get("respiration_bpm", 0),
+            "heartbeat_bpm": snap.get("heartbeat_bpm", 0),
+            "respiration_waveform": snap.get("respiration_waveform", []),
+            "heartbeat_waveform": snap.get("heartbeat_waveform", []),
+            "targets": snap.get("targets", []),
+            "node_positions": snap.get("node_positions", diag.get("node_positions", {})),
+            "area_size_m": snap.get("area_size_m", 10.0),
+            "events": snap.get("events", []),
+            "confidence": snap.get("confidence", 0),
+            "processor_version": snap.get("processor_version", PROCESSOR_VERSION),
+            "node_status": snap.get("node_status", diag.get("node_status", [])),
+            "warnings": snap.get("warnings", diag.get("warnings", [])),
+            "error": snap.get("error"),
         })
     return json_safe(diag)
 
@@ -724,6 +732,14 @@ async def ws_hardware(websocket: WebSocket):
             "processor_version": PROCESSOR_VERSION,
         })
         while True:
-            await websocket.receive_text()
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
     except WebSocketDisconnect:
+        pass
+    finally:
         hardware_clients.discard(websocket)
