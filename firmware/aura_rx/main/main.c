@@ -26,8 +26,11 @@ static void on_wifi_event(void *arg, esp_event_base_t base, int32_t id, void *da
         esp_wifi_connect();
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
-        ESP_LOGI(TAG, "Wireless link OK — IP: " IPSTR ", gateway: " IPSTR,
-                 IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.gw));
+        uint8_t ch = 0;
+        wifi_second_chan_t second = 0;
+        esp_wifi_get_channel(&ch, &second);
+        ESP_LOGI(TAG, "Wireless link OK — IP: " IPSTR ", gateway: " IPSTR ", ch=%u",
+                 IP2STR(&event->ip_info.ip), IP2STR(&event->ip_info.gw), ch);
         csi_stream_open_udp_gateway(event->ip_info.gw);
     }
 }
@@ -63,7 +66,7 @@ static void wifi_init_rx(void)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
 
-    ESP_ERROR_CHECK(esp_wifi_set_channel(AURA_WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE));
+    /* Channel is set by AURA_HUB AP after connect — do not lock to ch6 here. */
     ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
 
     wifi_csi_config_t csi_config = {

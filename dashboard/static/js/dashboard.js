@@ -364,38 +364,45 @@ function connectHardwareWs() {
     }
     if (msg.type !== "sensing") return;
     const d = msg.data;
-    const devices = d.connected_devices ?? d.active_nodes;
-    document.getElementById("hw-nodes-count").textContent =
-      d.active_nodes === devices ? `${d.active_nodes}` : `${d.active_nodes} / ${devices} devices`;
+    const expected = d.expected_nodes ?? 4;
+    const online = d.active_nodes ?? 0;
+    const healthy = d.healthy_nodes ?? 0;
+    document.getElementById("hw-nodes-count").textContent = `${online}/${expected}`;
     document.getElementById("hw-count").textContent = d.target_count;
     updateSensingUI("hw", d, d.node_positions, d.area_size_m);
 
     const warnEl = document.getElementById("hw-warnings");
     const warnings = d.warnings || [];
     if (warnings.length) {
+      warnEl.className = "text-xs mt-2 text-amber-400";
       warnEl.textContent = warnings.join(" ");
       warnEl.classList.remove("hidden");
     } else {
-      warnEl.textContent = "";
-      warnEl.classList.add("hidden");
+      warnEl.textContent = healthy === expected
+        ? `All ${expected} nodes streaming CSI`
+        : `Online ${online}/${expected} — power TX, wait 15s`;
+      warnEl.classList.remove("hidden");
+      warnEl.className = healthy === expected
+        ? "text-xs mt-2 text-emerald-400"
+        : "text-xs mt-2 text-amber-400";
     }
 
-    const sources = d.recent_sources || [];
-    if (sources.length) {
-      document.getElementById("hw-nodes").innerHTML = sources.map((s) => `
-        <li class="flex justify-between gap-2">
-          <span>Node ${s.node_id ?? "?"} · ${s.ip}</span>
-          <span class="text-slate-500">${s.packets} pkts</span>
-        </li>
-      `).join("");
-    } else {
-      document.getElementById("hw-nodes").innerHTML = (d.node_status || []).map((n) => `
+    const statusColor = (s) => {
+      if (s === "active" || s === "good") return "text-emerald-400";
+      if (s === "offline") return "text-slate-600";
+      if (String(s).startsWith("buffering")) return "text-amber-400";
+      return "text-sky-400";
+    };
+
+    document.getElementById("hw-nodes").innerHTML = (d.node_status || []).map((n) => {
+      const hz = n.packet_rate_hz ?? n.link?.packet_rate_hz ?? 0;
+      const st = n.status || n.link?.status || "?";
+      return `
         <li class="flex justify-between gap-2">
           <span>Node ${n.id}${n.ip ? ` · ${n.ip}` : ""}</span>
-          <span class="text-slate-500">${n.rssi ?? "—"} dBm · ${n.count ?? 0}</span>
-        </li>
-      `).join("") || "<li class='text-slate-600'>No nodes</li>";
-    }
+          <span class="${statusColor(st)}">${st} · ${hz} Hz</span>
+        </li>`;
+    }).join("") || "<li class='text-slate-600'>Waiting for nodes...</li>";
     document.getElementById("hw-events").innerHTML =
       (d.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
   };

@@ -8,7 +8,7 @@ ESP32 firmware for offline disaster CSI sensing — no internet router required.
 
 | Folder | Role | Output |
 |--------|------|--------|
-| `aura_tx` | WiFi probe transmitter | 802.11 frames on **channel 6**, ~20 Hz |
+| `aura_tx` | WiFi probe transmitter | Joins **AURA_HUB**, probes on AP channel ~20 Hz |
 | `aura_rx` | CSI receiver | Captures CSI → **WiFi UDP** to laptop hub |
 | `common/aura_protocol.h` | Shared protocol | 18-byte header + I/Q payload |
 

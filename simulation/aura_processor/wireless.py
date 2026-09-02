@@ -28,6 +28,7 @@ class WirelessReceiver:
         self.ip_last_seen: dict[str, float] = {}
         self.ip_node_id: dict[str, int] = {}
         self.ip_packet_count: dict[str, int] = defaultdict(int)
+        self.node_channels: dict[int, int] = {}
         self._pending: dict[tuple, tuple] = {}
         self.running = False
         self._thread: threading.Thread | None = None
@@ -125,13 +126,19 @@ class WirelessReceiver:
             self.node_last_seen[node_id] = now
             self.node_packet_count[node_id] += 1
             self.node_rate_window[node_id].append(now)
+            if hdr.get("channel"):
+                self.node_channels[node_id] = int(hdr["channel"])
 
-    def get_node_window(self, node_id: int, n: int = 128) -> tuple[np.ndarray, np.ndarray] | None:
+    def get_node_window(
+        self, node_id: int, n: int = 128, min_packets: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray] | None:
+        need = min_packets if min_packets is not None else n
         with self.lock:
             buf = list(self.node_buffers[node_id])
-        if len(buf) < n:
+        if len(buf) < need:
             return None
-        recent = buf[-n:]
+        use_n = min(n, len(buf))
+        recent = buf[-use_n:]
         csi = np.stack([f["csi"] for f in recent])
         ts = np.array([f["timestamp_ms"] for f in recent], dtype=np.float64)
         return csi, ts
@@ -161,7 +168,60 @@ class WirelessReceiver:
         span = max(times[-1] - times[0], 0.001)
         return float((len(times) - 1) / span)
 
-    def connected_device_count(self, timeout_sec: float = 5.0) -> int:
+    def configured_node_ids(self) -> list[int]:
+        return sorted(self.node_last_seen.keys())
+
+    def all_node_status(self, expected_ids: list[int], timeout_sec: float = 20.0) -> list[dict]:
+        """Return status for every expected node ID (stable dashboard display)."""
+        now = time.time()
+        rows = []
+        for nid in expected_ids:
+            last = self.node_last_seen.get(nid)
+            age = now - last if last else 999.0
+            rate = self.packet_rate_hz(nid) if age < timeout_sec else 0.0
+            if age > timeout_sec:
+                status = "offline"
+            elif rate < 2.0:
+                status = "waiting"
+            elif rate < 8.0:
+                status = "weak"
+            else:
+                status = "good"
+            rows.append({
+                "id": nid,
+                "status": status,
+                "ip": self.node_source_ip(nid),
+                "rssi": self.node_rssi(nid),
+                "packet_rate_hz": round(rate, 1),
+                "packets_total": self.node_packet_count.get(nid, 0),
+                "channel": self.node_channels.get(nid),
+                "last_seen_sec": round(age, 1) if last else None,
+            })
+        return rows
+
+    def system_warnings(self, expected_ids: list[int], timeout_sec: float = 20.0) -> list[str]:
+        warnings = self.duplicate_node_warnings()
+        statuses = self.all_node_status(expected_ids, timeout_sec)
+        online = [s for s in statuses if s["status"] != "offline"]
+        weak = [s for s in online if s["status"] in ("weak", "waiting")]
+        if weak:
+            ids = ", ".join(str(s["id"]) for s in weak)
+            warnings.append(
+                f"Low CSI rate on node(s) {ids} — power TX first (must join AURA_HUB), "
+                f"wait 15s, then walk in the search area."
+            )
+        rates = [s["packet_rate_hz"] for s in online if s["packet_rate_hz"] > 0]
+        if online and rates and max(rates) < 8.0:
+            warnings.append(
+                "CSI packet rate below 8 Hz — re-flash TX firmware (git pull) so TX joins "
+                "AURA_HUB on the same channel as RX nodes."
+            )
+        channels = {s["channel"] for s in online if s.get("channel")}
+        if len(channels) > 1:
+            warnings.append(f"Nodes on mixed WiFi channels {sorted(channels)} — keep all on same hotspot.")
+        return warnings
+
+    def connected_device_count(self, timeout_sec: float = 20.0) -> int:
         now = time.time()
         with self.lock:
             return sum(1 for t in self.ip_last_seen.values() if now - t < timeout_sec)
@@ -193,7 +253,7 @@ class WirelessReceiver:
             return None
         return sorted(ips)[-1]
 
-    def recent_sources(self, timeout_sec: float = 5.0) -> list[dict]:
+    def recent_sources(self, timeout_sec: float = 20.0) -> list[dict]:
         now = time.time()
         with self.lock:
             rows = [
@@ -215,11 +275,13 @@ class WirelessReceiver:
             last = self.node_last_seen.get(node_id)
             total = self.node_packet_count.get(node_id, 0)
         age = time.time() - last if last else 999.0
-        if age > 5.0:
+        if age > 20.0:
             status = "offline"
+        elif rate < 2.0:
+            status = "waiting"
         elif rate < 8.0:
             status = "weak"
-        elif rssi is not None and rssi < -78:
+        elif rssi is not None and rssi < -82:
             status = "weak"
         else:
             status = "good"

@@ -47,7 +47,7 @@ def detect_hardware_session_targets(
     if dets:
         return dets
 
-    if motion_level < eff_threshold * 0.55:
+    if motion_level < eff_threshold * 0.4:
         return []
 
     count = estimate_person_count(prepared, motion_level, eff_threshold, max_people=max_targets)
@@ -118,7 +118,7 @@ def process_hardware_window(
 
     detections = _merge_session_and_window(session, window_dets)
     conf = detection_confidence(detections, m_energy, eff_threshold)
-    if conf < 0.10 and not session and m_energy < eff_threshold * 0.75:
+    if conf < 0.05 and not session and m_energy < eff_threshold * 0.5:
         detections = []
 
     per_vitals = extract_vitals_for_detections(cleaned, pipeline.fs_hz, detections)

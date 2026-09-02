@@ -32,7 +32,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 app = FastAPI(title="AURA Dashboard", version="1.0.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.08.31-27"
+PROCESSOR_VERSION = "2026.09.02-28"
 
 
 def _wimans_label_from_uploads(video_name: str, mat_name: str, npy_name: str) -> str:
@@ -368,12 +368,16 @@ def process_hardware_snapshot() -> dict:
     cfg = load_config()
     area = cfg.get("area_size_m", 10.0)
     hw_cfg = cfg.get("hardware", {})
-    min_pkts = int(hw_cfg.get("min_packets", 80))
-    window_pkts = int(hw_cfg.get("window_packets", 200))
+    min_pkts = int(hw_cfg.get("min_packets", 25))
+    window_pkts = int(hw_cfg.get("window_packets", 80))
+    link_timeout = float(hw_cfg.get("link_timeout_sec", 20.0))
+    expected_nodes = int(hw_cfg.get("expected_nodes", 4))
+    expected_ids = sorted(int(k) for k in cfg.get("node_positions", {}).keys()) or list(
+        range(1, expected_nodes + 1)
+    )
 
-    active = wireless.active_nodes(timeout_sec=float(hw_cfg.get("link_timeout_sec", 5.0)))
+    active = wireless.active_nodes(timeout_sec=link_timeout)
     all_target_dicts: list[dict] = []
-    total_count = 0
     resp_bpm = 0.0
     hr_bpm = 0.0
     motion = False
@@ -384,18 +388,33 @@ def process_hardware_snapshot() -> dict:
     primary_pipe = None
     session_confidence = 0.0
 
-    for nid in active:
-        win = wireless.get_node_window(nid, n=window_pkts)
-        rssi = wireless.node_rssi(nid)
+    for nid in expected_ids:
         link = wireless.link_health(nid)
+        rssi = wireless.node_rssi(nid)
+        ip = wireless.node_source_ip(nid)
+        rate = link.get("packet_rate_hz", 0)
+
+        if nid not in active:
+            node_status.append({
+                "id": nid,
+                "status": "offline",
+                "ip": ip,
+                "rssi": rssi,
+                "link": link,
+                "packet_rate_hz": rate,
+            })
+            continue
+
+        win = wireless.get_node_window(nid, n=window_pkts, min_packets=min_pkts)
         if win is None:
             buf_len = wireless.buffer_length(nid)
             node_status.append({
                 "id": nid,
                 "status": f"buffering ({buf_len}/{min_pkts})",
-                "ip": wireless.node_source_ip(nid),
+                "ip": ip,
                 "rssi": rssi,
                 "link": link,
+                "packet_rate_hz": rate,
             })
             continue
 
@@ -406,7 +425,14 @@ def process_hardware_snapshot() -> dict:
         session_confidence = max(session_confidence, state.pipeline.session_confidence)
 
         if res is None:
-            node_status.append({"id": nid, "status": "warming up", "ip": wireless.node_source_ip(nid), "rssi": rssi, "link": link})
+            node_status.append({
+                "id": nid,
+                "status": "warming up",
+                "ip": ip,
+                "rssi": rssi,
+                "link": link,
+                "packet_rate_hz": rate,
+            })
             continue
 
         motion = motion or res.motion_detected
@@ -427,9 +453,10 @@ def process_hardware_snapshot() -> dict:
         node_status.append({
             "id": nid,
             "status": "active",
-            "ip": wireless.node_source_ip(nid),
+            "ip": ip,
             "rssi": rssi,
             "link": link,
+            "packet_rate_hz": rate,
             "motion": res.motion_detected,
             "count": res.target_count,
             "confidence": round(res.confidence, 2),
@@ -439,20 +466,20 @@ def process_hardware_snapshot() -> dict:
 
     fused = fuse_multinode_targets(all_target_dicts)
     tracked = field_tracker.update(fused)
+    online_count = sum(1 for n in node_status if n["status"] != "offline")
+    good_count = sum(1 for n in node_status if n.get("link", {}).get("status") == "good")
 
     return {
         "mode": "hardware",
         "processor_version": PROCESSOR_VERSION,
-        "active_nodes": len(active),
-        "connected_devices": wireless.connected_device_count(
-            timeout_sec=float(hw_cfg.get("link_timeout_sec", 5.0))
-        ),
-        "warnings": wireless.duplicate_node_warnings(),
-        "recent_sources": wireless.recent_sources(
-            timeout_sec=float(hw_cfg.get("link_timeout_sec", 5.0))
-        ),
+        "active_nodes": online_count,
+        "expected_nodes": len(expected_ids),
+        "healthy_nodes": good_count,
+        "connected_devices": wireless.connected_device_count(timeout_sec=link_timeout),
+        "warnings": wireless.system_warnings(expected_ids, timeout_sec=link_timeout),
+        "recent_sources": wireless.recent_sources(timeout_sec=link_timeout),
         "motion_detected": motion or any(t.get("is_moving") for t in tracked),
-        "target_count": len(tracked),
+        "target_count": len(tracked) if tracked else (1 if motion else 0),
         "confidence": round(session_confidence, 2),
         "respiration_bpm": round(resp_bpm, 1),
         "heartbeat_bpm": round(hr_bpm, 1),

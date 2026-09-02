@@ -14,14 +14,15 @@ node_positions:
 # TX probe position (informational — firmware uses broadcast)
 tx_position: [5.0, -2.0]
 
-# WiFi channel (must match firmware AURA_WIFI_CHANNEL)
-wifi_channel: 6
+# WiFi channel — auto-matched via AURA_HUB hotspot (TX + RX join hotspot)
+wifi_channel: 0
 
 # Live hardware CSI buffering (outdoor disaster field)
 hardware:
-  min_packets: 80          # ~4 s at 20 Hz before first detection
-  window_packets: 200      # ~10 s window for vitals at 20 Hz
-  refresh_every: 40        # recompute session targets periodically
-  motion_threshold_scale: 0.85   # slightly more sensitive outdoors
-  link_timeout_sec: 5.0
-  trail_length: 80        # motion trail points on live map
+  min_packets: 25          # ~1-2 s at 20 Hz (lower for field startup)
+  window_packets: 80       # ~4 s window at 20 Hz
+  refresh_every: 20
+  motion_threshold_scale: 0.65   # more sensitive for outdoor demo
+  link_timeout_sec: 20.0   # avoid flicker when CSI bursts pause
+  trail_length: 80
+  expected_nodes: 4

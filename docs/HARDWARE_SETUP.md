@@ -124,19 +124,37 @@ Flash **one board at a time** — unplug the previous board, plug in the next, s
 
 **Important:** exit the AURA Python venv before ESP-IDF (`deactivate`). If your prompt shows `(venv)`, `idf.py` will fail with `Cannot import module "esp_idf_monitor"`.
 
+**Easiest — use the flash helper** (sets node ID correctly every time):
+
+```bash
+cd ~/aura
+git pull
+deactivate
+. ~/esp/esp-idf/export.sh
+chmod +x tools/flash_rx.sh
+
+./tools/flash_rx.sh 1    # RX board 1
+./tools/flash_rx.sh 2    # swap board, flash RX 2
+./tools/flash_rx.sh 3
+./tools/flash_rx.sh 4
+```
+
+Manual flash (one board at a time):
+
 ```bash
 cd ~/aura
 git pull
 
-deactivate                    # required if prompt shows (venv)
-. ~/esp/esp-idf/export.sh     # must see "Done! You can now compile ESP-IDF projects."
+deactivate
+. ~/esp/esp-idf/export.sh
 cd ~/aura/firmware/aura_rx
-idf.py set-target esp32    # or esp32c6
+idf.py fullclean
+idf.py set-target esp32
 
-AURA_NODE_ID=1 idf.py -b 115200 build flash -p /dev/ttyUSB0   # Node 1
-AURA_NODE_ID=2 idf.py -b 115200 build flash -p /dev/ttyUSB0   # Node 2
-AURA_NODE_ID=3 idf.py -b 115200 build flash -p /dev/ttyUSB0   # Node 3
-AURA_NODE_ID=4 idf.py -b 115200 build flash -p /dev/ttyUSB0   # Node 4
+AURA_NODE_ID=1 idf.py -D AURA_RX_NODE_ID=1 -b 57600 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=2 idf.py -D AURA_RX_NODE_ID=2 -b 57600 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=3 idf.py -D AURA_RX_NODE_ID=3 -b 57600 build flash -p /dev/ttyUSB0
+AURA_NODE_ID=4 idf.py -D AURA_RX_NODE_ID=4 -b 57600 build flash -p /dev/ttyUSB0
 ```
 
 Set the node ID with the **`AURA_NODE_ID=N`** environment variable (not `-D CONFIG_AURA_NODE_ID=N`).
