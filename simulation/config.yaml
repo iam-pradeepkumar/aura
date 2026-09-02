@@ -20,7 +20,7 @@ wifi_channel: 0
 # Live hardware CSI buffering (outdoor disaster field)
 hardware:
   min_packets: 25          # ~1-2 s at 20 Hz (lower for field startup)
-  window_packets: 80       # ~4 s window at 20 Hz
+  window_packets: 50       # ~2.5 s window at 20 Hz (lighter for laptop CPU)
   refresh_every: 20
   motion_threshold_scale: 0.65   # more sensitive for outdoor demo
   link_timeout_sec: 20.0   # avoid flicker when CSI bursts pause

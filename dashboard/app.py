@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
 import yaml
 from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
@@ -51,7 +52,20 @@ async def _app_lifespan(app: FastAPI):
 app = FastAPI(title="AURA Dashboard", version="1.0.0", lifespan=_app_lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.09.02-28"
+PROCESSOR_VERSION = "2026.09.02-29"
+
+
+def json_safe(obj):
+    """Make numpy types JSON-serializable for WebSocket payloads."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, (np.floating, np.integer, np.bool_)):
+        return obj.item()
+    if isinstance(obj, dict):
+        return {str(k): json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [json_safe(v) for v in obj]
+    return obj
 
 
 def _wimans_label_from_uploads(video_name: str, mat_name: str, npy_name: str) -> str:
@@ -535,22 +549,26 @@ def process_hardware_snapshot() -> dict:
 
 
 async def hardware_broadcast_loop():
-    """Keep running forever; send snapshots whenever clients are connected."""
+    """Keep running forever; process CSI off the async thread so WebSocket stays alive."""
     while True:
         if hardware_clients and wireless.running:
             try:
-                snap = process_hardware_snapshot()
+                snap = await asyncio.to_thread(process_hardware_snapshot)
+                snap = json_safe(snap)
             except Exception as exc:
-                snap = {
+                diag = hardware_diagnostics()
+                snap = json_safe({
                     "mode": "hardware",
                     "error": str(exc),
-                    "active_nodes": 0,
-                    "expected_nodes": 4,
-                    "node_status": [],
+                    "active_nodes": diag.get("active_nodes", 0),
+                    "expected_nodes": diag.get("expected_nodes", 4),
+                    "node_status": diag.get("node_status", []),
                     "warnings": [f"Processing error: {exc}"],
                     "targets": [],
                     "target_count": 0,
-                }
+                    "node_positions": load_config().get("node_positions", {}),
+                    "area_size_m": load_config().get("area_size_m", 10.0),
+                })
             dead = []
             for ws in list(hardware_clients):
                 try:
@@ -559,7 +577,9 @@ async def hardware_broadcast_loop():
                     dead.append(ws)
             for ws in dead:
                 hardware_clients.discard(ws)
-        await asyncio.sleep(0.25)
+            await asyncio.sleep(0.5)
+        else:
+            await asyncio.sleep(0.25)
 
 
 @app.get("/api/hardware/status")
@@ -591,7 +611,7 @@ async def start_hardware():
         "status": "listening",
         "udp_port": DEFAULT_UDP_PORT,
         "hub_ssid": "AURA_HUB",
-        **diag,
+        **json_safe(diag),
     }
 
 
