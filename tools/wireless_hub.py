@@ -23,7 +23,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent / "simulation"))
 
 from aura_processor import AURAPipeline
-from aura_processor.hardware_state import NodePipelineState, fuse_multinode_targets
+from aura_processor.hardware_fusion import fuse_hardware_targets, consensus_target_count
+from aura_processor.hardware_state import NodePipelineState
 from aura_processor.wireless import DEFAULT_UDP_PORT, WirelessReceiver
 
 
@@ -58,9 +59,13 @@ def main():
             node_states[nid] = NodePipelineState(
                 nid,
                 pipeline,
-                min_packets=int(hw_cfg.get("min_packets", 80)),
-                refresh_every=int(hw_cfg.get("refresh_every", 40)),
-                motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 0.85)),
+                min_packets=min_pkts,
+                refresh_every=int(hw_cfg.get("refresh_every", 30)),
+                motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 1.0)),
+                vitals_packets=vitals_pkts,
+                area_margin_m=float(hw_cfg.get("area_margin_m", 0.6)),
+                max_per_node=int(hw_cfg.get("max_per_node", 2)),
+                min_confidence=float(hw_cfg.get("min_confidence", 0.35)),
             )
         return node_states[nid]
 
@@ -93,16 +98,20 @@ def main():
     ax_nodes.set_title("Node Status (wireless)")
     ax_nodes.axis("off")
 
-    window_pkts = int(hw_cfg.get("window_packets", 200))
+    window_pkts = int(hw_cfg.get("window_packets", 60))
+    vitals_pkts = int(hw_cfg.get("vitals_window_packets", 120))
+    min_pkts = int(hw_cfg.get("min_packets", 30))
+    max_people = int(hw_cfg.get("max_people", cfg.get("max_people", 4)))
 
     def update(_):
         active = rx.active_nodes()
         all_target_dicts = []
+        per_node_counts: list[int] = []
         resp_waves = []
         status_lines = [f"Active nodes: {len(active)}", ""]
 
         for nid in active:
-            win = rx.get_node_window(nid, n=window_pkts)
+            win = rx.get_node_window(nid, n=max(window_pkts, vitals_pkts), min_packets=min_pkts)
             link = rx.link_health(nid)
             if win is None:
                 status_lines.append(f"  Node {nid}: buffering ({rx.buffer_length(nid)})")
@@ -113,8 +122,9 @@ def main():
                 status_lines.append(f"  Node {nid}: warming up")
                 continue
             for t in res.targets:
-                td = {"x_m": t.x_m, "y_m": t.y_m, "confidence": res.confidence}
+                td = {"x_m": t.x_m, "y_m": t.y_m, "confidence": res.confidence, "source_node": nid}
                 all_target_dicts.append(td)
+            per_node_counts.append(res.target_count)
             if res.respiration_waveform is not None and len(res.respiration_waveform):
                 resp_waves.append(res.respiration_waveform)
             status_lines.append(
@@ -123,13 +133,22 @@ def main():
                 f"resp={res.respiration_bpm:.0f} HR={res.heartbeat_bpm:.0f}"
             )
 
-        fused = fuse_multinode_targets(all_target_dicts)
+        fused = fuse_hardware_targets(
+            all_target_dicts,
+            area_size_m=area,
+            gate_m=float(hw_cfg.get("fusion_gate_m", 2.2)),
+            area_margin_m=float(hw_cfg.get("area_margin_m", 0.6)),
+            min_node_votes=int(hw_cfg.get("min_node_votes", 2)),
+            min_confidence=float(hw_cfg.get("min_confidence", 0.35)),
+            max_people=max_people,
+        )
+        count = consensus_target_count(per_node_counts, len(fused), max_people)
         if fused:
             scatter.set_offsets(np.c_[ [t["x_m"] for t in fused], [t["y_m"] for t in fused] ])
         else:
             scatter.set_offsets(np.empty((0, 2)))
 
-        count_text.set_text(str(len(fused)))
+        count_text.set_text(str(count))
         node_status.set_text("\n".join(status_lines) if status_lines else "Waiting for nodes...")
 
         if resp_waves:

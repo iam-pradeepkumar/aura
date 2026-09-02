@@ -1,7 +1,7 @@
 # AURA node layout — adjust to match your physical deployment (meters)
 area_size_m: 10.0
-motion_threshold: 0.02
-max_people: 8
+motion_threshold: 0.03
+max_people: 4
 
 # ESP32 RX node positions around disaster search area (X, Y in meters)
 # Place nodes at corners of the collapsed structure perimeter
@@ -19,10 +19,17 @@ wifi_channel: 0
 
 # Live hardware CSI buffering (outdoor disaster field)
 hardware:
-  min_packets: 25          # ~1-2 s at 20 Hz (lower for field startup)
-  window_packets: 50       # ~2.5 s window at 20 Hz (lighter for laptop CPU)
-  refresh_every: 20
-  motion_threshold_scale: 0.65   # more sensitive for outdoor demo
-  link_timeout_sec: 20.0   # avoid flicker when CSI bursts pause
+  min_packets: 30          # ~1.5 s at 20 Hz before first detection
+  window_packets: 60       # ~3 s motion window at 20 Hz
+  vitals_window_packets: 120  # ~6 s for respiration / heartbeat
+  refresh_every: 30
+  motion_threshold_scale: 1.0   # less sensitive — fewer ghost detections
+  fusion_gate_m: 2.2
+  area_margin_m: 0.6
+  min_node_votes: 2
+  min_confidence: 0.35
+  max_per_node: 2
+  max_people: 4
+  link_timeout_sec: 20.0
   trail_length: 80
   expected_nodes: 4

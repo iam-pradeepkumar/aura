@@ -23,7 +23,8 @@ import yaml
 sys.path.insert(0, str(Path(__file__).parent.parent / "simulation"))
 
 from aura_processor import AURAPipeline
-from aura_processor.hardware_state import NodePipelineState, fuse_multinode_targets
+from aura_processor.hardware_fusion import fuse_hardware_targets, consensus_target_count
+from aura_processor.hardware_state import NodePipelineState
 from aura_processor.hardware_tracker import FieldTracker
 from aura_processor.serialize import target_to_dict
 from aura_processor.wireless import DEFAULT_UDP_PORT, WirelessReceiver
@@ -47,8 +48,10 @@ def main():
     rx.start()
     tracker = FieldTracker(area_size_m=area, trail_len=100)
     node_states: dict[int, NodePipelineState] = {}
-    min_pkts = int(hw_cfg.get("min_packets", 80))
-    window_pkts = int(hw_cfg.get("window_packets", 200))
+    min_pkts = int(hw_cfg.get("min_packets", 30))
+    window_pkts = int(hw_cfg.get("window_packets", 60))
+    vitals_pkts = int(hw_cfg.get("vitals_window_packets", 120))
+    max_people = int(hw_cfg.get("max_people", cfg.get("max_people", 4)))
 
     def get_state(nid: int) -> NodePipelineState:
         if nid not in node_states:
@@ -61,8 +64,12 @@ def main():
             node_states[nid] = NodePipelineState(
                 nid, pipe,
                 min_packets=min_pkts,
-                refresh_every=int(hw_cfg.get("refresh_every", 40)),
-                motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 0.85)),
+                refresh_every=int(hw_cfg.get("refresh_every", 30)),
+                motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 1.0)),
+                vitals_packets=vitals_pkts,
+                area_margin_m=float(hw_cfg.get("area_margin_m", 0.6)),
+                max_per_node=int(hw_cfg.get("max_per_node", 2)),
+                min_confidence=float(hw_cfg.get("min_confidence", 0.35)),
             )
         return node_states[nid]
 
@@ -109,11 +116,12 @@ def main():
     def update(_frame):
         active = rx.active_nodes()
         all_dets: list[dict] = []
+        per_node_counts: list[int] = []
         status_lines = [f"Active nodes: {len(active)}", ""]
         resp_wave = None
 
         for nid in active:
-            win = rx.get_node_window(nid, n=window_pkts)
+            win = rx.get_node_window(nid, n=max(window_pkts, vitals_pkts), min_packets=min_pkts)
             link = rx.link_health(nid)
             if win is None:
                 status_lines.append(f"  N{nid}: buffering {rx.buffer_length(nid)}/{min_pkts}")
@@ -128,6 +136,7 @@ def main():
                 td["source_node"] = nid
                 td["confidence"] = res.confidence
                 all_dets.append(td)
+            per_node_counts.append(res.target_count)
             if res.respiration_waveform is not None and len(res.respiration_waveform):
                 resp_wave = res.respiration_waveform
             status_lines.append(
@@ -135,8 +144,17 @@ def main():
                 f"motion={res.motion_detected} n={res.target_count}"
             )
 
-        fused = fuse_multinode_targets(all_dets)
-        tracked = tracker.update(fused, time.time() - t0)
+        fused = fuse_hardware_targets(
+            all_dets,
+            area_size_m=area,
+            gate_m=float(hw_cfg.get("fusion_gate_m", 2.2)),
+            area_margin_m=float(hw_cfg.get("area_margin_m", 0.6)),
+            min_node_votes=int(hw_cfg.get("min_node_votes", 2)),
+            min_confidence=float(hw_cfg.get("min_confidence", 0.35)),
+            max_people=max_people,
+        )
+        count = consensus_target_count(per_node_counts, len(fused), max_people)
+        tracked = tracker.update(fused[:count] if count else [], time.time() - t0)
 
         # Trails
         seen_ids = set()
@@ -168,7 +186,7 @@ def main():
                 marker_artists[tid].remove()
                 del marker_artists[tid]
 
-        count_text.set_text(str(len(tracked)))
+        count_text.set_text(str(count if count else len(tracked)))
         status_text.set_text("\n".join(status_lines))
 
         if resp_wave is not None and len(resp_wave):

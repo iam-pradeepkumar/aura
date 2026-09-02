@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -21,8 +22,9 @@ sys.path.insert(0, str(SIM_DIR))
 
 from aura_processor import AURAPipeline, load_csi_mat, load_csi_npy, merge_csi_mat_npy  # noqa: E402
 from aura_processor.multitarget import estimate_count_from_amplitude, trim_csi_to_video  # noqa: E402
-from aura_processor.serialize import result_to_dict, target_to_dict  # noqa: E402
-from aura_processor.hardware_state import NodePipelineState, fuse_multinode_targets  # noqa: E402
+from aura_processor.serialize import result_to_dict, target_to_dict, _downsample  # noqa: E402
+from aura_processor.hardware_state import NodePipelineState  # noqa: E402
+from aura_processor.hardware_fusion import fuse_hardware_targets, consensus_target_count  # noqa: E402
 from aura_processor.hardware_tracker import FieldTracker  # noqa: E402
 from aura_processor.wireless import WirelessReceiver, DEFAULT_UDP_PORT  # noqa: E402
 
@@ -52,7 +54,7 @@ async def _app_lifespan(app: FastAPI):
 app = FastAPI(title="AURA Dashboard", version="1.0.0", lifespan=_app_lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.09.02-29"
+PROCESSOR_VERSION = "2026.09.02-31"
 
 
 def json_safe(obj):
@@ -150,9 +152,13 @@ def _get_hardware_node(node_id: int) -> NodePipelineState:
         hardware_nodes[node_id] = NodePipelineState(
             node_id,
             pipe,
-            min_packets=int(hw_cfg.get("min_packets", 25)),
-            refresh_every=int(hw_cfg.get("refresh_every", 20)),
-            motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 0.65)),
+            min_packets=int(hw_cfg.get("min_packets", 30)),
+            refresh_every=int(hw_cfg.get("refresh_every", 30)),
+            motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 1.0)),
+            vitals_packets=int(hw_cfg.get("vitals_window_packets", 120)),
+            area_margin_m=float(hw_cfg.get("area_margin_m", 0.6)),
+            max_per_node=int(hw_cfg.get("max_per_node", 2)),
+            min_confidence=float(hw_cfg.get("min_confidence", 0.35)),
         )
     return hardware_nodes[node_id]
 
@@ -423,9 +429,11 @@ def process_hardware_snapshot() -> dict:
     cfg = load_config()
     area = cfg.get("area_size_m", 10.0)
     hw_cfg = cfg.get("hardware", {})
-    min_pkts = int(hw_cfg.get("min_packets", 25))
-    window_pkts = int(hw_cfg.get("window_packets", 80))
+    min_pkts = int(hw_cfg.get("min_packets", 30))
+    window_pkts = int(hw_cfg.get("window_packets", 60))
+    vitals_pkts = int(hw_cfg.get("vitals_window_packets", 120))
     link_timeout = float(hw_cfg.get("link_timeout_sec", 20.0))
+    max_people = int(cfg.get("max_people", 4))
     expected_nodes = int(hw_cfg.get("expected_nodes", 4))
     expected_ids = sorted(int(k) for k in cfg.get("node_positions", {}).keys()) or list(
         range(1, expected_nodes + 1)
@@ -442,6 +450,9 @@ def process_hardware_snapshot() -> dict:
     events: list[str] = []
     primary_pipe = None
     session_confidence = 0.0
+
+    per_node_counts: list[int] = []
+    best_vitals_score = 0.0
 
     for nid in expected_ids:
         link = wireless.link_health(nid)
@@ -460,7 +471,8 @@ def process_hardware_snapshot() -> dict:
             })
             continue
 
-        win = wireless.get_node_window(nid, n=window_pkts, min_packets=min_pkts)
+        fetch_n = max(window_pkts, vitals_pkts)
+        win = wireless.get_node_window(nid, n=fetch_n, min_packets=min_pkts)
         if win is None:
             buf_len = wireless.buffer_length(nid)
             node_status.append({
@@ -491,8 +503,11 @@ def process_hardware_snapshot() -> dict:
             continue
 
         motion = motion or res.motion_detected
-        resp_bpm = max(resp_bpm, res.respiration_bpm)
-        hr_bpm = max(hr_bpm, res.heartbeat_bpm)
+        if res.respiration_bpm > resp_bpm:
+            resp_bpm = res.respiration_bpm
+        if res.heartbeat_bpm > hr_bpm:
+            hr_bpm = res.heartbeat_bpm
+        per_node_counts.append(res.target_count)
         for t in res.targets:
             td = target_to_dict(t)
             td["source_node"] = nid
@@ -500,10 +515,12 @@ def process_hardware_snapshot() -> dict:
             all_target_dicts.append(td)
         events.extend(res.events[-2:])
 
-        if res.respiration_waveform is not None and len(resp_wave) == 0:
-            from aura_processor.serialize import _downsample
-            resp_wave = _downsample(res.respiration_waveform)
-            hr_wave = _downsample(res.heartbeat_waveform) if res.heartbeat_waveform is not None else []
+        if res.respiration_waveform is not None and len(res.respiration_waveform):
+            score = float(res.respiration_bpm) * float(res.confidence)
+            if score >= best_vitals_score:
+                best_vitals_score = score
+                resp_wave = _downsample(res.respiration_waveform)
+                hr_wave = _downsample(res.heartbeat_waveform) if res.heartbeat_waveform is not None else []
 
         node_status.append({
             "id": nid,
@@ -519,8 +536,32 @@ def process_hardware_snapshot() -> dict:
             "heartbeat_bpm": round(res.heartbeat_bpm, 1),
         })
 
-    fused = fuse_multinode_targets(all_target_dicts)
-    tracked = field_tracker.update(fused)
+    fused = fuse_hardware_targets(
+        all_target_dicts,
+        area_size_m=area,
+        gate_m=float(hw_cfg.get("fusion_gate_m", 2.2)),
+        area_margin_m=float(hw_cfg.get("area_margin_m", 0.6)),
+        min_node_votes=int(hw_cfg.get("min_node_votes", 2)),
+        min_confidence=float(hw_cfg.get("min_confidence", 0.35)),
+        max_people=int(hw_cfg.get("max_people", max_people)),
+    )
+    tracked = field_tracker.update(fused, time.time())
+    target_count = consensus_target_count(per_node_counts, len(fused), max_people)
+    if tracked and target_count < len(tracked):
+        tracked = sorted(tracked, key=lambda t: t.get("confidence", 0), reverse=True)[:target_count]
+    elif not tracked and target_count > 0 and fused:
+        tracked = fused[:target_count]
+
+    for t in tracked:
+        if not t.get("respiration_bpm") and resp_bpm > 0:
+            t["respiration_bpm"] = round(resp_bpm, 1)
+        if not t.get("heartbeat_bpm") and hr_bpm > 0:
+            t["heartbeat_bpm"] = round(hr_bpm, 1)
+        if not t.get("respiration_waveform") and resp_wave:
+            t["respiration_waveform"] = resp_wave
+        if not t.get("heartbeat_waveform") and hr_wave:
+            t["heartbeat_waveform"] = hr_wave
+
     online_count = sum(1 for n in node_status if n["status"] != "offline")
     good_count = sum(1 for n in node_status if n.get("link", {}).get("status") == "good")
 
@@ -534,7 +575,7 @@ def process_hardware_snapshot() -> dict:
         "warnings": wireless.system_warnings(expected_ids, timeout_sec=link_timeout),
         "recent_sources": wireless.recent_sources(timeout_sec=link_timeout),
         "motion_detected": motion or any(t.get("is_moving") for t in tracked),
-        "target_count": len(tracked) if tracked else (1 if motion else 0),
+        "target_count": target_count,
         "confidence": round(session_confidence, 2),
         "respiration_bpm": round(resp_bpm, 1),
         "heartbeat_bpm": round(hr_bpm, 1),
@@ -591,9 +632,12 @@ async def hardware_status():
 async def start_hardware():
     global hardware_task, field_tracker, pipeline_cfg
     pipeline_cfg = load_config()
+    hw_cfg = pipeline_cfg.get("hardware", {})
     field_tracker = FieldTracker(
         area_size_m=float(pipeline_cfg.get("area_size_m", 10.0)),
-        trail_len=int(pipeline_cfg.get("hardware", {}).get("trail_length", 80)),
+        gate_m=float(hw_cfg.get("fusion_gate_m", 2.2)),
+        max_targets=int(hw_cfg.get("max_people", pipeline_cfg.get("max_people", 4))),
+        trail_len=int(hw_cfg.get("trail_length", 80)),
     )
     hardware_nodes.clear()
     try:

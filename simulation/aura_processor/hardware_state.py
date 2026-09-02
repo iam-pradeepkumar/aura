@@ -28,14 +28,23 @@ class NodePipelineState:
         min_packets: int = 80,
         refresh_every: int = 40,
         motion_threshold_scale: float = 0.85,
+        vitals_packets: int = 100,
+        area_margin_m: float = 0.6,
+        max_per_node: int = 2,
+        min_confidence: float = 0.35,
     ):
         self.node_id = node_id
         self.pipeline = pipeline
         self.min_packets = min_packets
         self.refresh_every = refresh_every
         self.motion_threshold_scale = motion_threshold_scale
+        self.vitals_packets = vitals_packets
+        self.area_margin_m = area_margin_m
+        self.max_per_node = max_per_node
+        self.min_confidence = min_confidence
         self._packet_count = 0
         self._sensor_xy = pipeline.node_positions.get(node_id, pipeline.sensor_xy)
+        self.pipeline._hw_motion_scale = motion_threshold_scale
 
     def process(self, csi: np.ndarray, timestamps_ms: np.ndarray):
         n = len(csi)
@@ -44,12 +53,11 @@ class NodePipelineState:
 
         fs = estimate_fs_hz(timestamps_ms)
         self.pipeline.fs_hz = fs
-        # Longer window outdoors (~10 s at 20 Hz) for stable vitals
         self.pipeline.window_samples = max(self.min_packets, min(int(2.5 * fs), n))
 
         self._packet_count += 1
+        eff_threshold = self.pipeline.motion_threshold * self.motion_threshold_scale
         if self._packet_count == 1 or self._packet_count % self.refresh_every == 0:
-            eff_threshold = self.pipeline.motion_threshold * self.motion_threshold_scale
             self.pipeline._session_targets = detect_hardware_session_targets(
                 csi,
                 fs,
@@ -57,15 +65,28 @@ class NodePipelineState:
                 self.pipeline.max_targets,
                 self._sensor_xy,
                 motion_threshold=eff_threshold,
+                area_margin_m=self.area_margin_m,
+                max_per_node=self.max_per_node,
             )
             self.pipeline.estimated_person_count = len(self.pipeline._session_targets)
             self.pipeline.session_confidence = max(
                 0.35,
-                min(0.95, 0.25 + 0.12 * len(self.pipeline._session_targets)),
+                min(0.95, 0.30 + 0.15 * len(self.pipeline._session_targets)),
             )
 
+        vitals_n = min(self.vitals_packets, n)
+        vitals_csi = csi[-vitals_n:]
         t_sec = float(timestamps_ms[-1]) / 1000.0
-        return process_hardware_window(self.pipeline, csi, t_sec, self.node_id)
+        return process_hardware_window(
+            self.pipeline,
+            csi,
+            t_sec,
+            self.node_id,
+            vitals_csi=vitals_csi,
+            area_margin_m=self.area_margin_m,
+            max_per_node=self.max_per_node,
+            min_confidence=self.min_confidence,
+        )
 
 
 def fuse_multinode_targets(target_dicts: list[dict], gate_m: float = 1.6) -> list[dict]:

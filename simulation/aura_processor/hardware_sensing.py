@@ -7,8 +7,10 @@ import numpy as np
 from .csi_quality import detection_confidence
 from .doppler import delay_doppler_map
 from .hardware_csi import normalize_esp32_csi
+from .hardware_fusion import inside_search_area
 from .localization import Target
 from .multitarget import (
+    _motion_signal_quality,
     detect_session_targets,
     estimate_person_count,
     localize_motion_sources,
@@ -19,6 +21,17 @@ from .srcc import motion_energy, srcc
 from .vitals import extract_vitals, extract_vitals_for_detections
 
 
+def _hw_threshold(base: float, scale: float) -> float:
+    return base * scale
+
+
+def _filter_area(dets: list[dict], area_size_m: float, margin_m: float) -> list[dict]:
+    return [
+        d for d in dets
+        if inside_search_area(float(d["x_m"]), float(d["y_m"]), area_size_m, margin_m)
+    ]
+
+
 def detect_hardware_session_targets(
     csi: np.ndarray,
     fs_hz: float,
@@ -26,45 +39,52 @@ def detect_hardware_session_targets(
     max_targets: int,
     sensor_xy: tuple[float, float],
     motion_threshold: float = 0.02,
+    area_margin_m: float = 0.6,
+    max_per_node: int = 2,
 ) -> list[dict]:
-    """Session-level targets from one ESP32 node's viewpoint (no centroid override)."""
+    """Session-level targets from one ESP32 — conservative for live CSI."""
     csi = normalize_esp32_csi(csi)
     prepared = np.nan_to_num(srcc(preprocess_csi(csi)))
     motion_level = float(np.mean(motion_energy(prepared)))
 
-    # Outdoor: slightly lower bar when motion is present but noisy
-    eff_threshold = motion_threshold * 0.85
+    cap = min(max_targets, max_per_node, 2)
+    if motion_level < motion_threshold * 0.75:
+        return []
+
+    quality = _motion_signal_quality(prepared, motion_threshold)
+    if quality < 0.12 and motion_level < motion_threshold * 1.2:
+        return []
 
     dets = detect_session_targets(
         csi,
         fs_hz,
         area_size_m,
-        max_targets,
+        cap,
         sensor_xy=sensor_xy,
-        motion_threshold=eff_threshold,
+        motion_threshold=motion_threshold,
         node_positions=None,
     )
+    dets = _filter_area(dets, area_size_m, area_margin_m)
     if dets:
-        return dets
+        return dets[:cap]
 
-    if motion_level < eff_threshold * 0.4:
+    count = estimate_person_count(prepared, motion_level, motion_threshold, max_people=cap)
+    count = int(np.clip(count, 0, cap))
+    if count <= 0:
         return []
 
-    count = estimate_person_count(prepared, motion_level, eff_threshold, max_people=max_targets)
-    if count <= 0 and motion_level >= eff_threshold:
-        count = 1
-
-    return localize_motion_sources(
+    dets = localize_motion_sources(
         prepared,
         fs_hz,
         area_size_m,
-        max_targets,
+        cap,
         sensor_xy,
         skip_srcc=True,
         motion_level=motion_level,
-        motion_threshold=eff_threshold,
-        count_limit=count if count > 0 else None,
+        motion_threshold=motion_threshold,
+        count_limit=count,
     )
+    return _filter_area(dets, area_size_m, area_margin_m)[:cap]
 
 
 def process_hardware_window(
@@ -72,18 +92,26 @@ def process_hardware_window(
     csi: np.ndarray,
     timestamp_sec: float,
     node_id: int,
+    vitals_csi: np.ndarray | None = None,
+    area_margin_m: float = 0.6,
+    max_per_node: int = 2,
+    min_confidence: float = 0.35,
 ) -> SensingResult:
     """Per-node window processing using the receiving ESP32 position."""
     csi = normalize_esp32_csi(csi)
     sensor_xy = pipeline.node_positions.get(node_id, pipeline.sensor_xy)
-    eff_threshold = pipeline.motion_threshold * 0.85
+    scale = getattr(pipeline, "_hw_motion_scale", 1.0)
+    eff_threshold = _hw_threshold(pipeline.motion_threshold, scale)
 
     prepared = preprocess_csi(csi)
     cleaned = np.nan_to_num(srcc(prepared))
     m_energy = float(np.mean(motion_energy(cleaned)))
-    motion = m_energy > eff_threshold
+    motion = m_energy > eff_threshold * 1.05
 
-    vitals = extract_vitals(cleaned, pipeline.fs_hz)
+    vcsi = normalize_esp32_csi(vitals_csi if vitals_csi is not None and len(vitals_csi) >= 16 else csi)
+    vprepared = preprocess_csi(vcsi)
+    vcleaned = np.nan_to_num(srcc(vprepared))
+    vitals = extract_vitals(vcleaned, pipeline.fs_hz, motion_cutoff_hz=1.2)
     _, _, ddm = delay_doppler_map(cleaned, pipeline.fs_hz)
 
     session = pipeline._session_targets
@@ -103,35 +131,41 @@ def process_hardware_window(
             confidence=0.0,
         )
 
-    count_limit = len(session) if session else None
+    cap = min(pipeline.max_targets, max_per_node, 2)
+    count_limit = min(len(session), cap) if session else cap
     window_dets = localize_motion_sources(
         cleaned,
         pipeline.fs_hz,
         pipeline.area_size_m,
-        pipeline.max_targets,
+        cap,
         sensor_xy,
         skip_srcc=True,
         motion_level=m_energy,
         motion_threshold=eff_threshold,
         count_limit=count_limit,
     )
+    window_dets = _filter_area(window_dets, pipeline.area_size_m, area_margin_m)
 
     detections = _merge_session_and_window(session, window_dets)
+    detections = [d for d in detections if float(d.get("confidence", 0.5)) >= min_confidence * 0.8]
+    detections = _filter_area(detections, pipeline.area_size_m, area_margin_m)[:cap]
+
     conf = detection_confidence(detections, m_energy, eff_threshold)
-    if conf < 0.05 and not session and m_energy < eff_threshold * 0.5:
+    if conf < 0.22 and not session and m_energy < eff_threshold * 0.85:
         detections = []
 
-    per_vitals = extract_vitals_for_detections(cleaned, pipeline.fs_hz, detections)
+    per_vitals = extract_vitals_for_detections(vcleaned, pipeline.fs_hz, detections)
     for i, det in enumerate(detections):
         tv = per_vitals[i] if i < len(per_vitals) else {}
         if det.get("respiration_bpm", 0) <= 0:
             det["respiration_bpm"] = tv.get("respiration_bpm", 0.0)
         if det.get("heartbeat_bpm", 0) <= 0:
             det["heartbeat_bpm"] = tv.get("heartbeat_bpm", 0.0)
-        det["respiration_waveform"] = tv.get("respiration_waveform")
-        det["heartbeat_waveform"] = tv.get("heartbeat_waveform")
+        det["respiration_waveform"] = tv.get("respiration_waveform") or vitals.get("respiration_waveform")
+        det["heartbeat_waveform"] = tv.get("heartbeat_waveform") or vitals.get("heartbeat_waveform")
         det["source_node"] = node_id
-        if det.get("velocity_mps", 0) < 0.12:
+        det["confidence"] = max(float(det.get("confidence", 0.4)), conf)
+        if det.get("velocity_mps", 0) < 0.15:
             det["velocity_mps"] = 0.0
 
     targets = pipeline.tracker.update(detections, timestamp_sec)
@@ -140,16 +174,23 @@ def process_hardware_window(
     r_vals = [t.respiration_bpm for t in display_targets if t.respiration_bpm > 0]
     h_vals = [t.heartbeat_bpm for t in display_targets if t.heartbeat_bpm > 0]
 
+    best_resp_wf = vitals.get("respiration_waveform") or []
+    best_hr_wf = vitals.get("heartbeat_waveform") or []
+    for t in display_targets:
+        if t.respiration_waveform is not None and len(t.respiration_waveform):
+            best_resp_wf = t.respiration_waveform
+            break
+
     return SensingResult(
         timestamp_sec=timestamp_sec,
-        motion_detected=motion or bool(session),
+        motion_detected=motion or bool(detections),
         motion_energy=m_energy,
-        target_count=len(session) if session else len(detections),
+        target_count=len(detections),
         targets=display_targets,
         respiration_bpm=float(np.median(r_vals)) if r_vals else vitals["respiration_bpm"],
         heartbeat_bpm=float(np.median(h_vals)) if h_vals else vitals["heartbeat_bpm"],
-        respiration_waveform=None,
-        heartbeat_waveform=None,
+        respiration_waveform=best_resp_wf if len(best_resp_wf) else vitals.get("respiration_waveform"),
+        heartbeat_waveform=best_hr_wf if len(best_hr_wf) else vitals.get("heartbeat_waveform"),
         delay_doppler_map=ddm,
         events=list(pipeline.tracker.events),
         confidence=conf,
@@ -167,8 +208,9 @@ def _merge_session_and_window(session: list[dict], window_dets: list[dict]) -> l
                 window_dets,
                 key=lambda w: np.hypot(w["x_m"] - s["x_m"], w["y_m"] - s["y_m"]),
             )
-            if np.hypot(best["x_m"] - s["x_m"], best["y_m"] - s["y_m"]) < 2.8:
+            if np.hypot(best["x_m"] - s["x_m"], best["y_m"] - s["y_m"]) < 2.2:
                 d["velocity_mps"] = max(d.get("velocity_mps", 0.0), best.get("velocity_mps", 0.0))
+                d["confidence"] = max(float(d.get("confidence", 0)), float(best.get("confidence", 0)))
         merged.append(d)
     return merged
 
@@ -184,7 +226,7 @@ def _display_targets(detections: list[dict], targets: list[Target]) -> list[Targ
                 best_d = d
                 best = t
         if best and best not in display:
-            best.is_moving = det.get("velocity_mps", 0) > 0.12
+            best.is_moving = det.get("velocity_mps", 0) > 0.15
             best.respiration_bpm = det.get("respiration_bpm", best.respiration_bpm)
             best.heartbeat_bpm = det.get("heartbeat_bpm", best.heartbeat_bpm)
             best.respiration_waveform = det.get("respiration_waveform", best.respiration_waveform)
@@ -201,7 +243,7 @@ def _display_targets(detections: list[dict], targets: list[Target]) -> list[Targ
                     heartbeat_bpm=det.get("heartbeat_bpm", 0),
                     respiration_waveform=det.get("respiration_waveform"),
                     heartbeat_waveform=det.get("heartbeat_waveform"),
-                    is_moving=det.get("velocity_mps", 0) > 0.12,
+                    is_moving=det.get("velocity_mps", 0) > 0.15,
                 )
             )
     return display

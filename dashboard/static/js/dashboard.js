@@ -202,20 +202,25 @@ function updateSensingUI(prefix, data, nodePositions, areaSize, store = true) {
   const selected = getSelectedTarget(prefix, targets);
   const respEl = document.getElementById(`${prefix}-resp`);
   const hrEl = document.getElementById(`${prefix}-hr`);
-  if (respEl) respEl.textContent = selected?.respiration_bpm ? `${selected.respiration_bpm}` : "—";
-  if (hrEl) hrEl.textContent = selected?.heartbeat_bpm ? `${selected.heartbeat_bpm}` : "—";
+  const respBpm = selected?.respiration_bpm || data.respiration_bpm;
+  const hrBpm = selected?.heartbeat_bpm || data.heartbeat_bpm;
+  if (respEl) respEl.textContent = respBpm ? `${respBpm}` : "—";
+  if (hrEl) hrEl.textContent = hrBpm ? `${hrBpm}` : "—";
 
   renderMap(`${prefix}-map`, data, nodePositions, areaSize, prefix);
   renderTargets(`${prefix}-targets`, targets, prefix);
 
-  if (selected) {
+  const respWave = (selected?.respiration_waveform?.length ? selected.respiration_waveform : data.respiration_waveform) || [];
+  const hrWave = (selected?.heartbeat_waveform?.length ? selected.heartbeat_waveform : data.heartbeat_waveform) || [];
+
+  if (selected || respWave.length || hrWave.length) {
     renderSingleWaveform(
-      `${prefix}-resp-chart`, selected.respiration_waveform,
-      selected.respiration_bpm, RESP_COLOR, `Person #${selected.id}`
+      `${prefix}-resp-chart`, respWave,
+      respBpm || 0, RESP_COLOR, selected ? `Person #${selected.id}` : "Live"
     );
     renderSingleWaveform(
-      `${prefix}-hr-chart`, selected.heartbeat_waveform,
-      selected.heartbeat_bpm, HR_COLOR, `Person #${selected.id}`
+      `${prefix}-hr-chart`, hrWave,
+      hrBpm || 0, HR_COLOR, selected ? `Person #${selected.id}` : "Live"
     );
   } else {
     renderSingleWaveform(`${prefix}-resp-chart`, [], 0, RESP_COLOR, "");
