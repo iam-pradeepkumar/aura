@@ -340,8 +340,26 @@ videoEl.addEventListener("timeupdate", () => {
 
 // --- Hardware ---
 document.getElementById("btn-start-hardware").onclick = async () => {
-  await fetch("/api/hardware/start", { method: "POST" });
-  document.getElementById("hw-status").textContent = "Listening UDP :5555";
+  const statusEl = document.getElementById("hw-status");
+  try {
+    const res = await fetch("/api/hardware/start", { method: "POST" });
+    const json = await res.json();
+    if (!res.ok) {
+      statusEl.textContent = "Error: " + (json.detail || res.statusText);
+      return;
+    }
+    const pkts = json.total_packets ?? 0;
+    const active = json.active_nodes ?? 0;
+    statusEl.textContent = `Listening UDP :5555 · ${active} nodes · ${pkts} pkts`;
+    if (pkts === 0) {
+      document.getElementById("hw-warnings").textContent =
+        "No CSI packets yet — stop udp_probe.py if running, then click Start Live again.";
+      document.getElementById("hw-warnings").classList.remove("hidden");
+    }
+  } catch (err) {
+    statusEl.textContent = "Error: " + err.message;
+    return;
+  }
   connectHardwareWs();
 };
 

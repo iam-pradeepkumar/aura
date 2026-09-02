@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,7 +30,25 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-app = FastAPI(title="AURA Dashboard", version="1.0.0")
+
+@asynccontextmanager
+async def _app_lifespan(app: FastAPI):
+    """Start UDP listener when dashboard boots (do not run udp_probe at the same time)."""
+    global hardware_task
+    try:
+        wireless.start()
+    except OSError as exc:
+        print(f"WARNING: UDP :{DEFAULT_UDP_PORT} not available — {exc}", file=sys.stderr)
+        print("Stop tools/udp_probe.py before using Live Hardware.", file=sys.stderr)
+    else:
+        print(f"UDP CSI listener active on :{DEFAULT_UDP_PORT}")
+    if hardware_task is None or hardware_task.done():
+        hardware_task = asyncio.create_task(hardware_broadcast_loop())
+    yield
+    wireless.stop()
+
+
+app = FastAPI(title="AURA Dashboard", version="1.0.0", lifespan=_app_lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 PROCESSOR_VERSION = "2026.09.02-28"
@@ -109,18 +128,40 @@ def align_results(results, video_duration_sec: float, n_frames: int) -> list[dic
 
 def _get_hardware_node(node_id: int) -> NodePipelineState:
     if node_id not in hardware_nodes:
+        cfg = load_config()
         pipe = build_pipeline()
-        pipe.node_positions = {int(k): tuple(v) for k, v in pipeline_cfg.get("node_positions", {}).items()}
-        pipe.area_size_m = pipeline_cfg.get("area_size_m", 10.0)
-        hw_cfg = pipeline_cfg.get("hardware", {})
+        pipe.node_positions = {int(k): tuple(v) for k, v in cfg.get("node_positions", {}).items()}
+        pipe.area_size_m = cfg.get("area_size_m", 10.0)
+        hw_cfg = cfg.get("hardware", {})
         hardware_nodes[node_id] = NodePipelineState(
             node_id,
             pipe,
-            min_packets=int(hw_cfg.get("min_packets", 80)),
-            refresh_every=int(hw_cfg.get("refresh_every", 40)),
-            motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 0.85)),
+            min_packets=int(hw_cfg.get("min_packets", 25)),
+            refresh_every=int(hw_cfg.get("refresh_every", 20)),
+            motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 0.65)),
         )
     return hardware_nodes[node_id]
+
+
+def hardware_diagnostics() -> dict:
+    cfg = load_config()
+    hw_cfg = cfg.get("hardware", {})
+    link_timeout = float(hw_cfg.get("link_timeout_sec", 20.0))
+    expected_ids = sorted(int(k) for k in cfg.get("node_positions", {}).keys()) or list(
+        range(1, int(hw_cfg.get("expected_nodes", 4)) + 1)
+    )
+    active = wireless.active_nodes(timeout_sec=link_timeout)
+    total_packets = sum(wireless.node_packet_count.values())
+    return {
+        "udp_listening": wireless.running,
+        "udp_port": DEFAULT_UDP_PORT,
+        "active_nodes": len(active),
+        "expected_nodes": len(expected_ids),
+        "total_packets": total_packets,
+        "node_ids_seen": active,
+        "node_status": wireless.all_node_status(expected_ids, timeout_sec=link_timeout),
+        "processor_version": PROCESSOR_VERSION,
+    }
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -494,9 +535,22 @@ def process_hardware_snapshot() -> dict:
 
 
 async def hardware_broadcast_loop():
-    while hardware_clients:
-        if wireless.running:
-            snap = process_hardware_snapshot()
+    """Keep running forever; send snapshots whenever clients are connected."""
+    while True:
+        if hardware_clients and wireless.running:
+            try:
+                snap = process_hardware_snapshot()
+            except Exception as exc:
+                snap = {
+                    "mode": "hardware",
+                    "error": str(exc),
+                    "active_nodes": 0,
+                    "expected_nodes": 4,
+                    "node_status": [],
+                    "warnings": [f"Processing error: {exc}"],
+                    "targets": [],
+                    "target_count": 0,
+                }
             dead = []
             for ws in list(hardware_clients):
                 try:
@@ -508,19 +562,37 @@ async def hardware_broadcast_loop():
         await asyncio.sleep(0.25)
 
 
+@app.get("/api/hardware/status")
+async def hardware_status():
+    return hardware_diagnostics()
+
+
 @app.post("/api/hardware/start")
 async def start_hardware():
-    global hardware_task, field_tracker
-    cfg = load_config()
+    global hardware_task, field_tracker, pipeline_cfg
+    pipeline_cfg = load_config()
     field_tracker = FieldTracker(
-        area_size_m=float(cfg.get("area_size_m", 10.0)),
-        trail_len=int(cfg.get("hardware", {}).get("trail_length", 80)),
+        area_size_m=float(pipeline_cfg.get("area_size_m", 10.0)),
+        trail_len=int(pipeline_cfg.get("hardware", {}).get("trail_length", 80)),
     )
-    if not wireless.running:
-        wireless.start()
+    hardware_nodes.clear()
+    try:
+        if not wireless.running:
+            wireless.start()
+    except OSError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"UDP port {DEFAULT_UDP_PORT} busy — close udp_probe.py and restart dashboard. ({exc})",
+        ) from exc
     if hardware_task is None or hardware_task.done():
         hardware_task = asyncio.create_task(hardware_broadcast_loop())
-    return {"status": "listening", "udp_port": DEFAULT_UDP_PORT, "hub_ssid": "AURA_HUB"}
+    diag = hardware_diagnostics()
+    return {
+        "status": "listening",
+        "udp_port": DEFAULT_UDP_PORT,
+        "hub_ssid": "AURA_HUB",
+        **diag,
+    }
 
 
 @app.post("/api/hardware/stop")
@@ -535,8 +607,16 @@ async def stop_hardware():
 @app.websocket("/ws/hardware")
 async def ws_hardware(websocket: WebSocket):
     await websocket.accept()
-    if not wireless.running:
-        wireless.start()
+    try:
+        if not wireless.running:
+            wireless.start()
+    except OSError:
+        await websocket.send_json({
+            "type": "status",
+            "message": f"UDP :{DEFAULT_UDP_PORT} busy — stop udp_probe.py, restart dashboard.",
+        })
+        await websocket.close()
+        return
     global hardware_task
     if hardware_task is None or hardware_task.done():
         hardware_task = asyncio.create_task(hardware_broadcast_loop())

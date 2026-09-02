@@ -21,7 +21,12 @@ def main() -> None:
     args = parser.parse_args()
 
     rx = WirelessReceiver(port=args.port)
-    rx.start()
+    try:
+        rx.start()
+    except OSError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        print("Stop the dashboard Live Hardware session first (only one UDP listener).", file=sys.stderr)
+        sys.exit(1)
     print(f"Listening on UDP :{args.port} for {args.seconds:.0f}s")
     print("Power on TX + RX boards. Hotspot must be AURA_HUB / aura2026.\n")
 

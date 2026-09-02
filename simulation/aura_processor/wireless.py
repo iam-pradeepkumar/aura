@@ -38,7 +38,14 @@ class WirelessReceiver:
             return
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(("0.0.0.0", self.port))
+        try:
+            self.sock.bind(("0.0.0.0", self.port))
+        except OSError as exc:
+            self.sock = None
+            raise OSError(
+                f"Cannot bind UDP port {self.port} — stop tools/udp_probe.py "
+                f"or any other process using this port, then restart the dashboard."
+            ) from exc
         self.sock.settimeout(0.05)
         self.running = True
         self._thread = threading.Thread(target=self._parse_loop, daemon=True)
