@@ -54,7 +54,7 @@ async def _app_lifespan(app: FastAPI):
 app = FastAPI(title="AURA Dashboard", version="1.0.0", lifespan=_app_lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.09.02-31"
+PROCESSOR_VERSION = "2026.09.02-32"
 
 
 def json_safe(obj):
@@ -110,6 +110,7 @@ hardware_task: asyncio.Task | None = None
 hardware_nodes: dict[int, NodePipelineState] = {}
 field_tracker = FieldTracker()
 pipeline_cfg = load_config()
+last_hardware_snapshot: dict | None = None
 
 
 def build_pipeline(fs_hz: float = 20.0, max_targets: int | None = None) -> AURAPipeline:
@@ -453,6 +454,8 @@ def process_hardware_snapshot() -> dict:
 
     per_node_counts: list[int] = []
     best_vitals_score = 0.0
+    motion_active_nodes = 0
+    max_motion_energy = 0.0
 
     for nid in expected_ids:
         link = wireless.link_health(nid)
@@ -503,6 +506,9 @@ def process_hardware_snapshot() -> dict:
             continue
 
         motion = motion or res.motion_detected
+        if res.motion_detected:
+            motion_active_nodes += 1
+        max_motion_energy = max(max_motion_energy, float(res.motion_energy))
         if res.respiration_bpm > resp_bpm:
             resp_bpm = res.respiration_bpm
         if res.heartbeat_bpm > hr_bpm:
@@ -530,6 +536,7 @@ def process_hardware_snapshot() -> dict:
             "link": link,
             "packet_rate_hz": rate,
             "motion": res.motion_detected,
+            "motion_energy": round(float(res.motion_energy), 5),
             "count": res.target_count,
             "confidence": round(res.confidence, 2),
             "respiration_bpm": round(res.respiration_bpm, 1),
@@ -539,14 +546,17 @@ def process_hardware_snapshot() -> dict:
     fused = fuse_hardware_targets(
         all_target_dicts,
         area_size_m=area,
-        gate_m=float(hw_cfg.get("fusion_gate_m", 2.2)),
-        area_margin_m=float(hw_cfg.get("area_margin_m", 0.6)),
-        min_node_votes=int(hw_cfg.get("min_node_votes", 2)),
-        min_confidence=float(hw_cfg.get("min_confidence", 0.35)),
+        gate_m=float(hw_cfg.get("fusion_gate_m", 3.5)),
+        area_margin_m=float(hw_cfg.get("area_margin_m", 0.4)),
+        min_node_votes=int(hw_cfg.get("min_node_votes", 1)),
+        min_confidence=float(hw_cfg.get("min_confidence", 0.28)),
         max_people=int(hw_cfg.get("max_people", max_people)),
+        motion_active_nodes=motion_active_nodes,
     )
     tracked = field_tracker.update(fused, time.time())
-    target_count = consensus_target_count(per_node_counts, len(fused), max_people)
+    target_count = consensus_target_count(
+        per_node_counts, len(fused), max_people, motion_active_nodes=motion_active_nodes,
+    )
     if tracked and target_count < len(tracked):
         tracked = sorted(tracked, key=lambda t: t.get("confidence", 0), reverse=True)[:target_count]
     elif not tracked and target_count > 0 and fused:
@@ -575,6 +585,8 @@ def process_hardware_snapshot() -> dict:
         "warnings": wireless.system_warnings(expected_ids, timeout_sec=link_timeout),
         "recent_sources": wireless.recent_sources(timeout_sec=link_timeout),
         "motion_detected": motion or any(t.get("is_moving") for t in tracked),
+        "motion_energy": round(max_motion_energy, 5),
+        "motion_nodes": motion_active_nodes,
         "target_count": target_count,
         "confidence": round(session_confidence, 2),
         "respiration_bpm": round(resp_bpm, 1),
@@ -590,12 +602,14 @@ def process_hardware_snapshot() -> dict:
 
 
 async def hardware_broadcast_loop():
-    """Keep running forever; process CSI off the async thread so WebSocket stays alive."""
+    """Process CSI continuously; push to WebSocket clients when connected."""
+    global last_hardware_snapshot
     while True:
-        if hardware_clients and wireless.running:
+        if wireless.running:
             try:
                 snap = await asyncio.to_thread(process_hardware_snapshot)
                 snap = json_safe(snap)
+                last_hardware_snapshot = snap
             except Exception as exc:
                 diag = hardware_diagnostics()
                 snap = json_safe({
@@ -610,14 +624,16 @@ async def hardware_broadcast_loop():
                     "node_positions": load_config().get("node_positions", {}),
                     "area_size_m": load_config().get("area_size_m", 10.0),
                 })
-            dead = []
-            for ws in list(hardware_clients):
-                try:
-                    await ws.send_json({"type": "sensing", "data": snap})
-                except Exception:
-                    dead.append(ws)
-            for ws in dead:
-                hardware_clients.discard(ws)
+                last_hardware_snapshot = snap
+            if hardware_clients:
+                dead = []
+                for ws in list(hardware_clients):
+                    try:
+                        await ws.send_json({"type": "sensing", "data": snap})
+                    except Exception:
+                        dead.append(ws)
+                for ws in dead:
+                    hardware_clients.discard(ws)
             await asyncio.sleep(0.5)
         else:
             await asyncio.sleep(0.25)
@@ -625,7 +641,22 @@ async def hardware_broadcast_loop():
 
 @app.get("/api/hardware/status")
 async def hardware_status():
-    return hardware_diagnostics()
+    diag = hardware_diagnostics()
+    if last_hardware_snapshot:
+        diag.update({
+            "target_count": last_hardware_snapshot.get("target_count", 0),
+            "motion_detected": last_hardware_snapshot.get("motion_detected", False),
+            "motion_energy": last_hardware_snapshot.get("motion_energy", 0),
+            "motion_nodes": last_hardware_snapshot.get("motion_nodes", 0),
+            "respiration_bpm": last_hardware_snapshot.get("respiration_bpm", 0),
+            "heartbeat_bpm": last_hardware_snapshot.get("heartbeat_bpm", 0),
+            "targets": last_hardware_snapshot.get("targets", []),
+            "node_positions": last_hardware_snapshot.get("node_positions", {}),
+            "area_size_m": last_hardware_snapshot.get("area_size_m", 10.0),
+            "events": last_hardware_snapshot.get("events", []),
+            "warnings": last_hardware_snapshot.get("warnings", diag.get("warnings", [])),
+        })
+    return json_safe(diag)
 
 
 @app.post("/api/hardware/start")
@@ -635,7 +666,7 @@ async def start_hardware():
     hw_cfg = pipeline_cfg.get("hardware", {})
     field_tracker = FieldTracker(
         area_size_m=float(pipeline_cfg.get("area_size_m", 10.0)),
-        gate_m=float(hw_cfg.get("fusion_gate_m", 2.2)),
+        gate_m=float(hw_cfg.get("fusion_gate_m", 3.5)),
         max_targets=int(hw_cfg.get("max_people", pipeline_cfg.get("max_people", 4))),
         trail_len=int(hw_cfg.get("trail_length", 80)),
     )

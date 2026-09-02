@@ -117,6 +117,7 @@ def main():
         active = rx.active_nodes()
         all_dets: list[dict] = []
         per_node_counts: list[int] = []
+        motion_active_nodes = 0
         status_lines = [f"Active nodes: {len(active)}", ""]
         resp_wave = None
 
@@ -137,6 +138,8 @@ def main():
                 td["confidence"] = res.confidence
                 all_dets.append(td)
             per_node_counts.append(res.target_count)
+            if res.motion_detected:
+                motion_active_nodes += 1
             if res.respiration_waveform is not None and len(res.respiration_waveform):
                 resp_wave = res.respiration_waveform
             status_lines.append(
@@ -147,13 +150,16 @@ def main():
         fused = fuse_hardware_targets(
             all_dets,
             area_size_m=area,
-            gate_m=float(hw_cfg.get("fusion_gate_m", 2.2)),
-            area_margin_m=float(hw_cfg.get("area_margin_m", 0.6)),
-            min_node_votes=int(hw_cfg.get("min_node_votes", 2)),
-            min_confidence=float(hw_cfg.get("min_confidence", 0.35)),
+            gate_m=float(hw_cfg.get("fusion_gate_m", 3.5)),
+            area_margin_m=float(hw_cfg.get("area_margin_m", 0.4)),
+            min_node_votes=int(hw_cfg.get("min_node_votes", 1)),
+            min_confidence=float(hw_cfg.get("min_confidence", 0.28)),
             max_people=max_people,
+            motion_active_nodes=motion_active_nodes,
         )
-        count = consensus_target_count(per_node_counts, len(fused), max_people)
+        count = consensus_target_count(
+            per_node_counts, len(fused), max_people, motion_active_nodes=motion_active_nodes,
+        )
         tracked = tracker.update(fused[:count] if count else [], time.time() - t0)
 
         # Trails

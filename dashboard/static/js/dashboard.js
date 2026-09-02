@@ -378,6 +378,11 @@ function startHwStatusPoll() {
         document.getElementById("hw-warnings").classList.remove("hidden");
       }
       renderHwNodeList(d.node_status);
+      // Fallback when WebSocket is slow or disconnected
+      if (d.target_count !== undefined || d.motion_detected !== undefined) {
+        document.getElementById("hw-count").textContent = d.target_count ?? 0;
+        updateSensingUI("hw", d, d.node_positions, d.area_size_m, false);
+      }
     } catch (_) { /* ignore transient poll errors */ }
   }, 1500);
 }
