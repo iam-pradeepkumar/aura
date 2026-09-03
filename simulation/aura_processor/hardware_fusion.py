@@ -19,7 +19,7 @@ def _centroid_fallback(
     motion_active_nodes: int,
 ) -> dict | None:
     """When several nodes see motion but XY estimates disagree, fuse to one centroid."""
-    if motion_active_nodes < 2 or not clusters:
+    if motion_active_nodes < 3 or not clusters:
         return None
 
     xs, ys, ws = [], [], []
@@ -118,26 +118,22 @@ def fuse_hardware_targets(
                 "confidence": conf,
             })
 
-    center = area_size_m / 2.0
     kept: list[dict] = []
     for c in clusters:
         votes = len(c.get("_nodes", set()))
         conf = float(c.get("confidence", 0))
-        dist_center = float(np.hypot(c["x_m"] - center, c["y_m"] - center))
-        moving = bool(c.get("is_moving")) or float(c.get("velocity_mps", 0)) > 0.12
+        moving = bool(c.get("is_moving")) or float(c.get("velocity_mps", 0)) > 0.15
 
         if votes >= max(min_node_votes, 2) and conf >= min_confidence:
             kept.append(c)
-        elif votes >= 1 and moving and conf >= min_confidence * 0.8:
+        elif votes >= 2 and conf >= min_confidence * 0.85:
             kept.append(c)
-        elif motion_active_nodes >= 2 and votes >= 1 and conf >= min_confidence * 0.65:
-            kept.append(c)
-        elif votes >= 1 and conf >= 0.5 and dist_center < area_size_m * 0.42:
+        elif votes >= 1 and moving and conf >= min_confidence * 1.15:
             kept.append(c)
 
     if not kept:
         fb = _centroid_fallback(clusters, area_size_m, area_margin_m, motion_active_nodes)
-        if fb is not None:
+        if fb is not None and float(fb.get("confidence", 0)) >= min_confidence:
             kept = [fb]
 
     kept.sort(key=lambda c: (c.get("node_votes", len(c.get("_nodes", set()))), c.get("confidence", 0)), reverse=True)
@@ -161,10 +157,8 @@ def consensus_target_count(
     max_people: int,
     motion_active_nodes: int = 0,
 ) -> int:
-    """Global count — motion consensus can report 1 even when fusion is conservative."""
+    """Global count — only report people when fusion has confirmed targets."""
     if fused_len <= 0:
-        if motion_active_nodes >= 2:
-            return 1
         return 0
     if not per_node_counts:
         return min(fused_len, max_people)
@@ -172,7 +166,4 @@ def consensus_target_count(
     if not nz:
         return min(fused_len, max_people)
     median_n = int(np.median(nz))
-    base = min(fused_len, median_n, max_people)
-    if base <= 0 and motion_active_nodes >= 2:
-        return 1
-    return int(np.clip(base, 0, max_people))
+    return int(np.clip(min(fused_len, median_n, max_people), 0, max_people))

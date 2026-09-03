@@ -150,22 +150,11 @@ def refine_fused_targets(
     area_size_m: float,
     margin_m: float = 0.35,
 ) -> list[dict]:
-    """Apply RSSI-guided position refinement to fused targets."""
-    rssi_xy = rssi_localize(rssi_by_node, node_positions, area_size_m, margin_m)
+    """Apply RSSI-guided position refinement to fused targets (never invent targets)."""
     if not targets:
-        if rssi_xy is None:
-            return []
-        return [{
-            "id": 1,
-            "x_m": rssi_xy[0],
-            "y_m": rssi_xy[1],
-            "velocity_mps": 0.2,
-            "is_moving": True,
-            "confidence": 0.45,
-            "node_votes": len(rssi_by_node),
-        }]
+        return []
 
-    out: list[dict] = []
+    rssi_xy = rssi_localize(rssi_by_node, node_positions, area_size_m, margin_m)
     for t in targets:
         t = dict(t)
         csi_xy = (float(t["x_m"]), float(t["y_m"]))

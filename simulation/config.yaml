@@ -13,22 +13,25 @@ node_positions:
 tx_position: [5.0, -2.0]
 wifi_channel: 0
 
-# Live hardware — tuned for ~1–2 s latency and RSSI-accurate position
+# Live hardware — accuracy-first (empty area should read count 0)
 hardware:
-  min_packets: 12           # ~0.6 s at 20 Hz
-  motion_packets: 24        # ~1.2 s CSI window for position (live)
+  min_packets: 12
+  motion_packets: 24
   window_packets: 24
-  vitals_window_packets: 48 # ~2.4 s for respiration / heartbeat
+  vitals_window_packets: 48
   refresh_every: 1
-  motion_threshold_scale: 0.8
-  fusion_gate_m: 2.5
+  motion_threshold_scale: 1.05
+  motion_score_min: 0.58        # ESP32 motion score floor (raise if false positives)
+  motion_nodes_required: 2      # nodes that must agree on motion before alert
+  fusion_gate_m: 2.2
   area_margin_m: 0.35
-  min_node_votes: 1
-  min_confidence: 0.28
+  min_node_votes: 2             # require 2-node agreement for a person
+  min_confidence: 0.42
   max_per_node: 1
   max_people: 4
-  tracker_alpha: 0.78       # responsive position smoothing
-  tracker_miss_frames: 6
+  allow_sector_fallback: false  # no phantom XY from sector estimate
+  tracker_alpha: 0.72
+  tracker_miss_frames: 4
   link_timeout_sec: 20.0
   trail_length: 40
   expected_nodes: 4

@@ -35,6 +35,7 @@ class NodePipelineState:
         area_margin_m: float = 0.6,
         max_per_node: int = 2,
         min_confidence: float = 0.35,
+        motion_min: float = 0.58,
     ):
         self.node_id = node_id
         self.pipeline = pipeline
@@ -46,11 +47,14 @@ class NodePipelineState:
         self.area_margin_m = area_margin_m
         self.max_per_node = max_per_node
         self.min_confidence = min_confidence
+        self._motion_min = motion_min
         self._packet_count = 0
         self._motion_baseline: float | None = None
         self._last_motion_score = 0.0
         self._sensor_xy = pipeline.node_positions.get(node_id, pipeline.sensor_xy)
         self.pipeline._hw_motion_scale = motion_threshold_scale
+        self.pipeline._hw_motion_min = motion_min
+        self.pipeline._hw_allow_sector_fallback = False
         self.pipeline._session_targets = []
 
     def process(self, csi: np.ndarray, timestamps_ms: np.ndarray, rssi: np.ndarray | None = None):
@@ -67,7 +71,7 @@ class NodePipelineState:
         self.pipeline.fs_hz = fs
         self.pipeline.window_samples = motion_n
 
-        motion_info = esp32_motion_score(motion_csi, motion_rssi, baseline=self._motion_baseline)
+        motion_info = esp32_motion_score(motion_csi, motion_rssi, baseline=self._motion_baseline, motion_min=self._motion_min)
         self._last_motion_score = motion_info["score"]
         if not motion_info["motion"]:
             self._motion_baseline = update_baseline(self._motion_baseline, motion_info["score"])

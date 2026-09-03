@@ -5,20 +5,21 @@ let simSessionId = null;
 let simWs = null;
 let simFps = 30;
 
-const PERSON_COLORS = ["#22d3ee", "#818cf8", "#fbbf24", "#f472b6", "#34d399", "#fb923c", "#a78bfa", "#38bdf8"];
-const RESP_COLOR = "#34d399";
-const HR_COLOR = "#fb7185";
+const PERSON_COLORS = ["#8B5CF6", "#F472B6", "#FBBF24", "#34D399", "#60A5FA", "#FB923C", "#A78BFA", "#F43F5E"];
+const RESP_COLOR = "#34D399";
+const HR_COLOR = "#F472B6";
+const NODE_COLOR = "#8B5CF6";
 
 const selectedPerson = { sim: null };
 const lastSensing = { sim: null };
 
 const plotLayout = {
   paper_bgcolor: "transparent",
-  plot_bgcolor: "#030712",
-  font: { color: "#94a3b8", size: 9, family: "DM Sans, system-ui, sans-serif" },
+  plot_bgcolor: "#FFFDF5",
+  font: { color: "#64748B", size: 9, family: "Plus Jakarta Sans, system-ui, sans-serif" },
   margin: { l: 36, r: 10, t: 10, b: 28 },
-  xaxis: { gridcolor: "#1e293b", zerolinecolor: "#334155" },
-  yaxis: { gridcolor: "#1e293b", zerolinecolor: "#334155" },
+  xaxis: { gridcolor: "#E2E8F0", zerolinecolor: "#CBD5E1", linecolor: "#1E293B", linewidth: 2 },
+  yaxis: { gridcolor: "#E2E8F0", zerolinecolor: "#CBD5E1", linecolor: "#1E293B", linewidth: 2 },
 };
 
 fetch("/api/config").then((r) => r.json()).then((c) => {
@@ -79,8 +80,8 @@ function renderMap(elId, data, nodePositions, areaSize) {
 
   const traces = [{
     x: nodeX, y: nodeY, mode: "markers+text", name: "Nodes",
-    marker: { size: 11, color: "#3b82f6", symbol: "square", line: { width: 1, color: "#1d4ed8" } },
-    text: nodeText, textposition: "top center", textfont: { size: 8, color: "#93c5fd" },
+    marker: { size: 12, color: NODE_COLOR, symbol: "square", line: { width: 2, color: "#1E293B" } },
+    text: nodeText, textposition: "top center", textfont: { size: 9, color: "#1E293B", family: "Outfit, sans-serif" },
   }];
 
   targets.forEach((t, i) => {
@@ -90,7 +91,7 @@ function renderMap(elId, data, nodePositions, areaSize) {
       x: [t.x_m], y: [t.y_m], mode: "markers+text", name: `Person ${t.id}`,
       marker: {
         size: selected ? 15 : 11,
-        color: t.is_moving ? "#f43f5e" : color,
+        color: t.is_moving ? "#F472B6" : color,
         symbol: t.is_moving ? "circle" : "triangle-up",
         line: selected ? { color: "#f8fafc", width: 2 } : { width: 0 },
       },
@@ -158,7 +159,7 @@ function renderTargets(elId, targets) {
   const el = document.getElementById(elId);
   if (!el) return;
   if (!targets?.length) {
-    el.innerHTML = "<span class='text-slate-600 text-xs'>No targets detected</span>";
+    el.innerHTML = "<span class='text-xs' style='color:var(--muted-fg)'>No targets detected</span>";
     return;
   }
   const selId = selectedPerson.sim;
@@ -194,7 +195,7 @@ function updateSensingUI(data, nodePositions, areaSize, store = true) {
   const motionEl = document.getElementById("sim-motion");
   if (motionEl) {
     motionEl.textContent = data.motion_detected ? "YES" : "STATIC";
-    motionEl.className = "stat-value-sm " + (data.motion_detected ? "text-rose-400 motion-pulse" : "text-emerald-400");
+    motionEl.className = "stat-value-sm " + (data.motion_detected ? "text-secondary motion-pulse" : "text-quaternary");
   }
 
   const selected = getSelectedTarget(targets);

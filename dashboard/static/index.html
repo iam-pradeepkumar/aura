@@ -7,27 +7,30 @@
   <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-  <link rel="stylesheet" href="/static/css/style.css?v=16" />
+  <link rel="stylesheet" href="/static/css/style.css?v=17" />
 </head>
-<body class="bg-slate-950 text-slate-100 overflow-hidden h-screen flex flex-col">
+<body class="overflow-hidden h-screen flex flex-col">
+  <div class="deco-circle deco-circle-1" aria-hidden="true"></div>
+  <div class="deco-circle deco-circle-2" aria-hidden="true"></div>
+
   <header class="app-header shrink-0 px-5 py-3 flex items-center justify-between">
     <div class="flex items-center gap-4">
       <div class="logo-mark" aria-hidden="true">A</div>
       <div>
-        <h1 class="text-base font-semibold text-white tracking-tight">AURA</h1>
-        <p class="text-[11px] text-slate-500 leading-tight">Adaptive Urban Rescue Array · Simulation</p>
+        <h1 class="text-lg font-bold tracking-tight" style="font-family: var(--font-heading); color: var(--fg);">AURA</h1>
+        <p class="text-[11px] leading-tight" style="color: var(--muted-fg);">Adaptive Urban Rescue Array · Simulation replay</p>
       </div>
     </div>
-    <div class="flex items-center gap-3 text-xs text-slate-500">
+    <div class="flex items-center gap-3 text-xs">
       <span id="processor-badge" class="mono-badge">—</span>
-      <a href="#" id="field-live-hint" class="field-link hidden sm:inline">Live ESP32 → field_live.py</a>
+      <span class="field-link hidden sm:inline" style="border: none;">Live ESP32 → <code>field_live.py</code></span>
     </div>
   </header>
 
-  <main id="panel-simulation" class="flex-1 min-h-0 p-3 grid-dashboard-sim animate-fade-in">
+  <main id="panel-simulation" class="flex-1 min-h-0 p-4 grid-dashboard-sim animate-fade-in">
     <div class="card compact upload-card">
       <h2 class="card-title">Dataset</h2>
       <p class="upload-hint">WiMANS triple: scene video + raw CSI (.mat) + amplitude (.npy)</p>
@@ -82,32 +85,32 @@
     <div class="card compact span-2 video-card">
       <h2 class="card-title">Scene <span id="sim-time" class="time-badge">0.00s</span></h2>
       <video id="sim-video-player" controls class="video-fit"></video>
-      <p id="sim-meta" class="text-xs text-slate-500 mt-1.5 mono"></p>
+      <p id="sim-meta" class="text-xs mt-1.5 mono" style="color: var(--muted-fg);"></p>
     </div>
 
     <div class="card compact stats-grid">
       <div class="stat-mini stat-animate"><span class="stat-label">Count</span><span id="sim-count" class="stat-value-sm">0</span></div>
-      <div class="stat-mini stat-animate"><span class="stat-label">Motion</span><span id="sim-motion" class="stat-value-sm text-emerald-400">—</span></div>
-      <div class="stat-mini stat-animate"><span class="stat-label">Resp</span><span id="sim-resp" class="stat-value-sm text-xs">—</span></div>
-      <div class="stat-mini stat-animate"><span class="stat-label">HR</span><span id="sim-hr" class="stat-value-sm text-xs">—</span></div>
+      <div class="stat-mini stat-animate"><span class="stat-label">Motion</span><span id="sim-motion" class="stat-value-sm text-quaternary">—</span></div>
+      <div class="stat-mini stat-animate"><span class="stat-label">Resp</span><span id="sim-resp" class="stat-value-sm text-xs text-quaternary">—</span></div>
+      <div class="stat-mini stat-animate"><span class="stat-label">HR</span><span id="sim-hr" class="stat-value-sm text-xs text-secondary">—</span></div>
     </div>
 
     <div class="card compact chart-card"><h3 class="card-title">Position map</h3><div id="sim-map" class="chart-fit"></div></div>
     <div class="card compact chart-card"><h3 class="card-title">Targets</h3><div id="sim-targets" class="targets-fit"></div></div>
-    <div class="card compact chart-card"><h3 class="card-title">Respiration <span id="sim-resp-label" class="normal-case text-slate-500"></span></h3><div id="sim-resp-chart" class="chart-fit"></div></div>
-    <div class="card compact chart-card"><h3 class="card-title">Heartbeat <span id="sim-hr-label" class="normal-case text-slate-500"></span></h3><div id="sim-hr-chart" class="chart-fit"></div></div>
+    <div class="card compact chart-card"><h3 class="card-title">Respiration <span id="sim-resp-label" class="normal-case" style="color: var(--muted-fg);"></span></h3><div id="sim-resp-chart" class="chart-fit"></div></div>
+    <div class="card compact chart-card"><h3 class="card-title">Heartbeat <span id="sim-hr-label" class="normal-case" style="color: var(--muted-fg);"></span></h3><div id="sim-hr-chart" class="chart-fit"></div></div>
 
     <div class="card compact events-strip col-span-full">
-      <h3 class="card-title inline mr-3">Events</h3>
-      <ul id="sim-events" class="text-xs text-slate-400 font-mono inline-flex flex-wrap gap-x-4"></ul>
+      <h3 class="card-title inline mr-3" style="margin-bottom: 0;">Events</h3>
+      <ul id="sim-events" class="text-xs inline-flex flex-wrap gap-x-3 gap-y-1"></ul>
     </div>
   </main>
 
-  <footer class="shrink-0 border-t border-slate-800/80 px-4 py-1.5 text-[10px] text-slate-600 flex justify-between">
-    <span>Outdoor live sensing: <code class="text-slate-500">python3 tools/field_live.py</code></span>
+  <footer class="app-footer shrink-0 px-4 py-2 flex justify-between flex-wrap gap-2">
+    <span>Outdoor live sensing: <code>python3 tools/field_live.py</code></span>
     <span>Simulation replay syncs to video timeline</span>
   </footer>
 
-  <script src="/static/js/dashboard.js?v=26"></script>
+  <script src="/static/js/dashboard.js?v=27"></script>
 </body>
 </html>

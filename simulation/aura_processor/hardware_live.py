@@ -16,7 +16,7 @@ from .hardware_tracker import FieldTracker
 from .serialize import _downsample, target_to_dict
 from .wireless import DEFAULT_UDP_PORT, WirelessReceiver
 
-PROCESSOR_VERSION = "2026.09.03-36"
+PROCESSOR_VERSION = "2026.09.03-37"
 
 
 def load_field_config(path: str | None = None) -> dict:
@@ -82,13 +82,16 @@ class LiveFieldEngine:
                 pipe,
                 min_packets=int(hw.get("min_packets", 12)),
                 refresh_every=int(hw.get("refresh_every", 1)),
-                motion_threshold_scale=float(hw.get("motion_threshold_scale", 0.8)),
+                motion_threshold_scale=float(hw.get("motion_threshold_scale", 1.0)),
                 vitals_packets=int(hw.get("vitals_window_packets", 48)),
                 motion_packets=int(hw.get("motion_packets", 24)),
                 area_margin_m=float(hw.get("area_margin_m", 0.35)),
                 max_per_node=int(hw.get("max_per_node", 1)),
-                min_confidence=float(hw.get("min_confidence", 0.28)),
+                min_confidence=float(hw.get("min_confidence", 0.42)),
+                motion_min=float(hw.get("motion_score_min", 0.58)),
             )
+            pipe._hw_motion_min = float(hw.get("motion_score_min", 0.58))
+            pipe._hw_allow_sector_fallback = bool(hw.get("allow_sector_fallback", False))
         return self.node_states[nid]
 
     def process_frame(self) -> dict:
@@ -117,6 +120,9 @@ class LiveFieldEngine:
         hr_wave: list[float] = []
         best_vitals_score = 0.0
         node_status: list[dict] = []
+        motion_nodes_required = int(hw_cfg.get("motion_nodes_required", 2))
+        motion_score_min = float(hw_cfg.get("motion_score_min", 0.58))
+        strong_motion_nodes = 0
         motion = False
 
         for nid in self.expected_ids:
@@ -183,7 +189,11 @@ class LiveFieldEngine:
                 continue
 
             st = self.node_states[nid]
-            motion = motion or res.motion_detected
+            node_motion = bool(res.motion_detected)
+            node_score = float(st.last_motion_score)
+            if node_motion and node_score >= motion_score_min:
+                strong_motion_nodes += 1
+            motion = motion or node_motion
             if res.motion_detected:
                 motion_active_nodes += 1
             max_motion_energy = max(max_motion_energy, float(res.motion_energy))
@@ -196,8 +206,9 @@ class LiveFieldEngine:
             for t in res.targets:
                 td = target_to_dict(t)
                 td["source_node"] = nid
-                td["confidence"] = round(res.confidence, 2)
-                all_target_dicts.append(td)
+                td["confidence"] = round(max(float(td.get("confidence", 0)), res.confidence), 2)
+                if td["confidence"] >= float(hw_cfg.get("min_confidence", 0.42)):
+                    all_target_dicts.append(td)
 
             if res.respiration_waveform is not None and len(res.respiration_waveform):
                 score = float(res.respiration_bpm) * float(res.confidence)
@@ -229,8 +240,8 @@ class LiveFieldEngine:
             area_size_m=area,
             gate_m=float(hw_cfg.get("fusion_gate_m", 2.5)),
             area_margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
-            min_node_votes=int(hw_cfg.get("min_node_votes", 1)),
-            min_confidence=float(hw_cfg.get("min_confidence", 0.28)),
+            min_node_votes=int(hw_cfg.get("min_node_votes", 2)),
+            min_confidence=float(hw_cfg.get("min_confidence", 0.42)),
             max_people=int(hw_cfg.get("max_people", max_people)),
             motion_active_nodes=motion_active_nodes,
         )
@@ -245,20 +256,33 @@ class LiveFieldEngine:
         target_count = consensus_target_count(
             per_node_counts, len(fused), max_people, motion_active_nodes=motion_active_nodes,
         )
-        if tracked and target_count < len(tracked):
+        if not fused:
+            tracked = []
+            target_count = 0
+        elif tracked and target_count < len(tracked):
             tracked = sorted(tracked, key=lambda t: t.get("confidence", 0), reverse=True)[:target_count]
         elif not tracked and target_count > 0 and fused:
             tracked = fused[:target_count]
 
-        for t in tracked:
-            if not t.get("respiration_bpm") and resp_bpm > 0:
-                t["respiration_bpm"] = round(resp_bpm, 1)
-            if not t.get("heartbeat_bpm") and hr_bpm > 0:
-                t["heartbeat_bpm"] = round(hr_bpm, 1)
-            if not t.get("respiration_waveform") and resp_wave:
-                t["respiration_waveform"] = resp_wave
-            if not t.get("heartbeat_waveform") and hr_wave:
-                t["heartbeat_waveform"] = hr_wave
+        motion_confirmed = strong_motion_nodes >= motion_nodes_required or (
+            target_count > 0 and strong_motion_nodes >= 1
+        )
+
+        if target_count <= 0:
+            resp_bpm = 0.0
+            hr_bpm = 0.0
+            resp_wave = []
+            hr_wave = []
+        else:
+            for t in tracked:
+                if not t.get("respiration_bpm") and resp_bpm > 0:
+                    t["respiration_bpm"] = round(resp_bpm, 1)
+                if not t.get("heartbeat_bpm") and hr_bpm > 0:
+                    t["heartbeat_bpm"] = round(hr_bpm, 1)
+                if not t.get("respiration_waveform") and resp_wave:
+                    t["respiration_waveform"] = resp_wave
+                if not t.get("heartbeat_waveform") and hr_wave:
+                    t["heartbeat_waveform"] = hr_wave
 
         linked_count = sum(
             1 for nid in self.expected_ids
@@ -275,7 +299,7 @@ class LiveFieldEngine:
             "sensing_nodes": sensing_count,
             "expected_nodes": len(self.expected_ids),
             "total_packets": packets,
-            "motion_detected": motion or any(t.get("is_moving") for t in tracked),
+            "motion_detected": motion_confirmed,
             "motion_energy": round(max_motion_energy, 5),
             "motion_nodes": motion_active_nodes,
             "target_count": target_count,

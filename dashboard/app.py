@@ -37,7 +37,7 @@ async def _app_lifespan(app: FastAPI):
 app = FastAPI(title="AURA Dashboard", version="2.0.0", lifespan=_app_lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.09.03-36"
+PROCESSOR_VERSION = "2026.09.03-37"
 
 
 def _wimans_label_from_uploads(video_name: str, mat_name: str, npy_name: str) -> str:

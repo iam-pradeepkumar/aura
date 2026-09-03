@@ -148,35 +148,37 @@ def process_hardware_window(
     if motion_info is None:
         motion_info = esp32_motion_score(csi, rssi)
 
+    score = float(motion_info.get("score", 0))
+    motion = bool(motion_info.get("motion"))
+    motion_min = float(getattr(pipeline, "_hw_motion_min", 0.58))
+
     prepared = preprocess_csi(csi)
     cleaned = np.nan_to_num(srcc(prepared))
     m_energy = float(motion_info.get("energy", np.mean(motion_energy(cleaned))))
-    motion = bool(motion_info.get("motion")) or m_energy > eff_threshold * 0.65
+    strong_motion = motion and score >= motion_min
 
     vcsi = normalize_esp32_csi(vitals_csi if vitals_csi is not None and len(vitals_csi) >= 16 else csi)
     vprepared = preprocess_csi(vcsi)
     vcleaned = np.nan_to_num(srcc(vprepared))
-    vitals = extract_vitals(vcleaned, pipeline.fs_hz, motion_cutoff_hz=1.2)
-    _, _, ddm = delay_doppler_map(cleaned, pipeline.fs_hz)
 
-    session = pipeline._session_targets
-    weak_motion = motion or float(motion_info.get("score", 0)) > 0.4
-
-    if not motion and not weak_motion:
+    if not strong_motion:
         return SensingResult(
             timestamp_sec=timestamp_sec,
             motion_detected=False,
             motion_energy=m_energy,
             target_count=0,
             targets=[],
-            respiration_bpm=vitals["respiration_bpm"],
-            heartbeat_bpm=vitals["heartbeat_bpm"],
-            respiration_waveform=vitals["respiration_waveform"],
-            heartbeat_waveform=vitals["heartbeat_waveform"],
-            delay_doppler_map=ddm,
+            respiration_bpm=0.0,
+            heartbeat_bpm=0.0,
+            respiration_waveform=None,
+            heartbeat_waveform=None,
+            delay_doppler_map=None,
             events=list(pipeline.tracker.events),
             confidence=0.0,
         )
+
+    vitals = extract_vitals(vcleaned, pipeline.fs_hz, motion_cutoff_hz=1.2)
+    _, _, ddm = delay_doppler_map(cleaned, pipeline.fs_hz)
 
     cap = min(pipeline.max_targets, max_per_node, 2)
     count_limit = cap
@@ -198,7 +200,8 @@ def process_hardware_window(
     ]
     window_dets = _filter_area(window_dets, pipeline.area_size_m, area_margin_m)
 
-    if not window_dets and (motion or weak_motion):
+    allow_fallback = bool(getattr(pipeline, "_hw_allow_sector_fallback", False))
+    if not window_dets and allow_fallback and score >= motion_min * 1.2:
         window_dets = [
             refine_detection_xy(
                 _motion_sector_estimate(sensor_xy, pipeline.area_size_m, area_margin_m, m_energy, eff_threshold),
@@ -210,19 +213,26 @@ def process_hardware_window(
 
     # Live mode: use current window only (no stale session merge)
     detections = window_dets
-    detections = [d for d in detections if float(d.get("confidence", 0.5)) >= min_confidence * 0.55]
+    detections = [d for d in detections if float(d.get("confidence", 0.5)) >= min_confidence]
     detections = _filter_area(detections, pipeline.area_size_m, area_margin_m)[:cap]
 
     conf = detection_confidence(detections, m_energy, eff_threshold)
-    if not detections and (motion or weak_motion):
-        fb = refine_detection_xy(
-            _motion_sector_estimate(sensor_xy, pipeline.area_size_m, area_margin_m, m_energy, eff_threshold),
-            sensor_xy,
-            pipeline.area_size_m,
-            area_margin_m,
+
+    if not detections:
+        return SensingResult(
+            timestamp_sec=timestamp_sec,
+            motion_detected=True,
+            motion_energy=m_energy,
+            target_count=0,
+            targets=[],
+            respiration_bpm=0.0,
+            heartbeat_bpm=0.0,
+            respiration_waveform=None,
+            heartbeat_waveform=None,
+            delay_doppler_map=ddm,
+            events=list(pipeline.tracker.events),
+            confidence=conf,
         )
-        detections = [fb]
-        conf = max(conf, fb["confidence"])
 
     per_vitals = extract_vitals_for_detections(vcleaned, pipeline.fs_hz, detections)
     for i, det in enumerate(detections):
