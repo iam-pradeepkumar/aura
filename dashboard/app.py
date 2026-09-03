@@ -25,6 +25,7 @@ from aura_processor.multitarget import estimate_count_from_amplitude, trim_csi_t
 from aura_processor.serialize import result_to_dict, target_to_dict, _downsample  # noqa: E402
 from aura_processor.hardware_state import NodePipelineState  # noqa: E402
 from aura_processor.hardware_fusion import fuse_hardware_targets, consensus_target_count  # noqa: E402
+from aura_processor.hardware_localize import refine_fused_targets  # noqa: E402
 from aura_processor.hardware_tracker import FieldTracker  # noqa: E402
 from aura_processor.wireless import WirelessReceiver, DEFAULT_UDP_PORT  # noqa: E402
 
@@ -54,7 +55,7 @@ async def _app_lifespan(app: FastAPI):
 app = FastAPI(title="AURA Dashboard", version="1.0.0", lifespan=_app_lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.09.02-33"
+PROCESSOR_VERSION = "2026.09.03-34"
 
 
 def json_safe(obj):
@@ -153,13 +154,14 @@ def _get_hardware_node(node_id: int) -> NodePipelineState:
         hardware_nodes[node_id] = NodePipelineState(
             node_id,
             pipe,
-            min_packets=int(hw_cfg.get("min_packets", 30)),
-            refresh_every=int(hw_cfg.get("refresh_every", 30)),
-            motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 1.0)),
-            vitals_packets=int(hw_cfg.get("vitals_window_packets", 120)),
-            area_margin_m=float(hw_cfg.get("area_margin_m", 0.6)),
+            min_packets=int(hw_cfg.get("min_packets", 12)),
+            refresh_every=int(hw_cfg.get("refresh_every", 1)),
+            motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 0.8)),
+            vitals_packets=int(hw_cfg.get("vitals_window_packets", 48)),
+            motion_packets=int(hw_cfg.get("motion_packets", 24)),
+            area_margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
             max_per_node=int(hw_cfg.get("max_per_node", 2)),
-            min_confidence=float(hw_cfg.get("min_confidence", 0.35)),
+            min_confidence=float(hw_cfg.get("min_confidence", 0.28)),
         )
     return hardware_nodes[node_id]
 
@@ -430,9 +432,10 @@ def process_hardware_snapshot() -> dict:
     cfg = load_config()
     area = cfg.get("area_size_m", 10.0)
     hw_cfg = cfg.get("hardware", {})
-    min_pkts = int(hw_cfg.get("min_packets", 30))
-    window_pkts = int(hw_cfg.get("window_packets", 60))
-    vitals_pkts = int(hw_cfg.get("vitals_window_packets", 120))
+    min_pkts = int(hw_cfg.get("min_packets", 12))
+    window_pkts = int(hw_cfg.get("window_packets", 24))
+    motion_pkts = int(hw_cfg.get("motion_packets", 24))
+    vitals_pkts = int(hw_cfg.get("vitals_window_packets", 48))
     link_timeout = float(hw_cfg.get("link_timeout_sec", 20.0))
     max_people = int(cfg.get("max_people", 4))
     expected_nodes = int(hw_cfg.get("expected_nodes", 4))
@@ -456,6 +459,8 @@ def process_hardware_snapshot() -> dict:
     best_vitals_score = 0.0
     motion_active_nodes = 0
     max_motion_energy = 0.0
+    rssi_by_node: dict[int, float] = {}
+    node_pos = {int(k): tuple(v) for k, v in cfg.get("node_positions", {}).items()}
 
     for nid in expected_ids:
         link = wireless.link_health(nid)
@@ -474,7 +479,7 @@ def process_hardware_snapshot() -> dict:
             })
             continue
 
-        fetch_n = max(window_pkts, vitals_pkts)
+        fetch_n = max(window_pkts, vitals_pkts, motion_pkts)
         win = wireless.get_node_window(nid, n=fetch_n, min_packets=min_pkts)
         if win is None:
             buf_len = wireless.buffer_length(nid)
@@ -488,9 +493,11 @@ def process_hardware_snapshot() -> dict:
             })
             continue
 
-        csi, ts, rssi = win
+        csi, ts, rssi_arr = win
+        if rssi_arr is not None and len(rssi_arr):
+            rssi_by_node[nid] = float(np.median(rssi_arr[-8:]))
         state = _get_hardware_node(nid)
-        res = state.process(csi, ts, rssi)
+        res = state.process(csi, ts, rssi_arr)
         primary_pipe = state.pipeline
         session_confidence = max(session_confidence, state.pipeline.session_confidence)
 
@@ -547,12 +554,19 @@ def process_hardware_snapshot() -> dict:
     fused = fuse_hardware_targets(
         all_target_dicts,
         area_size_m=area,
-        gate_m=float(hw_cfg.get("fusion_gate_m", 3.5)),
-        area_margin_m=float(hw_cfg.get("area_margin_m", 0.4)),
+        gate_m=float(hw_cfg.get("fusion_gate_m", 2.5)),
+        area_margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
         min_node_votes=int(hw_cfg.get("min_node_votes", 1)),
         min_confidence=float(hw_cfg.get("min_confidence", 0.28)),
         max_people=int(hw_cfg.get("max_people", max_people)),
         motion_active_nodes=motion_active_nodes,
+    )
+    fused = refine_fused_targets(
+        fused,
+        rssi_by_node,
+        node_pos,
+        area,
+        margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
     )
     tracked = field_tracker.update(fused, time.time())
     target_count = consensus_target_count(
@@ -635,7 +649,7 @@ async def hardware_broadcast_loop():
                         dead.append(ws)
                 for ws in dead:
                     hardware_clients.discard(ws)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.12)
         else:
             await asyncio.sleep(0.25)
 
@@ -674,9 +688,11 @@ async def start_hardware():
     hw_cfg = pipeline_cfg.get("hardware", {})
     field_tracker = FieldTracker(
         area_size_m=float(pipeline_cfg.get("area_size_m", 10.0)),
-        gate_m=float(hw_cfg.get("fusion_gate_m", 3.5)),
+        gate_m=float(hw_cfg.get("fusion_gate_m", 2.5)),
         max_targets=int(hw_cfg.get("max_people", pipeline_cfg.get("max_people", 4))),
-        trail_len=int(hw_cfg.get("trail_length", 80)),
+        trail_len=int(hw_cfg.get("trail_length", 40)),
+        position_alpha=float(hw_cfg.get("tracker_alpha", 0.78)),
+        max_miss_frames=int(hw_cfg.get("tracker_miss_frames", 6)),
     )
     hardware_nodes.clear()
     try:

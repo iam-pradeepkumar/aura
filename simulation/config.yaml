@@ -4,32 +4,31 @@ motion_threshold: 0.02
 max_people: 4
 
 # ESP32 RX node positions around disaster search area (X, Y in meters)
-# Place nodes at corners of the collapsed structure perimeter
 node_positions:
   1: [0.0, 0.0]      # Node 1 — southwest corner
   2: [10.0, 0.0]     # Node 2 — southeast
   3: [10.0, 10.0]    # Node 3 — northeast
   4: [0.0, 10.0]     # Node 4 — northwest
 
-# TX probe position (informational — firmware uses broadcast)
 tx_position: [5.0, -2.0]
-
-# WiFi channel — auto-matched via AURA_HUB hotspot (TX + RX join hotspot)
 wifi_channel: 0
 
-# Live hardware CSI buffering (outdoor disaster field)
+# Live hardware — tuned for ~1–2 s latency and RSSI-accurate position
 hardware:
-  min_packets: 20          # ~1 s at 20 Hz — start sensing quickly
-  window_packets: 50       # ~2.5 s motion window at 20 Hz
-  vitals_window_packets: 80   # ~4 s for respiration / heartbeat
-  refresh_every: 20
-  motion_threshold_scale: 0.8   # sensitive enough for walking, not ghost-heavy
-  fusion_gate_m: 3.5
-  area_margin_m: 0.4
+  min_packets: 12           # ~0.6 s at 20 Hz
+  motion_packets: 24        # ~1.2 s CSI window for position (live)
+  window_packets: 24
+  vitals_window_packets: 48 # ~2.4 s for respiration / heartbeat
+  refresh_every: 1
+  motion_threshold_scale: 0.8
+  fusion_gate_m: 2.5
+  area_margin_m: 0.35
   min_node_votes: 1
   min_confidence: 0.28
-  max_per_node: 2
+  max_per_node: 1
   max_people: 4
+  tracker_alpha: 0.78       # responsive position smoothing
+  tracker_miss_frames: 6
   link_timeout_sec: 20.0
-  trail_length: 80
+  trail_length: 40
   expected_nodes: 4

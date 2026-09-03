@@ -409,7 +409,7 @@ function startHwStatusPoll() {
       }
       applyHardwareSnapshot(d);
     } catch (_) { /* ignore transient poll errors */ }
-  }, 500);
+  }, 200);
 }
 
 function stopHwStatusPoll() {

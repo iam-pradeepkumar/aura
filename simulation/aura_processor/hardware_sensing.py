@@ -133,12 +133,15 @@ def process_hardware_window(
     max_per_node: int = 2,
     min_confidence: float = 0.28,
     motion_info: dict | None = None,
+    sensor_xy: tuple[float, float] | None = None,
 ) -> SensingResult:
     """Per-node window processing using the receiving ESP32 position."""
     from .hardware_motion import esp32_motion_score
 
+    from .hardware_localize import refine_detection_xy
+
     csi = normalize_esp32_csi(csi)
-    sensor_xy = pipeline.node_positions.get(node_id, pipeline.sensor_xy)
+    sensor_xy = sensor_xy or pipeline.node_positions.get(node_id, pipeline.sensor_xy)
     scale = getattr(pipeline, "_hw_motion_scale", 1.0)
     eff_threshold = _hw_threshold(pipeline.motion_threshold, scale)
 
@@ -159,7 +162,7 @@ def process_hardware_window(
     session = pipeline._session_targets
     weak_motion = motion or float(motion_info.get("score", 0)) > 0.4
 
-    if not motion and not session and not weak_motion:
+    if not motion and not weak_motion:
         return SensingResult(
             timestamp_sec=timestamp_sec,
             motion_detected=False,
@@ -176,7 +179,7 @@ def process_hardware_window(
         )
 
     cap = min(pipeline.max_targets, max_per_node, 2)
-    count_limit = min(len(session), cap) if session else cap
+    count_limit = cap
     loc_threshold = eff_threshold * 0.65
     window_dets = localize_motion_sources(
         cleaned,
@@ -189,20 +192,35 @@ def process_hardware_window(
         motion_threshold=loc_threshold,
         count_limit=count_limit,
     )
+    window_dets = [
+        refine_detection_xy(d, sensor_xy, pipeline.area_size_m, area_margin_m)
+        for d in window_dets
+    ]
     window_dets = _filter_area(window_dets, pipeline.area_size_m, area_margin_m)
 
     if not window_dets and (motion or weak_motion):
         window_dets = [
-            _motion_sector_estimate(sensor_xy, pipeline.area_size_m, area_margin_m, m_energy, eff_threshold)
+            refine_detection_xy(
+                _motion_sector_estimate(sensor_xy, pipeline.area_size_m, area_margin_m, m_energy, eff_threshold),
+                sensor_xy,
+                pipeline.area_size_m,
+                area_margin_m,
+            )
         ]
 
-    detections = _merge_session_and_window(session, window_dets)
+    # Live mode: use current window only (no stale session merge)
+    detections = window_dets
     detections = [d for d in detections if float(d.get("confidence", 0.5)) >= min_confidence * 0.55]
     detections = _filter_area(detections, pipeline.area_size_m, area_margin_m)[:cap]
 
     conf = detection_confidence(detections, m_energy, eff_threshold)
     if not detections and (motion or weak_motion):
-        fb = _motion_sector_estimate(sensor_xy, pipeline.area_size_m, area_margin_m, m_energy, eff_threshold)
+        fb = refine_detection_xy(
+            _motion_sector_estimate(sensor_xy, pipeline.area_size_m, area_margin_m, m_energy, eff_threshold),
+            sensor_xy,
+            pipeline.area_size_m,
+            area_margin_m,
+        )
         detections = [fb]
         conf = max(conf, fb["confidence"])
 

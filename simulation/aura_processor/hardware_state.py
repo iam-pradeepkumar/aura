@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import numpy as np
 
+from .hardware_localize import refine_detection_xy
 from .hardware_motion import esp32_motion_score, update_baseline
-from .hardware_sensing import detect_hardware_session_targets, process_hardware_window
+from .hardware_sensing import process_hardware_window
 from .pipeline import AURAPipeline
 
 
@@ -30,6 +31,7 @@ class NodePipelineState:
         refresh_every: int = 40,
         motion_threshold_scale: float = 0.85,
         vitals_packets: int = 100,
+        motion_packets: int = 24,
         area_margin_m: float = 0.6,
         max_per_node: int = 2,
         min_confidence: float = 0.35,
@@ -40,6 +42,7 @@ class NodePipelineState:
         self.refresh_every = refresh_every
         self.motion_threshold_scale = motion_threshold_scale
         self.vitals_packets = vitals_packets
+        self.motion_packets = motion_packets
         self.area_margin_m = area_margin_m
         self.max_per_node = max_per_node
         self.min_confidence = min_confidence
@@ -48,57 +51,42 @@ class NodePipelineState:
         self._last_motion_score = 0.0
         self._sensor_xy = pipeline.node_positions.get(node_id, pipeline.sensor_xy)
         self.pipeline._hw_motion_scale = motion_threshold_scale
+        self.pipeline._session_targets = []
 
     def process(self, csi: np.ndarray, timestamps_ms: np.ndarray, rssi: np.ndarray | None = None):
         n = len(csi)
         if n < self.min_packets:
             return None
 
-        fs = estimate_fs_hz(timestamps_ms)
-        self.pipeline.fs_hz = fs
-        self.pipeline.window_samples = max(self.min_packets, min(int(2.5 * fs), n))
+        motion_n = min(self.motion_packets, n)
+        motion_csi = csi[-motion_n:]
+        motion_ts = timestamps_ms[-motion_n:]
+        motion_rssi = rssi[-motion_n:] if rssi is not None and len(rssi) >= motion_n else rssi
 
-        motion_info = esp32_motion_score(csi, rssi, baseline=self._motion_baseline)
+        fs = estimate_fs_hz(motion_ts)
+        self.pipeline.fs_hz = fs
+        self.pipeline.window_samples = motion_n
+
+        motion_info = esp32_motion_score(motion_csi, motion_rssi, baseline=self._motion_baseline)
         self._last_motion_score = motion_info["score"]
         if not motion_info["motion"]:
             self._motion_baseline = update_baseline(self._motion_baseline, motion_info["score"])
 
-        self._packet_count += 1
-        eff_threshold = self.pipeline.motion_threshold * self.motion_threshold_scale
-        if self._packet_count == 1 or self._packet_count % self.refresh_every == 0:
-            self.pipeline._session_targets = detect_hardware_session_targets(
-                csi,
-                fs,
-                self.pipeline.area_size_m,
-                self.pipeline.max_targets,
-                self._sensor_xy,
-                motion_threshold=eff_threshold,
-                area_margin_m=self.area_margin_m,
-                max_per_node=self.max_per_node,
-                motion_score=motion_info["score"],
-                force_motion=motion_info["motion"],
-            )
-            self.pipeline.estimated_person_count = len(self.pipeline._session_targets)
-            self.pipeline.session_confidence = max(
-                0.35,
-                min(0.95, 0.30 + 0.15 * len(self.pipeline._session_targets)),
-            )
-
         vitals_n = min(self.vitals_packets, n)
         vitals_csi = csi[-vitals_n:]
-        vitals_rssi = rssi[-vitals_n:] if rssi is not None and len(rssi) >= vitals_n else rssi
         t_sec = float(timestamps_ms[-1]) / 1000.0
         return process_hardware_window(
             self.pipeline,
-            csi,
+            motion_csi,
             t_sec,
             self.node_id,
             vitals_csi=vitals_csi,
-            rssi=rssi,
+            rssi=motion_rssi,
             area_margin_m=self.area_margin_m,
             max_per_node=self.max_per_node,
             min_confidence=self.min_confidence,
             motion_info=motion_info,
+            sensor_xy=self._sensor_xy,
         )
 
     @property
