@@ -19,7 +19,7 @@ def _centroid_fallback(
     motion_active_nodes: int,
 ) -> dict | None:
     """When several nodes see motion but XY estimates disagree, fuse to one centroid."""
-    if motion_active_nodes < 3 or not clusters:
+    if motion_active_nodes < 2 or not clusters:
         return None
 
     xs, ys, ws = [], [], []
@@ -51,7 +51,64 @@ def _centroid_fallback(
             (c["heartbeat_waveform"] for c in clusters if c.get("heartbeat_waveform")), None
         ),
         "node_votes": min(motion_active_nodes, 4),
+        "motion_consensus": True,
     }
+
+
+def fuse_motion_consensus(
+    node_scores: dict[int, float],
+    node_positions: dict[int, tuple[float, float]],
+    area_size_m: float,
+    margin_m: float = 0.35,
+    motion_min: float = 0.52,
+    min_nodes: int = 2,
+) -> list[dict]:
+    """
+    When 2+ nodes see strong CSI motion but localization returned nothing,
+    estimate one person at the motion-weighted centroid of inward node bearings.
+    """
+    from .hardware_localize import inward_reference
+
+    active = [
+        (nid, float(score))
+        for nid, score in node_scores.items()
+        if score >= motion_min * 0.88 and nid in node_positions
+    ]
+    if len(active) < min_nodes:
+        return []
+
+    scores = [s for _, s in active]
+    if float(np.median(scores)) < motion_min * 0.92:
+        return []
+
+    xs, ys, ws = [], [], []
+    for nid, score in active:
+        nx, ny = node_positions[nid]
+        rx, ry = inward_reference(nx, ny, area_size_m)
+        m = max(0.0, margin_m)
+        rx = float(np.clip(rx, m, area_size_m - m))
+        ry = float(np.clip(ry, m, area_size_m - m))
+        xs.append(rx * score)
+        ys.append(ry * score)
+        ws.append(score)
+
+    wsum = float(sum(ws))
+    if wsum <= 0:
+        return []
+
+    conf = float(np.clip(0.36 + 0.09 * len(active) + 0.04 * (np.median(scores) - motion_min), 0.38, 0.68))
+    return [{
+        "id": 1,
+        "x_m": round(float(sum(xs) / wsum), 3),
+        "y_m": round(float(sum(ys) / wsum), 3),
+        "velocity_mps": 0.22,
+        "confidence": round(conf, 2),
+        "is_moving": True,
+        "node_votes": len(active),
+        "motion_consensus": True,
+        "respiration_bpm": 0.0,
+        "heartbeat_bpm": 0.0,
+    }]
 
 
 def fuse_hardware_targets(
@@ -125,8 +182,15 @@ def fuse_hardware_targets(
 
         if votes >= max(min_node_votes, 2) and conf >= min_confidence:
             kept.append(c)
-        elif votes >= 2 and conf >= min_confidence * 0.92:
+        elif votes >= 2 and conf >= min_confidence * 0.88:
             kept.append(c)
+        elif votes >= 1 and conf >= min_confidence * 1.05 and motion_active_nodes >= 2:
+            kept.append(c)
+
+    if not kept and motion_active_nodes >= 2:
+        fb = _centroid_fallback(clusters, area_size_m, area_margin_m, motion_active_nodes)
+        if fb is not None and float(fb.get("confidence", 0)) >= min_confidence * 0.85:
+            kept = [fb]
 
     kept.sort(key=lambda c: (len(c.get("_nodes", set())), c.get("confidence", 0)), reverse=True)
     kept = kept[:max_people]

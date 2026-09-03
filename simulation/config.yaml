@@ -13,28 +13,30 @@ node_positions:
 tx_position: [5.0, -2.0]
 wifi_channel: 0
 
-# Live hardware — empty area must read count 0 (raise motion_score_min if needed)
+# Live hardware — balanced: detect real walkers, suppress empty-area phantoms
 hardware:
   min_packets: 12
   motion_packets: 24
   window_packets: 24
   vitals_window_packets: 48
   refresh_every: 1
-  motion_threshold_scale: 1.1
-  motion_score_min: 0.65        # raise to 0.72 if outdoor wind causes false motion
-  motion_nodes_required: 2      # both must see a localized target
-  confirm_frames: 5             # fused target must persist ~0.5s before showing
-  clear_frames: 2               # drop phantom trails after 2 empty frames
-  fusion_gate_m: 2.0
+  motion_threshold_scale: 0.95
+  motion_score_min: 0.52        # per-node CSI motion score floor
+  motion_nodes_required: 2      # 2+ nodes must see motion
+  allow_motion_consensus: true  # fuse position when motion agrees but XY differs
+  confirm_frames: 3             # ~0.3s sustained before showing count
+  consensus_extra_frames: 1     # extra frame for motion-only consensus
+  clear_frames: 2
+  fusion_gate_m: 3.0            # wide gate — corners disagree on same walker
   area_margin_m: 0.35
-  min_node_votes: 2             # 2 different RX nodes must agree
-  min_confidence: 0.48
+  min_node_votes: 2
+  min_confidence: 0.38
   max_per_node: 1
   max_people: 4
   allow_sector_fallback: false
-  tracker_alpha: 0.68
-  tracker_miss_frames: 3
-  min_trail_step_m: 0.25        # ignore jitter trails under 25cm
+  tracker_alpha: 0.75
+  tracker_miss_frames: 4
+  min_trail_step_m: 0.18
   link_timeout_sec: 20.0
-  trail_length: 30
+  trail_length: 35
   expected_nodes: 4

@@ -10,14 +10,14 @@ import yaml
 
 from . import AURAPipeline
 from .hardware_confirm import OccupancyConfirmFilter
-from .hardware_fusion import fuse_hardware_targets
+from .hardware_fusion import fuse_hardware_targets, fuse_motion_consensus
 from .hardware_localize import refine_fused_targets
 from .hardware_state import NodePipelineState
 from .hardware_tracker import FieldTracker
 from .serialize import _downsample, target_to_dict
 from .wireless import DEFAULT_UDP_PORT, WirelessReceiver
 
-PROCESSOR_VERSION = "2026.09.03-39"
+PROCESSOR_VERSION = "2026.09.03-40"
 
 
 def load_field_config(path: str | None = None) -> dict:
@@ -47,21 +47,22 @@ class LiveFieldEngine:
         hw = self.config.get("hardware", {})
         area = float(self.config.get("area_size_m", 10.0))
         self._occupancy = OccupancyConfirmFilter(
-            confirm_frames=int(hw.get("confirm_frames", 5)),
+            confirm_frames=int(hw.get("confirm_frames", 3)),
             clear_frames=int(hw.get("clear_frames", 2)),
             min_node_votes=int(hw.get("min_node_votes", 2)),
-            min_confidence=float(hw.get("min_confidence", 0.48)),
+            min_confidence=float(hw.get("min_confidence", 0.38)),
+            consensus_extra_frames=int(hw.get("consensus_extra_frames", 1)),
         )
         self.rx = WirelessReceiver(port=self.port)
         self.tracker = FieldTracker(
             area_size_m=area,
-            gate_m=float(hw.get("fusion_gate_m", 2.2)),
+            gate_m=float(hw.get("fusion_gate_m", 3.0)),
             max_targets=int(hw.get("max_people", self.config.get("max_people", 4))),
             trail_len=int(hw.get("trail_length", 40)),
-            position_alpha=float(hw.get("tracker_alpha", 0.72)),
-            max_miss_frames=int(hw.get("tracker_miss_frames", 3)),
-            min_spawn_confidence=float(hw.get("min_confidence", 0.48)),
-            min_trail_step_m=float(hw.get("min_trail_step_m", 0.22)),
+            position_alpha=float(hw.get("tracker_alpha", 0.75)),
+            max_miss_frames=int(hw.get("tracker_miss_frames", 4)),
+            min_spawn_confidence=float(hw.get("min_confidence", 0.38)) * 0.9,
+            min_trail_step_m=float(hw.get("min_trail_step_m", 0.18)),
         )
         self.expected_ids = sorted(int(k) for k in self.config.get("node_positions", {}).keys()) or list(
             range(1, int(hw.get("expected_nodes", 4)) + 1)
@@ -132,6 +133,7 @@ class LiveFieldEngine:
         node_status: list[dict] = []
         motion_nodes_required = int(hw_cfg.get("motion_nodes_required", 2))
         motion_score_min = float(hw_cfg.get("motion_score_min", 0.58))
+        node_scores: dict[int, float] = {}
         strong_motion_nodes = 0
         motion = False
 
@@ -199,28 +201,32 @@ class LiveFieldEngine:
                 continue
 
             st = self.node_states[nid]
-            node_motion = bool(res.motion_detected) and res.target_count > 0
             node_score = float(st.last_motion_score)
-            if node_motion and node_score >= motion_score_min:
+            node_scores[nid] = node_score
+            has_localized = res.target_count > 0
+            node_has_motion = node_score >= motion_score_min * 0.88 or (
+                bool(res.motion_detected) and node_score >= motion_score_min * 0.75
+            )
+            if node_has_motion:
                 strong_motion_nodes += 1
-            if node_motion:
-                motion = True
                 motion_active_nodes += 1
+                motion = True
+            node_motion = node_has_motion or has_localized
             max_motion_energy = max(max_motion_energy, float(res.motion_energy))
             if res.respiration_bpm > resp_bpm:
                 resp_bpm = res.respiration_bpm
             if res.heartbeat_bpm > hr_bpm:
                 hr_bpm = res.heartbeat_bpm
-            if res.target_count > 0:
+            if has_localized:
                 per_node_counts.append(res.target_count)
 
+            min_conf = float(hw_cfg.get("min_confidence", 0.38))
             for t in res.targets:
                 td = target_to_dict(t)
                 td["source_node"] = nid
                 conf = round(max(float(td.get("confidence", 0)), res.confidence), 2)
                 td["confidence"] = conf
-                min_conf = float(hw_cfg.get("min_confidence", 0.48))
-                if conf >= min_conf and node_score >= motion_score_min * 1.05:
+                if conf >= min_conf * 0.82 and node_score >= motion_score_min * 0.75:
                     all_target_dicts.append(td)
 
             if res.respiration_waveform is not None and len(res.respiration_waveform):
@@ -251,13 +257,24 @@ class LiveFieldEngine:
         fused = fuse_hardware_targets(
             all_target_dicts,
             area_size_m=area,
-            gate_m=float(hw_cfg.get("fusion_gate_m", 2.5)),
+            gate_m=float(hw_cfg.get("fusion_gate_m", 3.0)),
             area_margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
             min_node_votes=int(hw_cfg.get("min_node_votes", 2)),
-            min_confidence=float(hw_cfg.get("min_confidence", 0.42)),
+            min_confidence=float(hw_cfg.get("min_confidence", 0.38)),
             max_people=int(hw_cfg.get("max_people", max_people)),
             motion_active_nodes=motion_active_nodes,
         )
+
+        if not fused and bool(hw_cfg.get("allow_motion_consensus", True)):
+            fused = fuse_motion_consensus(
+                node_scores,
+                self.node_pos,
+                area,
+                margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
+                motion_min=motion_score_min,
+                min_nodes=int(hw_cfg.get("motion_nodes_required", 2)),
+            )
+
         fused = refine_fused_targets(
             fused,
             rssi_by_node,
@@ -273,9 +290,10 @@ class LiveFieldEngine:
         tracked = self.tracker.update(confirmed, now) if confirmed else []
         target_count = len(tracked) if confirmed else 0
 
-        motion_confirmed = (
-            target_count > 0
-            and strong_motion_nodes >= motion_nodes_required
+        motion_confirmed = target_count > 0 and (
+            strong_motion_nodes >= motion_nodes_required or any(
+                t.get("node_votes", 0) >= 2 for t in tracked
+            )
         )
 
         if target_count <= 0:

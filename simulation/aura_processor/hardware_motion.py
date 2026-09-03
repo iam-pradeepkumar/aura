@@ -49,9 +49,9 @@ def esp32_motion_score(
         + 0.05 * min(rssi_jitter / 2.0, 2.0)
     )
 
-    ref = baseline if baseline and baseline > 0.08 else max(score * 0.5, 0.25)
-    threshold = max(ref * 1.65, motion_min)
-    motion = score > threshold and score > motion_min * 1.12
+    ref = baseline if baseline and baseline > 0.08 else max(score * 0.5, 0.22)
+    threshold = max(ref * 1.45, motion_min)
+    motion = score > threshold and score >= motion_min * 0.95
 
     return {
         "score": float(score),
