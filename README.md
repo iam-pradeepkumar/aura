@@ -44,12 +44,11 @@ python dashboard/run.py --port 8848
 
 Open **http://127.0.0.1:8847** (or your chosen port).
 
-| Tab | What it does |
-|-----|----------------|
-| **Simulation** | Upload `.mp4` + `.mat` + `.npy` → CSI-only sensing synced to video |
-| **Live Hardware** | ESP32 nodes stream CSI over WiFi → real-time count, map, vitals |
+Upload WiMANS triple (`.mp4` + `.mat` + `.npy`) for CSI-only sensing synced to video playback.
 
-Check version: `curl http://127.0.0.1:8847/api/version` → `processor_version: 2026.08.31-26`
+Check version: `curl http://127.0.0.1:8847/api/version` → `processor_version: 2026.09.03-36`
+
+**Live ESP32 hardware is not in the web dashboard** — use the local matplotlib tool instead (see below).
 
 ---
 
@@ -93,17 +92,15 @@ See **[docs/SIMULATION_GUIDE.md](docs/SIMULATION_GUIDE.md)** and **[docs/WIMANS_
 2. Edit `simulation/config.yaml` — set measured node XY positions
 3. Start laptop hotspot: **SSID `AURA_HUB`**, password **`aura2026`**, IP **`192.168.4.1`**
 4. Power TX, then all RX nodes — they join the hotspot and stream CSI via **UDP port 5555**
-5. Dashboard → **Live Hardware** → **Start Listening**
-
-### Option B — CLI with motion trails (matplotlib)
+5. Run the **local live viewer** (do not use the web dashboard for hardware — it binds the same UDP port):
 
 ```bash
-python tools/field_live.py
+python3 tools/field_live.py
 ```
 
-Full-screen animated map with colored trail lines for each moving person.
+Close the dashboard first if it was running; only one process can listen on UDP **5555**.
 
-### Option C — CLI wireless hub
+### Option B — CLI wireless hub (legacy matplotlib)
 
 ```bash
 python tools/wireless_hub.py
@@ -117,8 +114,8 @@ See **[docs/HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md)** for flashing, layout, a
 
 ```
 AURA/
-├── dashboard/                 # Web UI — simulation + live hardware
-│   ├── app.py                 # FastAPI server
+├── dashboard/                 # Web UI — WiMANS simulation only
+│   ├── app.py                 # FastAPI server (no live UDP)
 │   ├── run.py                 # python dashboard/run.py
 │   └── static/                # HTML / JS / CSS
 ├── firmware/
@@ -133,8 +130,9 @@ AURA/
 │   ├── run_simulation.py      # CLI video-synced viewer
 │   └── config.yaml            # Node positions + hardware settings
 ├── tools/
+│   ├── field_live.py          # Local matplotlib live ESP32 sensing (recommended)
 │   ├── train_wimans.py        # Train count/localization model
-│   ├── wireless_hub.py        # CLI live hardware hub
+│   ├── wireless_hub.py        # Legacy CLI live hub
 │   ├── record_session.py      # UART recording (optional backup)
 │   └── validate_csi.py        # CSI format checker
 └── docs/
@@ -167,9 +165,9 @@ AURA/
               │                         │                         │
               └──────── WiFi UDP ───────┴──────► Laptop (AURA_HUB :5555)
                                                     │
-                                         hardware_sensing.py (per-node XY)
+                                         tools/field_live.py (matplotlib)
                                                     │
-                                         fuse_multinode_targets() → dashboard
+                                         hardware_live.py → fusion → map / vitals
 ```
 
 - **No internet** — laptop hotspot is local-only

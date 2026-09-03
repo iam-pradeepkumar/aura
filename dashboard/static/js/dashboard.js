@@ -1,125 +1,127 @@
-/* AURA Dashboard — click person to view individual vitals */
+/* AURA Simulation Dashboard */
 
 let config = { area_size_m: 10, node_positions: {} };
 let simSessionId = null;
 let simWs = null;
 let simFps = 30;
-let hwWs = null;
-let hwPollTimer = null;
 
-const PERSON_COLORS = ["#10b981", "#3b82f6", "#f59e0b", "#a78bfa", "#ec4899", "#14b8a6", "#f97316", "#8b5cf6"];
-const RESP_COLOR = "#10b981";
-const HR_COLOR = "#ef4444";
+const PERSON_COLORS = ["#22d3ee", "#818cf8", "#fbbf24", "#f472b6", "#34d399", "#fb923c", "#a78bfa", "#38bdf8"];
+const RESP_COLOR = "#34d399";
+const HR_COLOR = "#fb7185";
 
-const selectedPerson = { sim: null, hw: null };
-const lastSensing = { sim: null, hw: null };
+const selectedPerson = { sim: null };
+const lastSensing = { sim: null };
 
 const plotLayout = {
   paper_bgcolor: "transparent",
-  plot_bgcolor: "#020617",
-  font: { color: "#94a3b8", size: 9 },
-  margin: { l: 32, r: 8, t: 8, b: 24 },
+  plot_bgcolor: "#030712",
+  font: { color: "#94a3b8", size: 9, family: "DM Sans, system-ui, sans-serif" },
+  margin: { l: 36, r: 10, t: 10, b: 28 },
   xaxis: { gridcolor: "#1e293b", zerolinecolor: "#334155" },
   yaxis: { gridcolor: "#1e293b", zerolinecolor: "#334155" },
 };
 
-document.getElementById("tab-simulation").onclick = () => setTab("simulation");
-document.getElementById("tab-hardware").onclick = () => setTab("hardware");
-
-function setTab(name) {
-  document.getElementById("panel-simulation").classList.toggle("hidden", name !== "simulation");
-  document.getElementById("panel-hardware").classList.toggle("hidden", name !== "hardware");
-  document.getElementById("tab-simulation").classList.toggle("active", name === "simulation");
-  document.getElementById("tab-hardware").classList.toggle("active", name === "hardware");
-  setTimeout(() => window.dispatchEvent(new Event("resize")), 100);
-}
-
 fetch("/api/config").then((r) => r.json()).then((c) => {
   config = c;
-  renderMap("sim-map", { targets: [] }, config.node_positions, config.area_size_m || 10, "sim");
-  renderMap("hw-map", { targets: [] }, config.node_positions, config.area_size_m || 10, "hw");
+  const badge = document.getElementById("processor-badge");
+  if (badge) badge.textContent = `v${c.processor_version || "?"}`;
+  renderMap("sim-map", { targets: [] }, config.node_positions, config.area_size_m || 10);
 });
 
 function personColor(index) {
   return PERSON_COLORS[index % PERSON_COLORS.length];
 }
 
-function getSelectedTarget(prefix, targets) {
+function animateValue(el, end, duration = 400) {
+  if (!el) return;
+  const start = parseFloat(el.dataset.val || "0") || 0;
+  const target = parseFloat(end) || 0;
+  if (Math.abs(target - start) < 0.01) {
+    el.textContent = Number.isInteger(target) ? String(Math.round(target)) : target.toFixed(1);
+    el.dataset.val = target;
+    return;
+  }
+  const t0 = performance.now();
+  const step = (now) => {
+    const p = Math.min((now - t0) / duration, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    const v = start + (target - start) * eased;
+    el.textContent = Number.isInteger(target) ? String(Math.round(v)) : v.toFixed(1);
+    if (p < 1) requestAnimationFrame(step);
+    else el.dataset.val = target;
+  };
+  requestAnimationFrame(step);
+}
+
+function getSelectedTarget(targets) {
   if (!targets?.length) return null;
-  const id = selectedPerson[prefix];
-  let t = targets.find((x) => x.id === id);
+  let t = targets.find((x) => x.id === selectedPerson.sim);
   if (!t) {
     t = targets[0];
-    selectedPerson[prefix] = t.id;
+    selectedPerson.sim = t.id;
   }
   return t;
 }
 
-function selectPerson(prefix, targetId) {
-  selectedPerson[prefix] = targetId;
-  const cached = lastSensing[prefix];
-  if (cached) {
-    updateSensingUI(prefix, cached.data, cached.nodePositions, cached.areaSize, false);
-  }
+function selectPerson(targetId) {
+  selectedPerson.sim = targetId;
+  const cached = lastSensing.sim;
+  if (cached) updateSensingUI(cached.data, cached.nodePositions, cached.areaSize, false);
 }
 
-function renderMap(elId, data, nodePositions, areaSize, prefix) {
-  const el = document.getElementById(elId);
-  if (!el) return;
+function renderMap(elId, data, nodePositions, areaSize) {
   const targets = data.targets || [];
-  const selId = selectedPerson[prefix];
+  const selId = selectedPerson.sim;
   const nodeX = [], nodeY = [], nodeText = [];
   for (const [id, pos] of Object.entries(nodePositions || {})) {
     nodeX.push(pos[0]); nodeY.push(pos[1]); nodeText.push(`N${id}`);
   }
+
   const traces = [{
     x: nodeX, y: nodeY, mode: "markers+text", name: "Nodes",
-    marker: { size: 10, color: "#3b82f6", symbol: "square" },
-    text: nodeText, textposition: "top center", textfont: { size: 8 },
+    marker: { size: 11, color: "#3b82f6", symbol: "square", line: { width: 1, color: "#1d4ed8" } },
+    text: nodeText, textposition: "top center", textfont: { size: 8, color: "#93c5fd" },
   }];
 
   targets.forEach((t, i) => {
     const color = personColor(i);
     const selected = t.id === selId;
     traces.push({
-      x: [t.x_m], y: [t.y_m],
-      mode: "markers+text",
-      name: `Person ${t.id}`,
+      x: [t.x_m], y: [t.y_m], mode: "markers+text", name: `Person ${t.id}`,
       marker: {
-        size: selected ? 16 : 12,
-        color: t.is_moving ? "#ef4444" : color,
+        size: selected ? 15 : 11,
+        color: t.is_moving ? "#f43f5e" : color,
         symbol: t.is_moving ? "circle" : "triangle-up",
-        line: selected ? { color: "#fff", width: 2 } : { width: 0 },
+        line: selected ? { color: "#f8fafc", width: 2 } : { width: 0 },
       },
-      text: [`#${t.id}`],
-      textposition: "top center",
+      text: [`#${t.id}`], textposition: "top center",
       textfont: { size: 9, color: selected ? "#fff" : color },
       customdata: [[t.id]],
     });
     if (t.trajectory?.length > 1) {
-      const trailWidth = prefix === "hw" ? 2.5 : 1;
-      const trailAlpha = prefix === "hw" ? "99" : "66";
       traces.push({
         x: t.trajectory.map((p) => p[0]), y: t.trajectory.map((p) => p[1]),
-        mode: "lines",
-        line: { color: color + trailAlpha, width: trailWidth },
-        showlegend: false,
-        hoverinfo: "skip",
+        mode: "lines", line: { color: color + "88", width: 1.5 },
+        showlegend: false, hoverinfo: "skip",
       });
     }
   });
 
   Plotly.react(elId, traces, {
     ...plotLayout,
-    xaxis: { ...plotLayout.xaxis, range: [0, areaSize], title: { text: "X", font: { size: 9 } } },
-    yaxis: { ...plotLayout.yaxis, range: [0, areaSize], title: { text: "Y", font: { size: 9 } }, scaleanchor: "x" },
+    xaxis: { ...plotLayout.xaxis, range: [0, areaSize], title: { text: "X (m)", font: { size: 9 } } },
+    yaxis: { ...plotLayout.yaxis, range: [0, areaSize], title: { text: "Y (m)", font: { size: 9 } }, scaleanchor: "x" },
     showlegend: false,
+    transition: { duration: 180, easing: "cubic-in-out" },
   }, { responsive: true, displayModeBar: false });
 
-  el.on("plotly_click", (ev) => {
-    const cd = ev.points?.[0]?.customdata;
-    if (cd?.[0] != null) selectPerson(prefix, cd[0]);
-  });
+  const el = document.getElementById(elId);
+  if (el) {
+    el.on("plotly_click", (ev) => {
+      const cd = ev.points?.[0]?.customdata;
+      if (cd?.[0] != null) selectPerson(cd[0]);
+    });
+  }
 }
 
 function renderSingleWaveform(elId, wave, bpm, color, label) {
@@ -139,7 +141,8 @@ function renderSingleWaveform(elId, wave, bpm, color, label) {
   const x = wave.map((_, i) => i / Math.max(wave.length - 1, 1));
   Plotly.react(elId, [{
     x, y: wave, type: "scatter", mode: "lines",
-    line: { color, width: 2 },
+    line: { color, width: 2, shape: "spline" },
+    fill: "tozeroy", fillcolor: color + "22",
   }], {
     ...plotLayout,
     annotations: [{
@@ -147,134 +150,110 @@ function renderSingleWaveform(elId, wave, bpm, color, label) {
       xref: "paper", yref: "paper", x: 1, y: 1,
       showarrow: false, xanchor: "right", font: { size: 9, color },
     }],
+    transition: { duration: 150 },
   }, { responsive: true, displayModeBar: false });
 }
 
-function renderTargets(elId, targets, prefix) {
+function renderTargets(elId, targets) {
   const el = document.getElementById(elId);
   if (!el) return;
   if (!targets?.length) {
-    el.innerHTML = "<span class='text-slate-600'>No targets</span>";
+    el.innerHTML = "<span class='text-slate-600 text-xs'>No targets detected</span>";
     return;
   }
-  const selId = selectedPerson[prefix];
-  el.innerHTML = `<p class="text-slate-600 text-xs mb-1">Click a person to view their vitals</p>` +
-    targets.map((t, i) => {
-      const color = personColor(i);
-      const selected = t.id === selId;
-      return `
-      <div class="target-row ${selected ? "selected" : ""}" data-person-id="${t.id}" data-prefix="${prefix}"
-           style="border-left: 3px solid ${color};">
-        <div><b class="text-white">Person #${t.id}</b> ${t.is_moving ? "🔴 moving" : "🟠 static"}
-          <span class="text-slate-500">@ (${Number(t.x_m).toFixed(1)}, ${Number(t.y_m).toFixed(1)})</span>
-          ${t.velocity_mps > 0.1 ? `<span class="text-slate-500"> · ${Number(t.velocity_mps).toFixed(2)} m/s</span>` : ""}</div>
-        <div class="text-slate-400 mt-0.5">
-          <span style="color:${RESP_COLOR}">Resp ${t.respiration_bpm || "—"} BPM</span>
-          <span class="mx-1">·</span>
-          <span style="color:${HR_COLOR}">HR ${t.heartbeat_bpm || "—"} BPM</span>
+  const selId = selectedPerson.sim;
+  el.innerHTML = targets.map((t, i) => {
+    const color = personColor(i);
+    const selected = t.id === selId;
+    const state = t.is_moving ? '<span class="pill pill-motion">moving</span>' : '<span class="pill pill-static">static</span>';
+    return `
+      <div class="target-row ${selected ? "selected" : ""}" data-person-id="${t.id}" style="border-left-color:${color}">
+        <div class="target-head">
+          <span class="target-id">Person ${t.id}</span> ${state}
+          <span class="target-coord">(${Number(t.x_m).toFixed(1)}, ${Number(t.y_m).toFixed(1)})</span>
+        </div>
+        <div class="target-vitals">
+          <span style="color:${RESP_COLOR}">Resp ${t.respiration_bpm || "—"}</span>
+          <span class="dot">·</span>
+          <span style="color:${HR_COLOR}">HR ${t.heartbeat_bpm || "—"}</span>
         </div>
       </div>`;
-    }).join("");
+  }).join("");
 
   el.querySelectorAll(".target-row").forEach((row) => {
-    row.onclick = () => selectPerson(row.dataset.prefix, Number(row.dataset.personId));
+    row.onclick = () => selectPerson(Number(row.dataset.personId));
   });
 }
 
-function updateSensingUI(prefix, data, nodePositions, areaSize, store = true) {
+function updateSensingUI(data, nodePositions, areaSize, store = true) {
   const targets = data.targets || [];
-  if (store) {
-    lastSensing[prefix] = { data, nodePositions, areaSize };
-    if (targets.length && !targets.find((t) => t.id === selectedPerson[prefix])) {
-      selectedPerson[prefix] = targets[0].id;
-    }
-  }
+  if (store) lastSensing.sim = { data, nodePositions, areaSize };
 
-  const countEl = document.getElementById(`${prefix}-count`);
-  if (countEl) countEl.textContent = data.target_count ?? targets.length ?? 0;
+  animateValue(document.getElementById("sim-count"), data.target_count ?? targets.length ?? 0);
 
-  const motionEl = document.getElementById(`${prefix}-motion`);
+  const motionEl = document.getElementById("sim-motion");
   if (motionEl) {
     motionEl.textContent = data.motion_detected ? "YES" : "STATIC";
-    motionEl.className = "stat-value-sm " + (data.motion_detected ? "text-red-400" : "text-emerald-400");
+    motionEl.className = "stat-value-sm " + (data.motion_detected ? "text-rose-400 motion-pulse" : "text-emerald-400");
   }
 
-  const selected = getSelectedTarget(prefix, targets);
-  const respEl = document.getElementById(`${prefix}-resp`);
-  const hrEl = document.getElementById(`${prefix}-hr`);
+  const selected = getSelectedTarget(targets);
   const respBpm = selected?.respiration_bpm || data.respiration_bpm;
   const hrBpm = selected?.heartbeat_bpm || data.heartbeat_bpm;
+  const respEl = document.getElementById("sim-resp");
+  const hrEl = document.getElementById("sim-hr");
   if (respEl) respEl.textContent = respBpm ? `${respBpm}` : "—";
   if (hrEl) hrEl.textContent = hrBpm ? `${hrBpm}` : "—";
 
-  renderMap(`${prefix}-map`, data, nodePositions, areaSize, prefix);
-  renderTargets(`${prefix}-targets`, targets, prefix);
+  renderMap("sim-map", data, nodePositions, areaSize);
+  renderTargets("sim-targets", targets);
 
-  const respWave = (selected?.respiration_waveform?.length ? selected.respiration_waveform : data.respiration_waveform) || [];
-  const hrWave = (selected?.heartbeat_waveform?.length ? selected.heartbeat_waveform : data.heartbeat_waveform) || [];
-
-  if (selected || respWave.length || hrWave.length) {
-    renderSingleWaveform(
-      `${prefix}-resp-chart`, respWave,
-      respBpm || 0, RESP_COLOR, selected ? `Person #${selected.id}` : "Live"
-    );
-    renderSingleWaveform(
-      `${prefix}-hr-chart`, hrWave,
-      hrBpm || 0, HR_COLOR, selected ? `Person #${selected.id}` : "Live"
-    );
-  } else {
-    renderSingleWaveform(`${prefix}-resp-chart`, [], 0, RESP_COLOR, "");
-    renderSingleWaveform(`${prefix}-hr-chart`, [], 0, HR_COLOR, "");
-  }
+  const respWave = selected?.respiration_waveform?.length ? selected.respiration_waveform : data.respiration_waveform || [];
+  const hrWave = selected?.heartbeat_waveform?.length ? selected.heartbeat_waveform : data.heartbeat_waveform || [];
+  renderSingleWaveform("sim-resp-chart", respWave, respBpm, RESP_COLOR, selected ? `P${selected.id}` : "");
+  renderSingleWaveform("sim-hr-chart", hrWave, hrBpm, HR_COLOR, selected ? `P${selected.id}` : "");
 }
 
-// --- Simulation ---
 const videoEl = document.getElementById("sim-video-player");
-const videoInput = document.getElementById("sim-video");
-const csiMatInput = document.getElementById("sim-csi-mat");
-const csiNpyInput = document.getElementById("sim-csi-npy");
-const videoNameEl = document.getElementById("sim-video-name");
-const csiMatNameEl = document.getElementById("sim-csi-mat-name");
-const csiNpyNameEl = document.getElementById("sim-csi-npy-name");
+const runBtn = document.getElementById("btn-run-simulation");
+const runSpinner = runBtn?.querySelector(".btn-spinner");
+const runLabel = runBtn?.querySelector(".btn-label");
 
-function bindFileLabel(input, labelEl) {
-  if (!input || !labelEl) return;
+function setRunning(running) {
+  if (!runBtn) return;
+  runBtn.disabled = running;
+  runSpinner?.classList.toggle("hidden", !running);
+  if (runLabel) runLabel.textContent = running ? "Processing…" : "Run analysis";
+}
+
+["sim-video", "sim-csi-mat", "sim-csi-npy"].forEach((id, i) => {
+  const input = document.getElementById(id);
+  const label = document.getElementById(["sim-video-name", "sim-csi-mat-name", "sim-csi-npy-name"][i]);
+  if (!input || !label) return;
   input.addEventListener("change", () => {
     const f = input.files?.[0];
-    labelEl.textContent = f ? f.name : "No file chosen";
-    labelEl.classList.toggle("chosen", !!f);
+    label.textContent = f ? f.name : "No file chosen";
+    label.classList.toggle("chosen", !!f);
   });
-}
-bindFileLabel(videoInput, videoNameEl);
-bindFileLabel(csiMatInput, csiMatNameEl);
-bindFileLabel(csiNpyInput, csiNpyNameEl);
+});
 
-document.getElementById("btn-run-simulation").onclick = async () => {
-  const videoFile = videoInput?.files?.[0];
-  const matFile = csiMatInput?.files?.[0];
-  const npyFile = csiNpyInput?.files?.[0];
+runBtn.onclick = async () => {
+  const videoFile = document.getElementById("sim-video")?.files?.[0];
+  const matFile = document.getElementById("sim-csi-mat")?.files?.[0];
+  const npyFile = document.getElementById("sim-csi-npy")?.files?.[0];
   const fsVal = document.getElementById("sim-fs").value;
   const status = document.getElementById("sim-status");
 
   if (!videoFile || !matFile || !npyFile) {
-    status.textContent = "Select all three: video (.mp4), raw CSI (.mat), and preprocessed (.npy).";
+    status.textContent = "Select video, .mat, and .npy files.";
     return;
   }
 
-  const matExt = (matFile.name.split(".").pop() || "").toLowerCase();
-  const npyExt = (npyFile.name.split(".").pop() || "").toLowerCase();
-  if (matExt !== "mat") {
-    status.textContent = "File 2 must be a .mat raw CSI file.";
-    return;
-  }
-  if (npyExt !== "npy") {
-    status.textContent = "File 3 must be a .npy preprocessed amplitude file.";
-    return;
-  }
-
-  status.textContent = "Processing…";
+  setRunning(true);
+  status.textContent = "Uploading and processing CSI…";
   selectedPerson.sim = null;
   lastSensing.sim = null;
+
   const form = new FormData();
   form.append("video", videoFile);
   form.append("csi_mat", matFile);
@@ -291,30 +270,23 @@ document.getElementById("btn-run-simulation").onclick = async () => {
 
     simSessionId = json.session_id;
     simFps = json.fps || 30;
-    const warn = (json.warnings || []).join(" ");
-    const fp = json.csi_fingerprint ? ` · CSI ${json.csi_fingerprint}` : "";
-    const sync = json.sync_score != null ? ` · sync ${(json.sync_score * 100).toFixed(0)}%` : "";
-    status.textContent = `${json.csi_frames} CSI @ ${json.sample_rate_hz}Hz · v${json.processor_version || "?"}${fp}${sync}`;
-    if (warn) status.textContent += ` — ${warn}`;
+    status.textContent = `${json.csi_frames} CSI frames @ ${json.sample_rate_hz}Hz`;
     document.getElementById("sim-meta").textContent =
-      `${json.duration_sec}s · ${json.n_frames} frames · count ${json.target_count ?? 0}` +
-      (json.csi_load?.frames ? ` · CSI ${json.csi_load.frames}×${json.csi_load.subcarriers}` : "") +
-      (json.csi_load?.merged_with_npy ? " · mat+npy fused" : "") +
-      (json.csi_load?.npy_only_fusion ? " · amp+Hilbert phase" : "") +
-      (json.csi_load?.has_phase === false && !json.csi_load?.npy_only_fusion ? " · ⚠ no phase" : "") +
-      (json.confidence != null ? ` · conf ${(json.confidence * 100).toFixed(0)}%` : "") +
-      (json.reliable === false ? " · ⚠ low confidence" : "");
+      `${json.duration_sec}s · ${json.n_frames} frames · sync ${((json.sync_score || 1) * 100).toFixed(0)}%`;
     document.getElementById("sim-events").innerHTML =
-      (json.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
+      (json.events || []).map((e) => `<li class="event-chip">${e}</li>`).join("") || "<li>—</li>";
 
-    updateSensingUI("sim", {
-      target_count: json.target_count ?? json.csi_person_estimate ?? 0,
+    updateSensingUI({
+      target_count: json.target_count ?? 0,
       motion_detected: json.motion_detected,
       targets: json.targets || [],
+      respiration_bpm: json.respiration_bpm,
+      heartbeat_bpm: json.heartbeat_bpm,
     }, config.node_positions, config.area_size_m);
 
     videoEl.src = `/api/simulation/${simSessionId}/video`;
     videoEl.load();
+    document.querySelector(".video-card")?.classList.add("video-ready");
 
     if (simWs) simWs.close();
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -322,165 +294,30 @@ document.getElementById("btn-run-simulation").onclick = async () => {
     simWs.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.type === "sensing") {
-        updateSensingUI("sim", msg.data, msg.node_positions, msg.area_size_m);
+        updateSensingUI(msg.data, msg.node_positions, msg.area_size_m);
       }
     };
 
     fetch(`/api/simulation/${simSessionId}/frame?index=0`)
       .then((r) => r.json())
-      .then((fr) => {
-        if (fr.data) updateSensingUI("sim", fr.data, fr.node_positions, fr.area_size_m);
-      })
+      .then((fr) => { if (fr.data) updateSensingUI(fr.data, fr.node_positions, fr.area_size_m); })
       .catch(() => {});
   } catch (err) {
     status.textContent = "Error: " + err.message;
+  } finally {
+    setRunning(false);
   }
 };
 
-videoEl.addEventListener("timeupdate", () => {
+videoEl?.addEventListener("timeupdate", () => {
   if (!simSessionId || !simWs || simWs.readyState !== WebSocket.OPEN) return;
   const idx = Math.floor(videoEl.currentTime * simFps);
   document.getElementById("sim-time").textContent = `${videoEl.currentTime.toFixed(2)}s`;
   simWs.send(JSON.stringify({ type: "frame", index: idx }));
 });
 
-function renderHwNodeList(nodeStatus) {
-  const statusColor = (s) => {
-    if (s === "active" || s === "good") return "text-emerald-400";
-    if (s === "offline") return "text-slate-600";
-    if (String(s).startsWith("buffering")) return "text-amber-400";
-    return "text-sky-400";
-  };
-  document.getElementById("hw-nodes").innerHTML = (nodeStatus || []).map((n) => {
-    const hz = n.packet_rate_hz ?? n.link?.packet_rate_hz ?? 0;
-    const st = n.status || n.link?.status || "?";
-    const mot = n.motion ? " · motion" : "";
-    const score = n.motion_score != null ? ` · m=${n.motion_score}` : "";
-    return `
-      <li class="flex justify-between gap-2">
-        <span>Node ${n.id}${n.ip ? ` · ${n.ip}` : ""}</span>
-        <span class="${statusColor(st)}">${st} · ${hz} Hz${mot}${score}</span>
-      </li>`;
-  }).join("") || "<li class='text-slate-600'>Waiting for nodes...</li>";
-}
-
-function applyHardwareSnapshot(d) {
-  if (!d) return;
-  const expected = d.expected_nodes ?? 4;
-  const online = d.active_nodes ?? 0;
-  document.getElementById("hw-nodes-count").textContent = `${online}/${expected}`;
-  document.getElementById("hw-count").textContent = d.target_count ?? 0;
-  updateSensingUI("hw", d, d.node_positions, d.area_size_m, true);
-  renderHwNodeList(d.node_status);
-
-  const warnEl = document.getElementById("hw-warnings");
-  const warnings = [...(d.warnings || [])];
-  if (d.error) warnings.unshift(String(d.error));
-  if (warnings.length) {
-    warnEl.className = "text-xs mt-2 text-amber-400";
-    warnEl.textContent = warnings.join(" ");
-    warnEl.classList.remove("hidden");
-  } else {
-    const healthy = d.healthy_nodes ?? online;
-    warnEl.textContent = healthy === expected
-      ? `All ${expected} nodes streaming CSI`
-      : `Online ${online}/${expected} — power TX, wait 10s, walk inside area`;
-    warnEl.classList.remove("hidden");
-    warnEl.className = healthy === expected
-      ? "text-xs mt-2 text-emerald-400"
-      : "text-xs mt-2 text-amber-400";
-  }
-
-  document.getElementById("hw-events").innerHTML =
-    (d.events || []).map((e) => `<li>${e}</li>`).join("") || "<li>—</li>";
-}
-
-function startHwStatusPoll() {
-  if (hwPollTimer) clearInterval(hwPollTimer);
-  hwPollTimer = setInterval(async () => {
-    try {
-      const res = await fetch("/api/hardware/status");
-      const d = await res.json();
-      if (!d.udp_listening) {
-        document.getElementById("hw-warnings").textContent =
-          "UDP not listening — stop udp_probe.py, restart dashboard.";
-        document.getElementById("hw-warnings").className = "text-xs mt-2 text-amber-400";
-        document.getElementById("hw-warnings").classList.remove("hidden");
-      }
-      applyHardwareSnapshot(d);
-    } catch (_) { /* ignore transient poll errors */ }
-  }, 200);
-}
-
-function stopHwStatusPoll() {
-  if (hwPollTimer) {
-    clearInterval(hwPollTimer);
-    hwPollTimer = null;
-  }
-}
-
-// --- Hardware ---
-document.getElementById("btn-start-hardware").onclick = async () => {
-  const statusEl = document.getElementById("hw-status");
-  try {
-    const res = await fetch("/api/hardware/start", { method: "POST" });
-    const json = await res.json();
-    if (!res.ok) {
-      statusEl.textContent = "Error: " + (json.detail || res.statusText);
-      return;
-    }
-    const pkts = json.total_packets ?? 0;
-    const active = json.active_nodes ?? 0;
-    statusEl.textContent = `Listening UDP :5555 · ${active} nodes · ${pkts} pkts`;
-    if (json.node_status) renderHwNodeList(json.node_status);
-    if (pkts === 0) {
-      document.getElementById("hw-warnings").textContent =
-        "No CSI packets yet — stop udp_probe.py if running, then click Start Live again.";
-      document.getElementById("hw-warnings").classList.remove("hidden");
-    }
-  } catch (err) {
-    statusEl.textContent = "Error: " + err.message;
-    return;
-  }
-  startHwStatusPoll();
-  connectHardwareWs();
-};
-
-document.getElementById("btn-stop-hardware").onclick = async () => {
-  stopHwStatusPoll();
-  await fetch("/api/hardware/stop", { method: "POST" });
-  if (hwWs) { hwWs.close(); hwWs = null; }
-  document.getElementById("hw-status").textContent = "Stopped";
-};
-
-function connectHardwareWs() {
-  if (hwWs) hwWs.close();
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  hwWs = new WebSocket(`${proto}://${location.host}/ws/hardware`);
-  hwWs.onopen = () => { document.getElementById("hw-status").textContent = "Live"; };
-  hwWs.onmessage = (ev) => {
-    const msg = JSON.parse(ev.data);
-    if (msg.type === "status" || msg.type === "ping") {
-      if (msg.type === "status" && msg.message) {
-        document.getElementById("hw-status").textContent = "Live";
-      }
-      return;
-    }
-    if (msg.type !== "sensing") return;
-    const d = msg.data;
-    document.getElementById("hw-status").textContent = "Live";
-    applyHardwareSnapshot(d);
-  };
-  hwWs.onclose = () => {
-    document.getElementById("hw-status").textContent = "Poll mode";
-    setTimeout(() => {
-      if (hwPollTimer) connectHardwareWs();
-    }, 3000);
-  };
-}
-
 window.addEventListener("resize", () => {
-  ["sim-map", "sim-resp-chart", "sim-hr-chart", "hw-map", "hw-resp-chart", "hw-hr-chart"].forEach((id) => {
+  ["sim-map", "sim-resp-chart", "sim-hr-chart"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) Plotly.Plots.resize(el);
   });

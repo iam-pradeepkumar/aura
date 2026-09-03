@@ -1,10 +1,9 @@
-"""AURA Web Dashboard — FastAPI server (CSI-only sensing)."""
+"""AURA Web Dashboard — WiMANS / dataset simulation only. Live ESP32: tools/field_live.py"""
 
 from __future__ import annotations
 
 import asyncio
 import sys
-import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -22,12 +21,7 @@ sys.path.insert(0, str(SIM_DIR))
 
 from aura_processor import AURAPipeline, load_csi_mat, load_csi_npy, merge_csi_mat_npy  # noqa: E402
 from aura_processor.multitarget import estimate_count_from_amplitude, trim_csi_to_video  # noqa: E402
-from aura_processor.serialize import result_to_dict, target_to_dict, _downsample  # noqa: E402
-from aura_processor.hardware_state import NodePipelineState  # noqa: E402
-from aura_processor.hardware_fusion import fuse_hardware_targets, consensus_target_count  # noqa: E402
-from aura_processor.hardware_localize import refine_fused_targets  # noqa: E402
-from aura_processor.hardware_tracker import FieldTracker  # noqa: E402
-from aura_processor.wireless import WirelessReceiver, DEFAULT_UDP_PORT  # noqa: E402
+from aura_processor.serialize import result_to_dict  # noqa: E402
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -37,38 +31,13 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 @asynccontextmanager
 async def _app_lifespan(app: FastAPI):
-    """Start UDP listener when dashboard boots (do not run udp_probe at the same time)."""
-    global hardware_task
-    try:
-        wireless.start()
-    except OSError as exc:
-        print(f"WARNING: UDP :{DEFAULT_UDP_PORT} not available — {exc}", file=sys.stderr)
-        print("Stop tools/udp_probe.py before using Live Hardware.", file=sys.stderr)
-    else:
-        print(f"UDP CSI listener active on :{DEFAULT_UDP_PORT}")
-    if hardware_task is None or hardware_task.done():
-        hardware_task = asyncio.create_task(hardware_broadcast_loop())
     yield
-    wireless.stop()
 
 
-app = FastAPI(title="AURA Dashboard", version="1.0.0", lifespan=_app_lifespan)
+app = FastAPI(title="AURA Dashboard", version="2.0.0", lifespan=_app_lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-PROCESSOR_VERSION = "2026.09.03-34"
-
-
-def json_safe(obj):
-    """Make numpy types JSON-serializable for WebSocket payloads."""
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    if isinstance(obj, (np.floating, np.integer, np.bool_)):
-        return obj.item()
-    if isinstance(obj, dict):
-        return {str(k): json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [json_safe(v) for v in obj]
-    return obj
+PROCESSOR_VERSION = "2026.09.03-36"
 
 
 def _wimans_label_from_uploads(video_name: str, mat_name: str, npy_name: str) -> str:
@@ -105,13 +74,7 @@ class SimulationSession:
 
 
 sessions: dict[str, SimulationSession] = {}
-wireless = WirelessReceiver()
-hardware_clients: set[WebSocket] = set()
-hardware_task: asyncio.Task | None = None
-hardware_nodes: dict[int, NodePipelineState] = {}
-field_tracker = FieldTracker()
 pipeline_cfg = load_config()
-last_hardware_snapshot: dict | None = None
 
 
 def build_pipeline(fs_hz: float = 20.0, max_targets: int | None = None) -> AURAPipeline:
@@ -144,49 +107,6 @@ def align_results(results, video_duration_sec: float, n_frames: int) -> list[dic
     return aligned
 
 
-def _get_hardware_node(node_id: int) -> NodePipelineState:
-    if node_id not in hardware_nodes:
-        cfg = load_config()
-        pipe = build_pipeline()
-        pipe.node_positions = {int(k): tuple(v) for k, v in cfg.get("node_positions", {}).items()}
-        pipe.area_size_m = cfg.get("area_size_m", 10.0)
-        hw_cfg = cfg.get("hardware", {})
-        hardware_nodes[node_id] = NodePipelineState(
-            node_id,
-            pipe,
-            min_packets=int(hw_cfg.get("min_packets", 12)),
-            refresh_every=int(hw_cfg.get("refresh_every", 1)),
-            motion_threshold_scale=float(hw_cfg.get("motion_threshold_scale", 0.8)),
-            vitals_packets=int(hw_cfg.get("vitals_window_packets", 48)),
-            motion_packets=int(hw_cfg.get("motion_packets", 24)),
-            area_margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
-            max_per_node=int(hw_cfg.get("max_per_node", 2)),
-            min_confidence=float(hw_cfg.get("min_confidence", 0.28)),
-        )
-    return hardware_nodes[node_id]
-
-
-def hardware_diagnostics() -> dict:
-    cfg = load_config()
-    hw_cfg = cfg.get("hardware", {})
-    link_timeout = float(hw_cfg.get("link_timeout_sec", 20.0))
-    expected_ids = sorted(int(k) for k in cfg.get("node_positions", {}).keys()) or list(
-        range(1, int(hw_cfg.get("expected_nodes", 4)) + 1)
-    )
-    active = wireless.active_nodes(timeout_sec=link_timeout)
-    total_packets = sum(wireless.node_packet_count.values())
-    return {
-        "udp_listening": wireless.running,
-        "udp_port": DEFAULT_UDP_PORT,
-        "active_nodes": len(active),
-        "expected_nodes": len(expected_ids),
-        "total_packets": total_packets,
-        "node_ids_seen": active,
-        "node_status": wireless.all_node_status(expected_ids, timeout_sec=link_timeout),
-        "processor_version": PROCESSOR_VERSION,
-    }
-
-
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return (STATIC_DIR / "index.html").read_text()
@@ -203,9 +123,8 @@ async def get_config():
     return {
         "area_size_m": cfg.get("area_size_m", 10.0),
         "node_positions": cfg.get("node_positions", {}),
-        "udp_port": DEFAULT_UDP_PORT,
-        "hub_ssid": "AURA_HUB",
         "processor_version": PROCESSOR_VERSION,
+        "live_hardware": "python3 tools/field_live.py",
     }
 
 
@@ -426,336 +345,3 @@ async def ws_simulation(websocket: WebSocket, session_id: str):
                 })
     except WebSocketDisconnect:
         pass
-
-
-def process_hardware_snapshot() -> dict:
-    cfg = load_config()
-    area = cfg.get("area_size_m", 10.0)
-    hw_cfg = cfg.get("hardware", {})
-    min_pkts = int(hw_cfg.get("min_packets", 12))
-    window_pkts = int(hw_cfg.get("window_packets", 24))
-    motion_pkts = int(hw_cfg.get("motion_packets", 24))
-    vitals_pkts = int(hw_cfg.get("vitals_window_packets", 48))
-    link_timeout = float(hw_cfg.get("link_timeout_sec", 20.0))
-    max_people = int(cfg.get("max_people", 4))
-    expected_nodes = int(hw_cfg.get("expected_nodes", 4))
-    expected_ids = sorted(int(k) for k in cfg.get("node_positions", {}).keys()) or list(
-        range(1, expected_nodes + 1)
-    )
-
-    active = wireless.active_nodes(timeout_sec=link_timeout)
-    all_target_dicts: list[dict] = []
-    resp_bpm = 0.0
-    hr_bpm = 0.0
-    motion = False
-    resp_wave: list[float] = []
-    hr_wave: list[float] = []
-    node_status = []
-    events: list[str] = []
-    primary_pipe = None
-    session_confidence = 0.0
-
-    per_node_counts: list[int] = []
-    best_vitals_score = 0.0
-    motion_active_nodes = 0
-    max_motion_energy = 0.0
-    rssi_by_node: dict[int, float] = {}
-    node_pos = {int(k): tuple(v) for k, v in cfg.get("node_positions", {}).items()}
-
-    for nid in expected_ids:
-        link = wireless.link_health(nid)
-        rssi = wireless.node_rssi(nid)
-        ip = wireless.node_source_ip(nid)
-        rate = link.get("packet_rate_hz", 0)
-
-        if nid not in active:
-            node_status.append({
-                "id": nid,
-                "status": "offline",
-                "ip": ip,
-                "rssi": rssi,
-                "link": link,
-                "packet_rate_hz": rate,
-            })
-            continue
-
-        fetch_n = max(window_pkts, vitals_pkts, motion_pkts)
-        win = wireless.get_node_window(nid, n=fetch_n, min_packets=min_pkts)
-        if win is None:
-            buf_len = wireless.buffer_length(nid)
-            node_status.append({
-                "id": nid,
-                "status": f"buffering ({buf_len}/{min_pkts})",
-                "ip": ip,
-                "rssi": rssi,
-                "link": link,
-                "packet_rate_hz": rate,
-            })
-            continue
-
-        csi, ts, rssi_arr = win
-        if rssi_arr is not None and len(rssi_arr):
-            rssi_by_node[nid] = float(np.median(rssi_arr[-8:]))
-        state = _get_hardware_node(nid)
-        res = state.process(csi, ts, rssi_arr)
-        primary_pipe = state.pipeline
-        session_confidence = max(session_confidence, state.pipeline.session_confidence)
-
-        if res is None:
-            node_status.append({
-                "id": nid,
-                "status": "warming up",
-                "ip": ip,
-                "rssi": rssi,
-                "link": link,
-                "packet_rate_hz": rate,
-            })
-            continue
-
-        motion = motion or res.motion_detected
-        if res.motion_detected:
-            motion_active_nodes += 1
-        max_motion_energy = max(max_motion_energy, float(res.motion_energy))
-        if res.respiration_bpm > resp_bpm:
-            resp_bpm = res.respiration_bpm
-        if res.heartbeat_bpm > hr_bpm:
-            hr_bpm = res.heartbeat_bpm
-        per_node_counts.append(res.target_count)
-        for t in res.targets:
-            td = target_to_dict(t)
-            td["source_node"] = nid
-            td["confidence"] = round(res.confidence, 2)
-            all_target_dicts.append(td)
-        events.extend(res.events[-2:])
-
-        if res.respiration_waveform is not None and len(res.respiration_waveform):
-            score = float(res.respiration_bpm) * float(res.confidence)
-            if score >= best_vitals_score:
-                best_vitals_score = score
-                resp_wave = _downsample(res.respiration_waveform)
-                hr_wave = _downsample(res.heartbeat_waveform) if res.heartbeat_waveform is not None else []
-
-        node_status.append({
-            "id": nid,
-            "status": "active",
-            "ip": ip,
-            "rssi": rssi,
-            "link": link,
-            "packet_rate_hz": rate,
-            "motion": res.motion_detected,
-            "motion_score": round(float(state.last_motion_score), 3),
-            "motion_energy": round(float(res.motion_energy), 5),
-            "count": res.target_count,
-            "confidence": round(res.confidence, 2),
-            "respiration_bpm": round(res.respiration_bpm, 1),
-            "heartbeat_bpm": round(res.heartbeat_bpm, 1),
-        })
-
-    fused = fuse_hardware_targets(
-        all_target_dicts,
-        area_size_m=area,
-        gate_m=float(hw_cfg.get("fusion_gate_m", 2.5)),
-        area_margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
-        min_node_votes=int(hw_cfg.get("min_node_votes", 1)),
-        min_confidence=float(hw_cfg.get("min_confidence", 0.28)),
-        max_people=int(hw_cfg.get("max_people", max_people)),
-        motion_active_nodes=motion_active_nodes,
-    )
-    fused = refine_fused_targets(
-        fused,
-        rssi_by_node,
-        node_pos,
-        area,
-        margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
-    )
-    tracked = field_tracker.update(fused, time.time())
-    target_count = consensus_target_count(
-        per_node_counts, len(fused), max_people, motion_active_nodes=motion_active_nodes,
-    )
-    if tracked and target_count < len(tracked):
-        tracked = sorted(tracked, key=lambda t: t.get("confidence", 0), reverse=True)[:target_count]
-    elif not tracked and target_count > 0 and fused:
-        tracked = fused[:target_count]
-
-    for t in tracked:
-        if not t.get("respiration_bpm") and resp_bpm > 0:
-            t["respiration_bpm"] = round(resp_bpm, 1)
-        if not t.get("heartbeat_bpm") and hr_bpm > 0:
-            t["heartbeat_bpm"] = round(hr_bpm, 1)
-        if not t.get("respiration_waveform") and resp_wave:
-            t["respiration_waveform"] = resp_wave
-        if not t.get("heartbeat_waveform") and hr_wave:
-            t["heartbeat_waveform"] = hr_wave
-
-    online_count = sum(1 for n in node_status if n["status"] != "offline")
-    good_count = sum(1 for n in node_status if n.get("link", {}).get("status") == "good")
-
-    return {
-        "mode": "hardware",
-        "processor_version": PROCESSOR_VERSION,
-        "active_nodes": online_count,
-        "expected_nodes": len(expected_ids),
-        "healthy_nodes": good_count,
-        "connected_devices": wireless.connected_device_count(timeout_sec=link_timeout),
-        "warnings": wireless.system_warnings(expected_ids, timeout_sec=link_timeout),
-        "recent_sources": wireless.recent_sources(timeout_sec=link_timeout),
-        "motion_detected": motion or any(t.get("is_moving") for t in tracked),
-        "motion_energy": round(max_motion_energy, 5),
-        "motion_nodes": motion_active_nodes,
-        "target_count": target_count,
-        "confidence": round(session_confidence, 2),
-        "respiration_bpm": round(resp_bpm, 1),
-        "heartbeat_bpm": round(hr_bpm, 1),
-        "respiration_waveform": resp_wave,
-        "heartbeat_waveform": hr_wave,
-        "targets": tracked,
-        "node_status": node_status,
-        "node_positions": cfg.get("node_positions", {}),
-        "area_size_m": area,
-        "events": (field_tracker.events[-8:] or (primary_pipe.tracker.events[-5:] if primary_pipe else events[-5:])),
-    }
-
-
-async def hardware_broadcast_loop():
-    """Process CSI continuously; push to WebSocket clients when connected."""
-    global last_hardware_snapshot
-    while True:
-        if wireless.running:
-            try:
-                snap = await asyncio.to_thread(process_hardware_snapshot)
-                snap = json_safe(snap)
-                last_hardware_snapshot = snap
-            except Exception as exc:
-                diag = hardware_diagnostics()
-                snap = json_safe({
-                    "mode": "hardware",
-                    "error": str(exc),
-                    "active_nodes": diag.get("active_nodes", 0),
-                    "expected_nodes": diag.get("expected_nodes", 4),
-                    "node_status": diag.get("node_status", []),
-                    "warnings": [f"Processing error: {exc}"],
-                    "targets": [],
-                    "target_count": 0,
-                    "node_positions": load_config().get("node_positions", {}),
-                    "area_size_m": load_config().get("area_size_m", 10.0),
-                })
-                last_hardware_snapshot = snap
-            if hardware_clients:
-                dead = []
-                for ws in list(hardware_clients):
-                    try:
-                        await ws.send_json({"type": "sensing", "data": snap})
-                    except Exception:
-                        dead.append(ws)
-                for ws in dead:
-                    hardware_clients.discard(ws)
-            await asyncio.sleep(0.12)
-        else:
-            await asyncio.sleep(0.25)
-
-
-@app.get("/api/hardware/status")
-async def hardware_status():
-    diag = hardware_diagnostics()
-    if last_hardware_snapshot:
-        snap = last_hardware_snapshot
-        diag.update({
-            "target_count": snap.get("target_count", 0),
-            "motion_detected": snap.get("motion_detected", False),
-            "motion_energy": snap.get("motion_energy", 0),
-            "motion_nodes": snap.get("motion_nodes", 0),
-            "respiration_bpm": snap.get("respiration_bpm", 0),
-            "heartbeat_bpm": snap.get("heartbeat_bpm", 0),
-            "respiration_waveform": snap.get("respiration_waveform", []),
-            "heartbeat_waveform": snap.get("heartbeat_waveform", []),
-            "targets": snap.get("targets", []),
-            "node_positions": snap.get("node_positions", diag.get("node_positions", {})),
-            "area_size_m": snap.get("area_size_m", 10.0),
-            "events": snap.get("events", []),
-            "confidence": snap.get("confidence", 0),
-            "processor_version": snap.get("processor_version", PROCESSOR_VERSION),
-            "node_status": snap.get("node_status", diag.get("node_status", [])),
-            "warnings": snap.get("warnings", diag.get("warnings", [])),
-            "error": snap.get("error"),
-        })
-    return json_safe(diag)
-
-
-@app.post("/api/hardware/start")
-async def start_hardware():
-    global hardware_task, field_tracker, pipeline_cfg
-    pipeline_cfg = load_config()
-    hw_cfg = pipeline_cfg.get("hardware", {})
-    field_tracker = FieldTracker(
-        area_size_m=float(pipeline_cfg.get("area_size_m", 10.0)),
-        gate_m=float(hw_cfg.get("fusion_gate_m", 2.5)),
-        max_targets=int(hw_cfg.get("max_people", pipeline_cfg.get("max_people", 4))),
-        trail_len=int(hw_cfg.get("trail_length", 40)),
-        position_alpha=float(hw_cfg.get("tracker_alpha", 0.78)),
-        max_miss_frames=int(hw_cfg.get("tracker_miss_frames", 6)),
-    )
-    hardware_nodes.clear()
-    try:
-        if not wireless.running:
-            wireless.start()
-    except OSError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"UDP port {DEFAULT_UDP_PORT} busy — close udp_probe.py and restart dashboard. ({exc})",
-        ) from exc
-    if hardware_task is None or hardware_task.done():
-        hardware_task = asyncio.create_task(hardware_broadcast_loop())
-    diag = hardware_diagnostics()
-    return {
-        "status": "listening",
-        "udp_port": DEFAULT_UDP_PORT,
-        "hub_ssid": "AURA_HUB",
-        **json_safe(diag),
-    }
-
-
-@app.post("/api/hardware/stop")
-async def stop_hardware():
-    global field_tracker
-    wireless.stop()
-    hardware_nodes.clear()
-    field_tracker.reset()
-    return {"status": "stopped"}
-
-
-@app.websocket("/ws/hardware")
-async def ws_hardware(websocket: WebSocket):
-    await websocket.accept()
-    try:
-        if not wireless.running:
-            wireless.start()
-    except OSError:
-        await websocket.send_json({
-            "type": "status",
-            "message": f"UDP :{DEFAULT_UDP_PORT} busy — stop udp_probe.py, restart dashboard.",
-        })
-        await websocket.close()
-        return
-    global hardware_task
-    if hardware_task is None or hardware_task.done():
-        hardware_task = asyncio.create_task(hardware_broadcast_loop())
-    hardware_clients.add(websocket)
-    try:
-        await websocket.send_json({
-            "type": "status",
-            "message": "Connected. Power on ESP32 nodes on AURA_HUB hotspot.",
-            "udp_port": DEFAULT_UDP_PORT,
-            "processor_version": PROCESSOR_VERSION,
-        })
-        while True:
-            try:
-                await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
-            except asyncio.TimeoutError:
-                try:
-                    await websocket.send_json({"type": "ping"})
-                except Exception:
-                    break
-    except WebSocketDisconnect:
-        pass
-    finally:
-        hardware_clients.discard(websocket)

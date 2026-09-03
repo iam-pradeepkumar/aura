@@ -3,29 +3,34 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AURA Dashboard</title>
+  <title>AURA — CSI Sensing Dashboard</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-  <link rel="stylesheet" href="/static/css/style.css?v=15" />
+  <link rel="stylesheet" href="/static/css/style.css?v=16" />
 </head>
 <body class="bg-slate-950 text-slate-100 overflow-hidden h-screen flex flex-col">
-  <header class="shrink-0 border-b border-slate-800 bg-slate-900 px-4 py-2 flex items-center justify-between">
-    <div class="flex items-center gap-3">
-      <h1 class="text-lg font-bold text-white">AURA</h1>
-      <span class="text-xs text-slate-500 hidden sm:inline">Adaptive Urban Rescue Array</span>
+  <header class="app-header shrink-0 px-5 py-3 flex items-center justify-between">
+    <div class="flex items-center gap-4">
+      <div class="logo-mark" aria-hidden="true">A</div>
+      <div>
+        <h1 class="text-base font-semibold text-white tracking-tight">AURA</h1>
+        <p class="text-[11px] text-slate-500 leading-tight">Adaptive Urban Rescue Array · Simulation</p>
+      </div>
     </div>
-    <nav class="flex gap-1">
-      <button id="tab-simulation" class="tab-btn active">Simulation</button>
-      <button id="tab-hardware" class="tab-btn">Live Hardware</button>
-    </nav>
+    <div class="flex items-center gap-3 text-xs text-slate-500">
+      <span id="processor-badge" class="mono-badge">—</span>
+      <a href="#" id="field-live-hint" class="field-link hidden sm:inline">Live ESP32 → field_live.py</a>
+    </div>
   </header>
 
-  <!-- SIMULATION: single-screen grid -->
-  <main id="panel-simulation" class="panel flex-1 min-h-0 p-2 grid-dashboard-sim">
-    <!-- Row 1: upload | video | stats -->
+  <main id="panel-simulation" class="flex-1 min-h-0 p-3 grid-dashboard-sim animate-fade-in">
     <div class="card compact upload-card">
-      <h2 class="card-title">Upload dataset</h2>
+      <h2 class="card-title">Dataset</h2>
+      <p class="upload-hint">WiMANS triple: scene video + raw CSI (.mat) + amplitude (.npy)</p>
 
       <div class="upload-scroll">
         <div class="upload-row">
@@ -37,7 +42,6 @@
           <input type="file" id="sim-video" accept="video/*,.mp4,.mov,.avi,.mkv,.webm" class="file-input" />
           <span id="sim-video-name" class="upload-row-file">No file chosen</span>
         </div>
-
         <div class="upload-row">
           <div class="upload-row-head">
             <span class="upload-row-num">2</span>
@@ -47,7 +51,6 @@
           <input type="file" id="sim-csi-mat" accept=".mat,.MAT" class="file-input" />
           <span id="sim-csi-mat-name" class="upload-row-file">No file chosen</span>
         </div>
-
         <div class="upload-row">
           <div class="upload-row-head">
             <span class="upload-row-num">3</span>
@@ -57,80 +60,54 @@
           <input type="file" id="sim-csi-npy" accept=".npy,.NPY" class="file-input" />
           <span id="sim-csi-npy-name" class="upload-row-file">No file chosen</span>
         </div>
-
         <div class="upload-row upload-row-last">
           <div class="upload-row-head">
             <span class="upload-row-num">·</span>
             <span class="upload-row-title">Sample rate</span>
             <span class="upload-row-tag">Hz</span>
           </div>
-          <input type="number" id="sim-fs" placeholder="auto (~1000)" class="file-input" step="0.1" />
+          <input type="number" id="sim-fs" placeholder="auto" class="file-input" step="0.1" />
         </div>
       </div>
 
       <div class="upload-actions">
-        <button id="btn-run-simulation" type="button" class="btn-primary btn-run">Run Simulation</button>
+        <button id="btn-run-simulation" type="button" class="btn-primary btn-run">
+          <span class="btn-label">Run analysis</span>
+          <span class="btn-spinner hidden" aria-hidden="true"></span>
+        </button>
         <p id="sim-status" class="upload-status"></p>
       </div>
     </div>
 
-    <div class="card compact span-2">
-      <h2 class="card-title">Scene Video <span id="sim-time" class="normal-case text-slate-500">0.00s</span></h2>
+    <div class="card compact span-2 video-card">
+      <h2 class="card-title">Scene <span id="sim-time" class="time-badge">0.00s</span></h2>
       <video id="sim-video-player" controls class="video-fit"></video>
-      <p id="sim-meta" class="text-xs text-slate-500 mt-1"></p>
+      <p id="sim-meta" class="text-xs text-slate-500 mt-1.5 mono"></p>
     </div>
 
     <div class="card compact stats-grid">
-      <div class="stat-mini"><span class="stat-label">Count</span><span id="sim-count" class="stat-value-sm">0</span></div>
-      <div class="stat-mini"><span class="stat-label">Motion</span><span id="sim-motion" class="stat-value-sm text-emerald-400">—</span></div>
-      <div class="stat-mini"><span class="stat-label">Resp</span><span id="sim-resp" class="stat-value-sm text-xs">—</span></div>
-      <div class="stat-mini"><span class="stat-label">HR</span><span id="sim-hr" class="stat-value-sm text-xs">—</span></div>
+      <div class="stat-mini stat-animate"><span class="stat-label">Count</span><span id="sim-count" class="stat-value-sm">0</span></div>
+      <div class="stat-mini stat-animate"><span class="stat-label">Motion</span><span id="sim-motion" class="stat-value-sm text-emerald-400">—</span></div>
+      <div class="stat-mini stat-animate"><span class="stat-label">Resp</span><span id="sim-resp" class="stat-value-sm text-xs">—</span></div>
+      <div class="stat-mini stat-animate"><span class="stat-label">HR</span><span id="sim-hr" class="stat-value-sm text-xs">—</span></div>
     </div>
 
-    <!-- Row 2: map | targets | resp | hr -->
-    <div class="card compact chart-card"><h3 class="card-title">Map (XY)</h3><div id="sim-map" class="chart-fit"></div></div>
+    <div class="card compact chart-card"><h3 class="card-title">Position map</h3><div id="sim-map" class="chart-fit"></div></div>
     <div class="card compact chart-card"><h3 class="card-title">Targets</h3><div id="sim-targets" class="targets-fit"></div></div>
     <div class="card compact chart-card"><h3 class="card-title">Respiration <span id="sim-resp-label" class="normal-case text-slate-500"></span></h3><div id="sim-resp-chart" class="chart-fit"></div></div>
     <div class="card compact chart-card"><h3 class="card-title">Heartbeat <span id="sim-hr-label" class="normal-case text-slate-500"></span></h3><div id="sim-hr-chart" class="chart-fit"></div></div>
 
-    <!-- Row 3: events strip -->
     <div class="card compact events-strip col-span-full">
       <h3 class="card-title inline mr-3">Events</h3>
       <ul id="sim-events" class="text-xs text-slate-400 font-mono inline-flex flex-wrap gap-x-4"></ul>
     </div>
   </main>
 
-  <!-- HARDWARE: single-screen grid -->
-  <main id="panel-hardware" class="panel hidden flex-1 min-h-0 p-2 grid-dashboard-hw">
-    <div class="card compact">
-      <h2 class="card-title">Wireless Hub</h2>
-      <p class="text-xs text-slate-500 mb-2">Hotspot <b class="text-slate-300">AURA_HUB</b> / aura2026</p>
-      <button id="btn-start-hardware" class="btn-primary w-full text-sm py-2 mb-1">Start Live</button>
-      <button id="btn-stop-hardware" class="btn-secondary w-full text-sm py-2">Stop</button>
-      <p id="hw-status" class="text-xs mt-2 text-slate-500">Disconnected</p>
-      <p id="hw-warnings" class="text-xs mt-2 text-amber-400 hidden"></p>
-      <ul id="hw-nodes" class="mt-2 text-xs space-y-1 overflow-auto max-h-24"></ul>
-    </div>
+  <footer class="shrink-0 border-t border-slate-800/80 px-4 py-1.5 text-[10px] text-slate-600 flex justify-between">
+    <span>Outdoor live sensing: <code class="text-slate-500">python3 tools/field_live.py</code></span>
+    <span>Simulation replay syncs to video timeline</span>
+  </footer>
 
-    <div class="card compact stats-grid col-span-3">
-      <div class="stat-mini"><span class="stat-label">Nodes</span><span id="hw-nodes-count" class="stat-value-sm">0</span></div>
-      <div class="stat-mini"><span class="stat-label">Count</span><span id="hw-count" class="stat-value-sm">0</span></div>
-      <div class="stat-mini"><span class="stat-label">Motion</span><span id="hw-motion" class="stat-value-sm">—</span></div>
-      <div class="stat-mini"><span class="stat-label">Resp</span><span id="hw-resp" class="stat-value-sm text-xs">—</span></div>
-      <div class="stat-mini"><span class="stat-label">HR</span><span id="hw-hr" class="stat-value-sm text-xs">—</span></div>
-    </div>
-
-    <div class="card compact chart-card"><h3 class="card-title">Live Map <span class="normal-case text-slate-500">trails</span></h3><div id="hw-map" class="chart-fit"></div></div>
-    <div class="card compact chart-card"><h3 class="card-title">Targets</h3><div id="hw-targets" class="targets-fit"></div></div>
-    <div class="card compact chart-card"><h3 class="card-title">Respiration <span id="hw-resp-label" class="normal-case text-slate-500"></span></h3><div id="hw-resp-chart" class="chart-fit"></div></div>
-    <div class="card compact chart-card"><h3 class="card-title">Heartbeat <span id="hw-hr-label" class="normal-case text-slate-500"></span></h3><div id="hw-hr-chart" class="chart-fit"></div></div>
-
-    <div class="card compact events-strip col-span-full">
-      <h3 class="card-title inline mr-3">Events</h3>
-      <ul id="hw-events" class="text-xs text-slate-400 font-mono inline-flex flex-wrap gap-x-4"></ul>
-    </div>
-  </main>
-
-  <script src="/static/js/dashboard.js?v=25"></script>
+  <script src="/static/js/dashboard.js?v=26"></script>
 </body>
 </html>
