@@ -19,6 +19,8 @@ class FieldTracker:
         motion_threshold_mps: float = 0.08,
         position_alpha: float = 0.78,
         max_miss_frames: int = 6,
+        min_spawn_confidence: float = 0.48,
+        min_trail_step_m: float = 0.22,
     ):
         self.area_size_m = area_size_m
         self.gate_m = gate_m
@@ -27,6 +29,8 @@ class FieldTracker:
         self.motion_threshold_mps = motion_threshold_mps
         self.position_alpha = position_alpha
         self.max_miss_frames = max_miss_frames
+        self.min_spawn_confidence = min_spawn_confidence
+        self.min_trail_step_m = min_trail_step_m
         self._targets: dict[int, dict] = {}
         self._next_id = 1
         self.events: list[str] = []
@@ -71,6 +75,8 @@ class FieldTracker:
 
             alpha = self.position_alpha
             if best_id is None:
+                if float(det.get("confidence", 0)) < self.min_spawn_confidence:
+                    continue
                 tid = self._next_id
                 self._next_id += 1
                 was_moving = False
@@ -115,7 +121,9 @@ class FieldTracker:
                     tgt["heartbeat_waveform"] = det["heartbeat_waveform"]
                 tgt["confidence"] = max(tgt.get("confidence", 0), det.get("confidence", 0))
                 traj = list(tgt.get("trajectory", []))
-                traj.append((sx, sy))
+                step = float(np.hypot(sx - px, sy - py))
+                if not traj or step >= self.min_trail_step_m:
+                    traj.append((sx, sy))
                 tgt["trajectory"] = traj[-self.trail_len :]
                 assigned.add(tid)
                 matched.add(tid)

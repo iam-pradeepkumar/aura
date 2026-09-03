@@ -156,12 +156,13 @@ def process_hardware_window(
     cleaned = np.nan_to_num(srcc(prepared))
     m_energy = float(motion_info.get("energy", np.mean(motion_energy(cleaned))))
     strong_motion = motion and score >= motion_min
+    quality = _motion_signal_quality(cleaned, eff_threshold)
 
     vcsi = normalize_esp32_csi(vitals_csi if vitals_csi is not None and len(vitals_csi) >= 16 else csi)
     vprepared = preprocess_csi(vcsi)
     vcleaned = np.nan_to_num(srcc(vprepared))
 
-    if not strong_motion:
+    if not strong_motion or quality < 0.14 or m_energy < eff_threshold * 1.15:
         return SensingResult(
             timestamp_sec=timestamp_sec,
             motion_detected=False,
@@ -182,7 +183,7 @@ def process_hardware_window(
 
     cap = min(pipeline.max_targets, max_per_node, 2)
     count_limit = cap
-    loc_threshold = eff_threshold * 0.65
+    loc_threshold = eff_threshold * 1.05
     window_dets = localize_motion_sources(
         cleaned,
         pipeline.fs_hz,
@@ -221,7 +222,7 @@ def process_hardware_window(
     if not detections:
         return SensingResult(
             timestamp_sec=timestamp_sec,
-            motion_detected=True,
+            motion_detected=False,
             motion_energy=m_energy,
             target_count=0,
             targets=[],

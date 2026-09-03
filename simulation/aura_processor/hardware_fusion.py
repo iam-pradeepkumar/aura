@@ -122,21 +122,13 @@ def fuse_hardware_targets(
     for c in clusters:
         votes = len(c.get("_nodes", set()))
         conf = float(c.get("confidence", 0))
-        moving = bool(c.get("is_moving")) or float(c.get("velocity_mps", 0)) > 0.15
 
         if votes >= max(min_node_votes, 2) and conf >= min_confidence:
             kept.append(c)
-        elif votes >= 2 and conf >= min_confidence * 0.85:
-            kept.append(c)
-        elif votes >= 1 and moving and conf >= min_confidence * 1.15:
+        elif votes >= 2 and conf >= min_confidence * 0.92:
             kept.append(c)
 
-    if not kept:
-        fb = _centroid_fallback(clusters, area_size_m, area_margin_m, motion_active_nodes)
-        if fb is not None and float(fb.get("confidence", 0)) >= min_confidence:
-            kept = [fb]
-
-    kept.sort(key=lambda c: (c.get("node_votes", len(c.get("_nodes", set()))), c.get("confidence", 0)), reverse=True)
+    kept.sort(key=lambda c: (len(c.get("_nodes", set())), c.get("confidence", 0)), reverse=True)
     kept = kept[:max_people]
 
     out: list[dict] = []
@@ -144,7 +136,7 @@ def fuse_hardware_targets(
         c = dict(c)
         c.pop("_w", None)
         nodes = c.pop("_nodes", set())
-        votes = c.get("node_votes", len(nodes) if nodes else 1)
+        votes = len(nodes) if nodes else 0
         c["id"] = i + 1
         c["node_votes"] = votes
         out.append(c)
@@ -161,9 +153,11 @@ def consensus_target_count(
     if fused_len <= 0:
         return 0
     if not per_node_counts:
-        return min(fused_len, max_people)
+        return min(fused_len, max_people) if fused_len >= 2 else 0
     nz = [c for c in per_node_counts if c > 0]
+    if len(nz) < 2 and fused_len < 2:
+        return 0
     if not nz:
-        return min(fused_len, max_people)
+        return 0 if fused_len < 2 else min(fused_len, max_people)
     median_n = int(np.median(nz))
     return int(np.clip(min(fused_len, median_n, max_people), 0, max_people))

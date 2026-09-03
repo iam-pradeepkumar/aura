@@ -13,25 +13,28 @@ node_positions:
 tx_position: [5.0, -2.0]
 wifi_channel: 0
 
-# Live hardware — accuracy-first (empty area should read count 0)
+# Live hardware — empty area must read count 0 (raise motion_score_min if needed)
 hardware:
   min_packets: 12
   motion_packets: 24
   window_packets: 24
   vitals_window_packets: 48
   refresh_every: 1
-  motion_threshold_scale: 1.05
-  motion_score_min: 0.58        # ESP32 motion score floor (raise if false positives)
-  motion_nodes_required: 2      # nodes that must agree on motion before alert
-  fusion_gate_m: 2.2
+  motion_threshold_scale: 1.1
+  motion_score_min: 0.65        # raise to 0.72 if outdoor wind causes false motion
+  motion_nodes_required: 2      # both must see a localized target
+  confirm_frames: 5             # fused target must persist ~0.5s before showing
+  clear_frames: 2               # drop phantom trails after 2 empty frames
+  fusion_gate_m: 2.0
   area_margin_m: 0.35
-  min_node_votes: 2             # require 2-node agreement for a person
-  min_confidence: 0.42
+  min_node_votes: 2             # 2 different RX nodes must agree
+  min_confidence: 0.48
   max_per_node: 1
   max_people: 4
-  allow_sector_fallback: false  # no phantom XY from sector estimate
-  tracker_alpha: 0.72
-  tracker_miss_frames: 4
+  allow_sector_fallback: false
+  tracker_alpha: 0.68
+  tracker_miss_frames: 3
+  min_trail_step_m: 0.25        # ignore jitter trails under 25cm
   link_timeout_sec: 20.0
-  trail_length: 40
+  trail_length: 30
   expected_nodes: 4
