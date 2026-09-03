@@ -249,8 +249,8 @@ def process_hardware_window(
             det["heartbeat_waveform"] = vitals.get("heartbeat_waveform")
         det["source_node"] = node_id
         det["confidence"] = max(float(det.get("confidence", 0.4)), conf)
-        det["is_moving"] = motion or float(det.get("velocity_mps", 0)) > 0.12
-        if det.get("velocity_mps", 0) < 0.12 and motion:
+        det["is_moving"] = strong_motion or float(det.get("velocity_mps", 0)) > 0.12
+        if det.get("velocity_mps", 0) < 0.12 and strong_motion:
             det["velocity_mps"] = 0.2
 
     targets = pipeline.tracker.update(detections, timestamp_sec)
@@ -275,7 +275,7 @@ def process_hardware_window(
 
     return SensingResult(
         timestamp_sec=timestamp_sec,
-        motion_detected=motion or weak_motion or bool(detections),
+        motion_detected=strong_motion and bool(detections),
         motion_energy=m_energy,
         target_count=len(detections),
         targets=display_targets,

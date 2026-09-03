@@ -16,7 +16,7 @@ from .hardware_tracker import FieldTracker
 from .serialize import _downsample, target_to_dict
 from .wireless import DEFAULT_UDP_PORT, WirelessReceiver
 
-PROCESSOR_VERSION = "2026.09.03-37"
+PROCESSOR_VERSION = "2026.09.03-38"
 
 
 def load_field_config(path: str | None = None) -> dict:

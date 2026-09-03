@@ -155,6 +155,7 @@ def refine_fused_targets(
         return []
 
     rssi_xy = rssi_localize(rssi_by_node, node_positions, area_size_m, margin_m)
+    out: list[dict] = []
     for t in targets:
         t = dict(t)
         csi_xy = (float(t["x_m"]), float(t["y_m"]))
