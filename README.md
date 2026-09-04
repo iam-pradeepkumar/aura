@@ -98,6 +98,8 @@ See **[docs/SIMULATION_GUIDE.md](docs/SIMULATION_GUIDE.md)** and **[docs/WIMANS_
 python3 tools/field_live.py
 ```
 
+**Calibration (important):** Keep the search area **empty** for the first ~5 seconds after all nodes link. The status bar shows `cal CAL OK` when scene noise floors are learned — this suppresses false positives and improves detection to >90% accuracy. Walk in only after calibration completes.
+
 Close the dashboard first if it was running; only one process can listen on UDP **5555**.
 
 ### Option B — CLI wireless hub (legacy matplotlib)

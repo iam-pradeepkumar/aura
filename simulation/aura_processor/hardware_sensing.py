@@ -155,14 +155,16 @@ def process_hardware_window(
     prepared = preprocess_csi(csi)
     cleaned = np.nan_to_num(srcc(prepared))
     m_energy = float(motion_info.get("energy", np.mean(motion_energy(cleaned))))
-    strong_motion = motion and score >= motion_min * 0.92
+    strong_motion = motion and score >= motion_min * 0.88
     quality = _motion_signal_quality(cleaned, eff_threshold)
 
     vcsi = normalize_esp32_csi(vitals_csi if vitals_csi is not None and len(vitals_csi) >= 16 else csi)
     vprepared = preprocess_csi(vcsi)
     vcleaned = np.nan_to_num(srcc(vprepared))
 
-    if not strong_motion or quality < 0.07 or m_energy < eff_threshold * 0.55:
+    quality_gate = 0.06 if score >= motion_min * 1.05 else 0.07
+    energy_gate = eff_threshold * 0.48 if score >= motion_min * 1.0 else eff_threshold * 0.55
+    if not strong_motion or quality < quality_gate or m_energy < energy_gate:
         return SensingResult(
             timestamp_sec=timestamp_sec,
             motion_detected=False,
@@ -220,16 +222,19 @@ def process_hardware_window(
     conf = detection_confidence(detections, m_energy, eff_threshold)
 
     if not detections:
+        rb = float(vitals.get("respiration_bpm", 0) or 0)
+        hb = float(vitals.get("heartbeat_bpm", 0) or 0)
+        use_vitals = strong_motion and score >= motion_min * 0.98
         return SensingResult(
             timestamp_sec=timestamp_sec,
             motion_detected=strong_motion,
             motion_energy=m_energy,
             target_count=0,
             targets=[],
-            respiration_bpm=0.0,
-            heartbeat_bpm=0.0,
-            respiration_waveform=None,
-            heartbeat_waveform=None,
+            respiration_bpm=rb if use_vitals else 0.0,
+            heartbeat_bpm=hb if use_vitals else 0.0,
+            respiration_waveform=vitals.get("respiration_waveform") if use_vitals else None,
+            heartbeat_waveform=vitals.get("heartbeat_waveform") if use_vitals else None,
             delay_doppler_map=ddm,
             events=list(pipeline.tracker.events),
             confidence=conf,

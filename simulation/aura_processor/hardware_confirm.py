@@ -48,6 +48,15 @@ class OccupancyConfirmFilter:
         return out
 
     def _need_frames(self, qualified: list[dict]) -> int:
+        if not qualified:
+            return self.confirm_frames
+        max_votes = max(int(t.get("node_votes", 0)) for t in qualified)
+        max_conf = max(float(t.get("confidence", 0)) for t in qualified)
+        # High-confidence multinode detections confirm faster
+        if max_votes >= 3 and max_conf >= 0.52:
+            return max(2, self.confirm_frames - 1)
+        if max_votes >= 2 and max_conf >= 0.58 and not any(t.get("motion_consensus") for t in qualified):
+            return max(2, self.confirm_frames - 1)
         if any(t.get("motion_consensus") for t in qualified):
             return self.confirm_frames + self.consensus_extra_frames
         return self.confirm_frames

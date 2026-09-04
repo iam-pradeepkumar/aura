@@ -246,12 +246,18 @@ def main() -> None:
             nodes_body.set_text(f"Error:\n{str(d['error'])[:120]}")
             return []
 
+        cal_pct = int(float(d.get("calibration_progress", 0)) * 100)
+        cal_ok = d.get("calibration_ready", False)
+        conf_pct = int(float(d.get("sensing_confidence", 0)) * 100)
+
         linked = d.get("linked_nodes", d.get("active_nodes", 0))
         sensing = d.get("sensing_nodes", 0)
         expected = d.get("expected_nodes", expected_nodes)
         pkts = d.get("total_packets", 0)
         status_text.set_text(
             f"v{PROCESSOR_VERSION}  linked {linked}/{expected}  sensing {sensing}/{expected}  "
+            f"conf {conf_pct}%  "
+            f"{'CAL OK' if cal_ok else f'cal {cal_pct}%'}  "
             f"pkts {pkts}  {'MOTION' if d.get('motion_detected') else 'clear'}"
         )
 

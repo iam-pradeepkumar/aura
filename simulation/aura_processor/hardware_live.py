@@ -9,15 +9,22 @@ import numpy as np
 import yaml
 
 from . import AURAPipeline
+from .hardware_accuracy import (
+    SceneCalibrator,
+    estimate_sensing_confidence,
+    multinode_motion_verdict,
+    select_best_vitals,
+    vitals_snr,
+)
 from .hardware_confirm import OccupancyConfirmFilter
-from .hardware_fusion import fuse_hardware_targets, fuse_motion_consensus
+from .hardware_fusion import consensus_target_count, fuse_hardware_targets, fuse_motion_consensus
 from .hardware_localize import refine_fused_targets
 from .hardware_state import NodePipelineState
 from .hardware_tracker import FieldTracker
 from .serialize import _downsample, target_to_dict
 from .wireless import DEFAULT_UDP_PORT, WirelessReceiver
 
-PROCESSOR_VERSION = "2026.09.03-40"
+PROCESSOR_VERSION = "2026.09.04-42"
 
 
 def load_field_config(path: str | None = None) -> dict:
@@ -42,10 +49,18 @@ class LiveFieldEngine:
     _started: bool = field(default=False, init=False)
     _link_hold_until: dict[int, float] = field(default_factory=dict, init=False)
     _occupancy: OccupancyConfirmFilter = field(init=False)
+    _calibrator: SceneCalibrator = field(init=False)
 
     def __post_init__(self) -> None:
         hw = self.config.get("hardware", {})
         area = float(self.config.get("area_size_m", 10.0))
+        self.expected_ids = sorted(int(k) for k in self.config.get("node_positions", {}).keys()) or list(
+            range(1, int(hw.get("expected_nodes", 4)) + 1)
+        )
+        self._calibrator = SceneCalibrator(
+            frames=int(hw.get("calibration_frames", 25)),
+            expected_ids=self.expected_ids,
+        )
         self._occupancy = OccupancyConfirmFilter(
             confirm_frames=int(hw.get("confirm_frames", 3)),
             clear_frames=int(hw.get("clear_frames", 2)),
@@ -63,9 +78,6 @@ class LiveFieldEngine:
             max_miss_frames=int(hw.get("tracker_miss_frames", 4)),
             min_spawn_confidence=float(hw.get("min_confidence", 0.38)) * 0.9,
             min_trail_step_m=float(hw.get("min_trail_step_m", 0.18)),
-        )
-        self.expected_ids = sorted(int(k) for k in self.config.get("node_positions", {}).keys()) or list(
-            range(1, int(hw.get("expected_nodes", 4)) + 1)
         )
         self.node_pos = {int(k): tuple(v) for k, v in self.config.get("node_positions", {}).items()}
 
@@ -134,6 +146,7 @@ class LiveFieldEngine:
         motion_nodes_required = int(hw_cfg.get("motion_nodes_required", 2))
         motion_score_min = float(hw_cfg.get("motion_score_min", 0.58))
         node_scores: dict[int, float] = {}
+        node_vitals_pool: list[dict] = []
         strong_motion_nodes = 0
         motion = False
 
@@ -203,9 +216,16 @@ class LiveFieldEngine:
             st = self.node_states[nid]
             node_score = float(st.last_motion_score)
             node_scores[nid] = node_score
+            self._calibrator.update(nid, node_score)
+
+            thr = (
+                self._calibrator.motion_threshold(nid, motion_score_min)
+                if self._calibrator.ready
+                else motion_score_min
+            )
             has_localized = res.target_count > 0
-            node_has_motion = node_score >= motion_score_min * 0.88 or (
-                bool(res.motion_detected) and node_score >= motion_score_min * 0.75
+            node_has_motion = node_score >= thr * 0.90 or (
+                bool(res.motion_detected) and node_score >= thr * 0.78
             )
             if node_has_motion:
                 strong_motion_nodes += 1
@@ -240,6 +260,23 @@ class LiveFieldEngine:
                         else []
                     )
 
+            vel = 0.2 if node_motion and not has_localized else 0.0
+            if res.targets:
+                vel = max(float(getattr(t, "velocity_mps", 0)) for t in res.targets)
+            if res.respiration_bpm > 0 or res.heartbeat_bpm > 0 or (
+                res.respiration_waveform is not None and len(res.respiration_waveform)
+            ):
+                node_vitals_pool.append({
+                    "node_id": nid,
+                    "motion_score": node_score,
+                    "respiration_bpm": res.respiration_bpm,
+                    "heartbeat_bpm": res.heartbeat_bpm,
+                    "respiration_waveform": res.respiration_waveform,
+                    "heartbeat_waveform": res.heartbeat_waveform,
+                    "vitals_snr": vitals_snr(res.respiration_waveform),
+                    "velocity_mps": vel,
+                })
+
             node_status.append({
                 "id": nid,
                 "status": "active",
@@ -254,6 +291,21 @@ class LiveFieldEngine:
                 "buffer": buf_len,
             })
 
+        motion_verdict = multinode_motion_verdict(
+            node_scores,
+            motion_score_min,
+            min_nodes=motion_nodes_required,
+            calibrator=self._calibrator if self._calibrator.ready else None,
+        )
+        motion_active_nodes = max(motion_active_nodes, motion_verdict.get("active_nodes", 0))
+
+        node_thresholds = {
+            nid: self._calibrator.motion_threshold(nid, motion_score_min)
+            if self._calibrator.ready
+            else motion_score_min
+            for nid in node_scores
+        }
+
         fused = fuse_hardware_targets(
             all_target_dicts,
             area_size_m=area,
@@ -266,14 +318,16 @@ class LiveFieldEngine:
         )
 
         if not fused and bool(hw_cfg.get("allow_motion_consensus", True)):
-            fused = fuse_motion_consensus(
-                node_scores,
-                self.node_pos,
-                area,
-                margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
-                motion_min=motion_score_min,
-                min_nodes=int(hw_cfg.get("motion_nodes_required", 2)),
-            )
+            if motion_verdict.get("motion") or motion_active_nodes >= motion_nodes_required:
+                fused = fuse_motion_consensus(
+                    node_scores,
+                    self.node_pos,
+                    area,
+                    margin_m=float(hw_cfg.get("area_margin_m", 0.35)),
+                    motion_min=motion_score_min,
+                    min_nodes=int(hw_cfg.get("motion_nodes_required", 2)),
+                    node_thresholds=node_thresholds if self._calibrator.ready else None,
+                )
 
         fused = refine_fused_targets(
             fused,
@@ -288,12 +342,26 @@ class LiveFieldEngine:
             self.tracker.reset()
 
         tracked = self.tracker.update(confirmed, now) if confirmed else []
-        target_count = len(tracked) if confirmed else 0
+        fused_count = consensus_target_count(
+            per_node_counts, len(confirmed), max_people, motion_active_nodes=motion_active_nodes,
+        )
+        target_count = min(len(tracked), fused_count) if tracked else 0
+        if tracked and target_count < len(tracked):
+            tracked = sorted(tracked, key=lambda t: t.get("confidence", 0), reverse=True)[:target_count]
 
-        motion_confirmed = target_count > 0 and (
-            strong_motion_nodes >= motion_nodes_required or any(
-                t.get("node_votes", 0) >= 2 for t in tracked
-            )
+        motion_confirmed = motion_verdict["motion"] and target_count > 0
+
+        best_vitals = select_best_vitals(node_vitals_pool, static_only=True) if target_count > 0 else {}
+        if best_vitals:
+            resp_bpm = float(best_vitals.get("respiration_bpm", 0) or resp_bpm)
+            hr_bpm = float(best_vitals.get("heartbeat_bpm", 0) or hr_bpm)
+            if best_vitals.get("respiration_waveform"):
+                resp_wave = _downsample(best_vitals["respiration_waveform"])
+            if best_vitals.get("heartbeat_waveform"):
+                hr_wave = _downsample(best_vitals["heartbeat_waveform"])
+
+        sensing_conf = estimate_sensing_confidence(
+            target_count, motion_verdict, confirmed, self._calibrator.ready,
         )
 
         if target_count <= 0:
@@ -329,8 +397,11 @@ class LiveFieldEngine:
             "total_packets": packets,
             "motion_detected": motion_confirmed,
             "motion_energy": round(max_motion_energy, 5),
-            "motion_nodes": motion_active_nodes,
+            "motion_nodes": motion_verdict.get("active_nodes", motion_active_nodes),
             "target_count": target_count,
+            "sensing_confidence": round(sensing_conf, 2),
+            "calibration_ready": self._calibrator.ready,
+            "calibration_progress": round(self._calibrator.progress, 2),
             "respiration_bpm": round(resp_bpm, 1),
             "heartbeat_bpm": round(hr_bpm, 1),
             "respiration_waveform": resp_wave,

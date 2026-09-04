@@ -62,6 +62,7 @@ def fuse_motion_consensus(
     margin_m: float = 0.35,
     motion_min: float = 0.52,
     min_nodes: int = 2,
+    node_thresholds: dict[int, float] | None = None,
 ) -> list[dict]:
     """
     When 2+ nodes see strong CSI motion but localization returned nothing,
@@ -69,11 +70,13 @@ def fuse_motion_consensus(
     """
     from .hardware_localize import inward_reference
 
-    active = [
-        (nid, float(score))
-        for nid, score in node_scores.items()
-        if score >= motion_min * 0.88 and nid in node_positions
-    ]
+    active = []
+    for nid, score in node_scores.items():
+        if nid not in node_positions:
+            continue
+        thr = float(node_thresholds.get(nid, motion_min)) if node_thresholds else motion_min
+        if float(score) >= thr * 0.86:
+            active.append((nid, float(score)))
     if len(active) < min_nodes:
         return []
 
@@ -213,15 +216,13 @@ def consensus_target_count(
     max_people: int,
     motion_active_nodes: int = 0,
 ) -> int:
-    """Global count — only report people when fusion has confirmed targets."""
+    """Global count aligned with fused targets and per-node estimates."""
     if fused_len <= 0:
         return 0
     if not per_node_counts:
-        return min(fused_len, max_people) if fused_len >= 2 else 0
+        return min(fused_len, max_people)
     nz = [c for c in per_node_counts if c > 0]
-    if len(nz) < 2 and fused_len < 2:
-        return 0
     if not nz:
-        return 0 if fused_len < 2 else min(fused_len, max_people)
+        return min(fused_len, max_people)
     median_n = int(np.median(nz))
     return int(np.clip(min(fused_len, median_n, max_people), 0, max_people))
