@@ -1,0 +1,18 @@
+# Render Blueprint — AURA Dashboard
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: aura-dashboard
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/version
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+      - key: MPLBACKEND
+        value: Agg
+      - key: PYTHONUNBUFFERED
+        value: "1"

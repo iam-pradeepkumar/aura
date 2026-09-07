@@ -239,6 +239,7 @@ AURA/
 | [docs/WIRELESS_AND_SIMULATION.md](docs/WIRELESS_AND_SIMULATION.md) | Wireless + simulation reference |
 | [docs/WIMANS_TRAINING.md](docs/WIMANS_TRAINING.md) | Training on WiMANS data |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Accuracy & latency |
+| [docs/DEPLOY_RENDER.md](docs/DEPLOY_RENDER.md) | Host dashboard on Render (cloud) |
 
 ---
 

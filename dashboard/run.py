@@ -51,7 +51,8 @@ def main() -> None:
     args = parser.parse_args()
 
     port = args.port
-    if not port_available(port):
+    # PaaS (Render, etc.) assigns PORT — bind without pre-check
+    if not os.environ.get("PORT") and not port_available(port):
         alt = find_free_port(port + 1)
         print(f"ERROR: Port {port} is already in use.", file=sys.stderr)
         print(f"  Stop the other server, or run:  python dashboard/run.py --port {alt}", file=sys.stderr)

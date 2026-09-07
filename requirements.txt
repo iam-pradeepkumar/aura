@@ -1,0 +1,5 @@
+# AURA — Render / production install (dashboard + simulation processor)
+-r simulation/requirements.txt
+
+# Headless OpenCV for cloud (no GUI libs)
+opencv-python-headless>=4.9

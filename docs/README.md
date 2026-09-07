@@ -16,6 +16,7 @@ Complete documentation for **AURA — Adaptive Urban Rescue & Alert Array** — 
 | Train on WiMANS `.npy` files | [WIMANS_TRAINING.md](WIMANS_TRAINING.md) |
 | Flash ESP32 firmware | [../firmware/README.md](../firmware/README.md) |
 | Expected accuracy & range | [BENCHMARKS.md](BENCHMARKS.md) |
+| Host dashboard on Render | [DEPLOY_RENDER.md](DEPLOY_RENDER.md) |
 
 ---
 
