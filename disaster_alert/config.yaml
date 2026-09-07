@@ -1,0 +1,54 @@
+location:
+  latitude: 12.334258
+  longitude: 79.783187
+  name: "Vellore region, India"
+
+poll_interval_sec: 120
+history_points: 12
+
+thresholds:
+  earthquake:
+    min_magnitude: 4.0
+    max_distance_km: 300
+    rate_mag_per_hour: 0.5
+  weather:
+    wind_speed_mps: 17.0
+    wind_gust_mps: 22.0
+    precipitation_mm_h: 8.0
+    precip_rate_increase_mm_h: 4.0
+    storm_indicator_score: 0.65
+  wildfire:
+    min_frp: 15.0
+    max_distance_km: 80
+    hotspot_count_warning: 3
+  nws:
+    enabled: false
+
+api:
+  usgs_url: "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson"
+  open_meteo_url: "https://api.open-meteo.com/v1/forecast"
+  firms_map_key: ""
+
+notify:
+  lan_broadcast: true
+  multicast_port: 5558
+  lan_http_port: 8765
+  disaster_management:
+    enabled: true
+    webhook_url: ""
+    bearer_token: ""
+    timeout_sec: 12
+
+safe_zones:
+  - name: "Community Hall"
+    lat: 12.335
+    lon: 79.784
+    note: "Primary evacuation shelter"
+  - name: "Higher Ground — North"
+    lat: 12.338
+    lon: 79.782
+    note: "Flood / landslide refuge"
+
+alert_node:
+  role: "single_monitor"
+  description: "Only ONE ESP32 runs aura_alert_node; rescue uses aura_rx x4 + aura_tx"
