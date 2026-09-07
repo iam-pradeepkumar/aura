@@ -340,9 +340,6 @@ code, .mono {
   display: block;
   object-fit: cover;
 }
-.case-card .case-img-wrap svg {
-  preserve-aspect-ratio: xMidYMid slice;
-}
 .case-card:hover .case-img-wrap svg,
 .case-card:hover .case-img-wrap img { transform: scale(1.02); }
 .case-card .case-body { padding: 1.25rem; }
