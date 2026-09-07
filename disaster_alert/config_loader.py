@@ -60,4 +60,15 @@ def load_config(
     if bearer is not None:
         dm["bearer_token"] = bearer
 
+    loc = settings.get("location")
+    if isinstance(loc, dict) and loc.get("latitude") is not None and loc.get("longitude") is not None:
+        cfg["location"] = {
+            "latitude": float(loc["latitude"]),
+            "longitude": float(loc["longitude"]),
+            "name": str(loc.get("name") or cfg.get("location", {}).get("name", "Watch zone")),
+        }
+
+    if "live_api_polling" in settings:
+        cfg["live_api_polling"] = bool(settings["live_api_polling"])
+
     return cfg

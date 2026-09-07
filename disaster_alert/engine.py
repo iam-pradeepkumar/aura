@@ -20,6 +20,40 @@ logger = logging.getLogger(__name__)
 AlertListener = Callable[[DisasterAlert], None]
 
 
+def _is_network_error(exc: Exception) -> bool:
+    import errno
+    import socket
+
+    if isinstance(exc, (socket.gaierror, socket.timeout, TimeoutError)):
+        return True
+    if isinstance(exc, OSError) and getattr(exc, "errno", None) in {
+        errno.ENETUNREACH,
+        errno.EHOSTUNREACH,
+        errno.ECONNREFUSED,
+        -2,
+        -3,
+    }:
+        return True
+    msg = str(exc).lower()
+    return any(
+        token in msg
+        for token in (
+            "name resolution",
+            "temporary failure",
+            "network is unreachable",
+            "nodename nor servname",
+            "failed to establish a new connection",
+        )
+    )
+
+
+def _friendly_network_message() -> str:
+    return (
+        "No internet connection — USGS and Open-Meteo are unreachable. "
+        "Use DM Console → Simulate hazard for demos, or enable Live API polling when online."
+    )
+
+
 class DisasterAlertEngine:
     """Poll external APIs and emit alerts that exceed configured thresholds."""
 
@@ -59,9 +93,20 @@ class DisasterAlertEngine:
             except Exception:
                 logger.exception("Alert listener failed for %s", alert.id)
 
+    def update_runtime_config(self, config: dict[str, Any]) -> None:
+        with self._lock:
+            self._config = config
+
     def poll_once(self) -> list[DisasterAlert]:
         """Fetch all providers, evaluate thresholds, return new alerts."""
         cfg = self._config
+        if not cfg.get("live_api_polling", True):
+            with self._lock:
+                self._last_poll = datetime.now(timezone.utc)
+                self._last_alerts = []
+                self._errors = []
+            return []
+
         loc = cfg.get("location") or {}
         lat = float(loc.get("latitude", 0))
         lon = float(loc.get("longitude", 0))
@@ -92,7 +137,7 @@ class DisasterAlertEngine:
         except Exception as exc:
             msg = f"USGS poll failed: {exc}"
             logger.warning(msg)
-            errors.append(msg)
+            errors.append(msg if not _is_network_error(exc) else "USGS: offline (no internet)")
 
         # Open-Meteo weather
         wx_cfg = thresholds.get("weather") or {}
@@ -112,7 +157,7 @@ class DisasterAlertEngine:
         except Exception as exc:
             msg = f"Open-Meteo poll failed: {exc}"
             logger.warning(msg)
-            errors.append(msg)
+            errors.append(msg if not _is_network_error(exc) else "Open-Meteo: offline (no internet)")
 
         # NASA FIRMS wildfire (skipped when no API key)
         wf_cfg = thresholds.get("wildfire") or {}
@@ -182,16 +227,35 @@ class DisasterAlertEngine:
 
     def status(self) -> dict[str, Any]:
         errors = list(self._errors)
+        live_polling = bool(self._config.get("live_api_polling", True))
+        network_offline = live_polling and bool(errors) and all(
+            "offline" in e.lower() or "no internet" in e.lower() for e in errors
+        )
+        if network_offline:
+            errors = [_friendly_network_message()]
+
+        def _source_state(provider: str) -> str:
+            if not live_polling:
+                return "paused"
+            if any(provider in e for e in self._errors):
+                if network_offline or any("offline" in e for e in self._errors if provider in e):
+                    return "offline"
+                return "error"
+            return "ok"
+
         sources = {
-            "USGS": "error" if any("USGS" in e for e in errors) else "ok",
-            "Open-Meteo": "error" if any("Open-Meteo" in e for e in errors) else "ok",
+            "USGS": _source_state("USGS"),
+            "Open-Meteo": _source_state("Open-Meteo"),
             "FIRMS": "skipped"
             if not str((self._config.get("api") or {}).get("firms_map_key") or "")
-            else ("error" if any("FIRMS" in e for e in errors) else "ok"),
+            else _source_state("FIRMS"),
         }
         last_ts = self._last_poll.timestamp() if self._last_poll else None
+        degraded = bool(errors) and live_polling and not network_offline
         return {
-            "ok": not errors or self._last_poll is not None,
+            "ok": self._last_poll is not None and not degraded,
+            "network_offline": network_offline,
+            "live_api_polling": live_polling,
             "role": (self._config.get("alert_node") or {}).get("role", "single_monitor"),
             "last_poll": last_ts,
             "alert_count": len(self._last_alerts),

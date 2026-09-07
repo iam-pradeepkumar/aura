@@ -12,6 +12,11 @@
   const webhookToken = document.getElementById("webhook-token");
   const webhookStatus = document.getElementById("webhook-status");
   const simulateStatus = document.getElementById("simulate-status");
+  const locNameInput = document.getElementById("loc-name-input");
+  const locLatInput = document.getElementById("loc-lat-input");
+  const locLonInput = document.getElementById("loc-lon-input");
+  const livePolling = document.getElementById("live-polling");
+  const locSaveStatus = document.getElementById("loc-save-status");
 
   let zones = [];
   let selectedId = null;
@@ -181,6 +186,10 @@ ${zones.length ? `<p style="margin-top:0.75rem"><strong>Safe zones:</strong><br>
     webhookUrl.value = d.webhook_url || "";
     webhookStatus.textContent = d.webhook_url ? "Webhook configured ✓" : "Optional — LAN broadcast works without webhook";
     if (d.bearer_token_set) webhookToken.placeholder = "Token saved";
+    if (locNameInput) locNameInput.value = watchLocation.name || "";
+    if (locLatInput) locLatInput.value = watchLocation.latitude ?? "";
+    if (locLonInput) locLonInput.value = watchLocation.longitude ?? "";
+    if (livePolling) livePolling.checked = d.live_api_polling !== false;
     renderZones();
     dmStatus.textContent = watchLocation.name ? `📍 ${watchLocation.name}` : "DM LIVE";
   }
@@ -299,6 +308,33 @@ ${zones.length ? `<p style="margin-top:0.75rem"><strong>Safe zones:</strong><br>
     webhookStatus.textContent = "Webhook saved ✓";
     webhookStatus.className = "status-ok";
   };
+
+  document.getElementById("btn-save-location")?.addEventListener("click", async () => {
+    clearError();
+    const lat = parseFloat(locLatInput?.value);
+    const lon = parseFloat(locLonInput?.value);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+      locSaveStatus.textContent = "Enter valid coordinates.";
+      return;
+    }
+    await api("/api/alerts/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        location: { name: locNameInput?.value?.trim() || "Watch zone", latitude: lat, longitude: lon },
+        live_api_polling: livePolling?.checked ?? true,
+      }),
+    });
+    watchLocation = { name: locNameInput?.value?.trim(), latitude: lat, longitude: lon };
+    locSaveStatus.textContent = "Location saved ✓";
+    locSaveStatus.className = "status-ok";
+    dmStatus.textContent = `📍 ${watchLocation.name}`;
+    updatePreview();
+  });
+
+  livePolling?.addEventListener("change", async () => {
+    document.getElementById("btn-save-location")?.click();
+  });
 
   broadcastTitle.oninput = broadcastMessage.oninput = () => updatePreview();
 

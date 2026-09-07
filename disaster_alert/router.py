@@ -15,6 +15,7 @@ from disaster_alert.service import (
     get_engine,
     get_queue,
     list_public_alerts,
+    reload_engine_config,
 )
 
 router = APIRouter(prefix="/api/alerts", tags=["disaster-alerts"])
@@ -28,6 +29,8 @@ class SettingsBody(BaseModel):
     broadcast_title: str | None = None
     broadcast_message: str | None = None
     safe_zones: list[dict[str, Any]] | None = None
+    location: dict[str, Any] | None = None
+    live_api_polling: bool | None = None
 
 
 class TestBody(BaseModel):
@@ -136,6 +139,7 @@ async def get_settings():
         "broadcast_message": stored.get("broadcast_message", ""),
         "safe_zones": stored.get("safe_zones") or [],
         "location": cfg.get("location"),
+        "live_api_polling": bool(cfg.get("live_api_polling", True)),
     }
 
 
@@ -152,7 +156,12 @@ async def post_settings(body: SettingsBody):
         updates["broadcast_message"] = body.broadcast_message
     if body.safe_zones is not None:
         updates["safe_zones"] = body.safe_zones
+    if body.location is not None:
+        updates["location"] = body.location
+    if body.live_api_polling is not None:
+        updates["live_api_polling"] = body.live_api_polling
     saved = settings_store.save(updates)
+    reload_engine_config()
     await _broadcast_ws({"type": "settings_updated"})
     return {"saved": True, **{k: saved[k] for k in updates}}
 

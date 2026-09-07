@@ -109,6 +109,14 @@ def list_public_alerts() -> list[dict[str, Any]]:
     return [_effective_alert_payload(i) for i in get_queue().list_broadcast()]
 
 
+def reload_engine_config() -> dict[str, Any]:
+    """Reload merged config from disk into the running engine."""
+    cfg = load_config()
+    if _engine is not None:
+        _engine.update_runtime_config(cfg)
+    return cfg
+
+
 def create_engine(
     config: dict[str, Any] | None = None,
     *,

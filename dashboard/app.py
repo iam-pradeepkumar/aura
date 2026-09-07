@@ -288,26 +288,22 @@ def _process_simulation_files(
 
 @app.post("/api/simulation/demo")
 async def demo_simulation():
-    """Generate synthetic WiMANS-style sample data and run the pipeline."""
-    from dashboard.demo_simulation import generate_demo_triple
+    """Run pipeline on bundled WiMANS act_105_48 sample dataset."""
+    from dashboard.demo_simulation import copy_demo_triple
 
     session_id = str(uuid.uuid4())[:8]
     session_dir = UPLOAD_DIR / session_id
     try:
-        paths = generate_demo_triple(session_dir, stem="act_demo_1")
-        video_path = session_dir / f"video.mp4"
-        paths["video"].rename(video_path)
-        mat_path = paths["mat"]
-        npy_path = paths["npy"]
+        paths = copy_demo_triple(session_dir)
         return _process_simulation_files(
             session_id,
-            video_path,
-            mat_path,
-            npy_path,
-            "act_demo_1.mp4",
-            "act_demo_1.mat",
-            "act_demo_1.npy",
-            sample_rate=30.0,
+            paths["video"],
+            paths["mat"],
+            paths["npy"],
+            "act_105_48.mp4",
+            "act_105_48.mat",
+            "act_105_48.npy",
+            sample_rate=None,
         )
     except Exception as exc:
         import shutil

@@ -21,6 +21,8 @@ _DEFAULT_DM = {
         "Follow local authorities and avoid low-lying roads."
     ),
     "safe_zones": [],
+    "location": None,
+    "live_api_polling": True,
 }
 
 
@@ -52,13 +54,25 @@ def load(path: Path | None = None) -> dict[str, Any]:
     out["broadcast_message"] = str(data.get("broadcast_message") or out["broadcast_message"])
     if data.get("safe_zones"):
         out["safe_zones"] = data["safe_zones"]
+    if data.get("location"):
+        out["location"] = data["location"]
+    if "live_api_polling" in data:
+        out["live_api_polling"] = bool(data["live_api_polling"])
     return out
 
 
 def save(settings: dict[str, Any], path: Path | None = None) -> dict[str, Any]:
     settings_path = _settings_path(path)
     current = load(settings_path)
-    for key in ("webhook_url", "bearer_token", "broadcast_title", "broadcast_message", "safe_zones"):
+    for key in (
+        "webhook_url",
+        "bearer_token",
+        "broadcast_title",
+        "broadcast_message",
+        "safe_zones",
+        "location",
+        "live_api_polling",
+    ):
         if key in settings:
             current[key] = settings[key]
     with _lock:

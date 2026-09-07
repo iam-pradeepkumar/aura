@@ -424,6 +424,16 @@ code, .mono {
   margin-bottom: 1rem;
 }
 
+.info-banner {
+  padding: 0.75rem 1rem;
+  background: var(--postit);
+  border: 2px dashed var(--pencil);
+  border-radius: var(--wobbly-sm);
+  margin-bottom: 1rem;
+}
+
+.status-offline { color: var(--pen); font-weight: 700; }
+
 .pitch-cta {
   text-align: center; padding: 3rem 1.5rem;
   background: var(--white);
