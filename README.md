@@ -42,13 +42,22 @@ python dashboard/run.py
 python dashboard/run.py --port 8848
 ```
 
+| Page | URL | Purpose |
+|------|-----|---------|
+| **Home** | `/` | Product landing — problem, solution, how it works, setup |
+| **Simulation** | `/simulation` | WiMANS dataset replay (video + `.mat` + `.npy`) |
+| **Alerts** | `/alerts` | Live hazard feed (USGS, Open-Meteo) for your watch zone |
+| **DM Console** | `/manage` | Approve/reject alerts, set webhook URL |
+
 Open **http://127.0.0.1:8847** (or your chosen port).
 
-Upload WiMANS triple (`.mp4` + `.mat` + `.npy`) for CSI-only sensing synced to video playback.
+**Early warning** runs on the laptop dashboard (single alert monitor). Only **one** ESP32 may optionally run `aura_alert_node` for LAN broadcast — rescue nodes stay on `aura_rx`.
 
-Check version: `curl http://127.0.0.1:8847/api/version` → `processor_version: 2026.09.03-36`
+Configure watch coordinates in `disaster_alert/config.yaml` (default: Vellore region).
 
-**Live ESP32 hardware is not in the web dashboard** — use the local matplotlib tool instead (see below).
+Check version: `curl http://127.0.0.1:8847/api/version` → `processor_version: 2026.09.04-42`
+
+**Live ESP32 rescue sensing** uses the local matplotlib tool (not the web dashboard UDP listener):
 
 ---
 
@@ -81,14 +90,14 @@ See **[docs/SIMULATION_GUIDE.md](docs/SIMULATION_GUIDE.md)** and **[docs/WIMANS_
 
 | Item | Qty | Notes |
 |------|-----|-------|
-| ESP32-C6 (or ESP32 / ESP32-C3) | 5 | 1× TX + 4× RX recommended |
+| ESP32-C6 (or ESP32 / ESP32-C3) | 6 | 1× TX + 4× RX + **1× alert monitor** (optional) |
 | External 2.4 GHz antenna (U.FL) | 5 | Essential through rubble |
 | USB power banks (10,000 mAh+) | 5 | Field power |
 | Laptop | 1 | Python 3.10+, ESP-IDF v5.1+ for flashing |
 
 ### Field steps
 
-1. Flash **aura_tx** (1 board) and **aura_rx** (4 boards, unique `NODE_ID` each)
+1. Flash **aura_tx** (1 board), **aura_rx** (4 boards, unique `NODE_ID` each), and optionally **aura_alert_node** (**1 board only**)
 2. Edit `simulation/config.yaml` — set measured node XY positions
 3. Start laptop hotspot: **SSID `AURA_HUB`**, password **`aura2026`**, IP **`192.168.4.1`**
 4. Power TX, then all RX nodes — they join the hotspot and stream CSI via **UDP port 5555**
@@ -116,13 +125,18 @@ See **[docs/HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md)** for flashing, layout, a
 
 ```
 AURA/
-├── dashboard/                 # Web UI — WiMANS simulation only
-│   ├── app.py                 # FastAPI server (no live UDP)
+├── dashboard/                 # Web UI — landing, simulation, alerts, DM console
+│   ├── app.py                 # FastAPI server
 │   ├── run.py                 # python dashboard/run.py
-│   └── static/                # HTML / JS / CSS
+│   └── static/                # Hand-drawn HTML / JS / CSS
+├── disaster_alert/            # Early-warning engine (single-node monitor)
+│   ├── config.yaml            # Coordinates, thresholds, safe zones
+│   ├── engine.py              # USGS + Open-Meteo poller
+│   └── router.py              # /api/alerts/* + /ws/alerts
 ├── firmware/
 │   ├── aura_tx/               # WiFi probe transmitter (channel 6)
 │   ├── aura_rx/               # CSI receiver → UDP to laptop
+│   ├── aura_alert_node/       # Optional single hazard monitor ESP32
 │   └── common/aura_protocol.h # 18-byte frame header
 ├── simulation/
 │   ├── aura_processor/        # SRCC, Doppler, vitals, multitarget, wireless
@@ -132,7 +146,8 @@ AURA/
 │   ├── run_simulation.py      # CLI video-synced viewer
 │   └── config.yaml            # Node positions + hardware settings
 ├── tools/
-│   ├── field_live.py          # Local matplotlib live ESP32 sensing (recommended)
+│   ├── field_live.py          # Local hand-drawn matplotlib live ESP32 sensing
+│   ├── flash_alert_node.sh    # Flash the ONE alert monitor board
 │   ├── train_wimans.py        # Train count/localization model
 │   ├── wireless_hub.py        # Legacy CLI live hub
 │   ├── record_session.py      # UART recording (optional backup)

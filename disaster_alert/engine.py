@@ -168,11 +168,22 @@ class DisasterAlertEngine:
         return alert
 
     def status(self) -> dict[str, Any]:
+        errors = list(self._errors)
+        sources = {
+            "USGS": "error" if any("USGS" in e for e in errors) else "ok",
+            "Open-Meteo": "error" if any("Open-Meteo" in e for e in errors) else "ok",
+            "FIRMS": "skipped"
+            if not str((self._config.get("api") or {}).get("firms_map_key") or "")
+            else ("error" if any("FIRMS" in e for e in errors) else "ok"),
+        }
+        last_ts = self._last_poll.timestamp() if self._last_poll else None
         return {
+            "ok": not errors or self._last_poll is not None,
             "role": (self._config.get("alert_node") or {}).get("role", "single_monitor"),
-            "last_poll": self._last_poll.isoformat() if self._last_poll else None,
+            "last_poll": last_ts,
             "alert_count": len(self._last_alerts),
-            "errors": self._errors,
+            "errors": errors,
+            "sources": sources,
             "location": self._config.get("location"),
             "poll_interval_sec": self._config.get("poll_interval_sec", 120),
         }

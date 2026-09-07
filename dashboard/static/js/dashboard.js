@@ -5,21 +5,21 @@ let simSessionId = null;
 let simWs = null;
 let simFps = 30;
 
-const PERSON_COLORS = ["#8B5CF6", "#F472B6", "#FBBF24", "#34D399", "#60A5FA", "#FB923C", "#A78BFA", "#F43F5E"];
-const RESP_COLOR = "#34D399";
-const HR_COLOR = "#F472B6";
-const NODE_COLOR = "#8B5CF6";
+const PERSON_COLORS = ["#ff4d4d", "#2d5da1", "#f59e0b", "#15803d", "#7c3aed", "#ea580c"];
+const RESP_COLOR = "#15803d";
+const HR_COLOR = "#ff4d4d";
+const NODE_COLOR = "#2d5da1";
 
 const selectedPerson = { sim: null };
 const lastSensing = { sim: null };
 
 const plotLayout = {
   paper_bgcolor: "transparent",
-  plot_bgcolor: "#FFFDF5",
-  font: { color: "#64748B", size: 9, family: "Plus Jakarta Sans, system-ui, sans-serif" },
+  plot_bgcolor: "#fdfbf7",
+  font: { color: "#2d2d2d", size: 9, family: "Patrick Hand, cursive" },
   margin: { l: 36, r: 10, t: 10, b: 28 },
-  xaxis: { gridcolor: "#E2E8F0", zerolinecolor: "#CBD5E1", linecolor: "#1E293B", linewidth: 2 },
-  yaxis: { gridcolor: "#E2E8F0", zerolinecolor: "#CBD5E1", linecolor: "#1E293B", linewidth: 2 },
+  xaxis: { gridcolor: "#e5e0d8", zerolinecolor: "#2d2d2d", linecolor: "#2d2d2d", linewidth: 2 },
+  yaxis: { gridcolor: "#e5e0d8", zerolinecolor: "#2d2d2d", linecolor: "#2d2d2d", linewidth: 2 },
 };
 
 fetch("/api/config").then((r) => r.json()).then((c) => {

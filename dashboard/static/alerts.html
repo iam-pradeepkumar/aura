@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AURA — Alert Dashboard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Patrick+Hand&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=1" />
+</head>
+<body>
+  <nav class="site-nav">
+    <a href="/" class="site-logo">AURA ✎</a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/simulation">Simulation</a>
+      <a href="/alerts" class="active">Alerts</a>
+      <a href="/manage">DM Console</a>
+      <span id="status-badge" class="badge-sketch">connecting…</span>
+    </div>
+  </nav>
+
+  <section class="section">
+    <h1 class="section-title">Early warning feed</h1>
+    <p class="section-sub">Live hazard monitoring for <strong id="loc-name">—</strong> · <span id="loc-coords" class="mono">—</span></p>
+
+    <div class="grid-2">
+      <div class="card-sketch tape">
+        <h3>API sources</h3>
+        <ul id="source-list" style="padding-left:1.2rem; margin:0;"></ul>
+        <p id="last-poll" style="font-size:0.95rem; opacity:0.75; margin-top:1rem;">—</p>
+        <button id="btn-poll" class="btn-sketch" style="margin-top:0.75rem;">Poll now</button>
+      </div>
+      <div class="card-sketch postit">
+        <h3>Safe zones</h3>
+        <div id="safe-zones"></div>
+      </div>
+    </div>
+
+    <div class="card-sketch" style="margin-top:1.5rem;">
+      <h3>Active &amp; broadcast alerts <span id="alert-count" class="badge-sketch">0</span></h3>
+      <div id="alert-list"><p style="opacity:0.7;">Monitoring…</p></div>
+    </div>
+
+    <p style="margin-top:1.5rem; font-size:0.95rem;">
+      <strong>Single alert node:</strong> only one ESP32 runs hazard monitoring; rescue nodes stay on <code>aura_rx</code>.
+      DM approval happens in <a href="/manage">DM Console</a>.
+    </p>
+  </section>
+
+  <script src="/static/js/alerts.js?v=1"></script>
+</body>
+</html>

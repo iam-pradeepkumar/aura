@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AURA — Simulation Lab</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+  <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Patrick+Hand&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=1" />
+</head>
+<body class="sim-shell">
+  <nav class="site-nav">
+    <a href="/" class="site-logo">AURA ✎</a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/simulation" class="active">Simulation</a>
+      <a href="/alerts">Alerts</a>
+      <a href="/manage">DM Console</a>
+      <span id="processor-badge" class="badge-sketch">—</span>
+    </div>
+  </nav>
+
+  <main class="sim-main">
+    <div class="card-sketch sim-upload tape">
+      <h2 style="margin-top:0;">Dataset upload</h2>
+      <p style="opacity:0.8; font-size:1rem;">WiMANS triple: video + .mat + .npy</p>
+      <div class="upload-row">
+        <div class="upload-row-head"><span class="upload-row-num">1</span><span>Scene video .mp4</span></div>
+        <input type="file" id="sim-video" accept="video/*,.mp4" class="file-input" />
+        <span id="sim-video-name" class="mono" style="font-size:0.85rem;">—</span>
+      </div>
+      <div class="upload-row">
+        <div class="upload-row-head"><span class="upload-row-num">2</span><span>Raw CSI .mat</span></div>
+        <input type="file" id="sim-csi-mat" accept=".mat" class="file-input" />
+        <span id="sim-csi-mat-name" class="mono" style="font-size:0.85rem;">—</span>
+      </div>
+      <div class="upload-row">
+        <div class="upload-row-head"><span class="upload-row-num">3</span><span>Amplitude .npy</span></div>
+        <input type="file" id="sim-csi-npy" accept=".npy" class="file-input" />
+        <span id="sim-csi-npy-name" class="mono" style="font-size:0.85rem;">—</span>
+      </div>
+      <div class="upload-row">
+        <div class="upload-row-head"><span class="upload-row-num">·</span><span>Sample rate Hz</span></div>
+        <input type="number" id="sim-fs" placeholder="auto" class="input-sketch" step="0.1" />
+      </div>
+      <button id="btn-run-simulation" type="button" class="btn-sketch" style="width:100%; margin-top:1rem;">
+        <span class="btn-label">Run analysis</span>
+        <span class="btn-spinner hidden" id="sim-spinner"></span>
+      </button>
+      <p id="sim-status" style="margin-top:0.75rem; font-size:0.95rem;"></p>
+      <p style="margin-top:1.5rem; font-size:0.9rem; border-top:2px dashed var(--pencil); padding-top:0.75rem;">
+        Live hardware: <code>python3 tools/field_live.py</code>
+      </p>
+    </div>
+
+    <div class="card-sketch sim-video tilt-1" style="grid-column:span 2;">
+      <h2 style="margin-top:0;">Scene <span id="sim-time" class="badge-sketch">0.00s</span></h2>
+      <video id="sim-video-player" controls class="video-fit"></video>
+      <p id="sim-meta" class="mono" style="font-size:0.85rem; margin-top:0.5rem;"></p>
+    </div>
+
+    <div class="card-sketch" style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem;">
+      <div class="stat-mini"><span class="stat-label">Count</span><span id="sim-count" class="stat-value-sm">0</span></div>
+      <div class="stat-mini"><span class="stat-label">Motion</span><span id="sim-motion" class="stat-value-sm">—</span></div>
+      <div class="stat-mini"><span class="stat-label">Resp</span><span id="sim-resp" class="stat-value-sm">—</span></div>
+      <div class="stat-mini"><span class="stat-label">HR</span><span id="sim-hr" class="stat-value-sm">—</span></div>
+    </div>
+
+    <div class="card-sketch"><h3 style="margin-top:0;">Position map</h3><div id="sim-map" class="chart-fit"></div></div>
+    <div class="card-sketch postit"><h3 style="margin-top:0;">Targets</h3><div id="sim-targets" class="targets-fit" style="font-size:0.9rem;"></div></div>
+    <div class="card-sketch"><h3 style="margin-top:0;">Respiration</h3><div id="sim-resp-chart" class="chart-fit"></div></div>
+    <div class="card-sketch"><h3 style="margin-top:0;">Heartbeat</h3><div id="sim-hr-chart" class="chart-fit"></div></div>
+
+    <div class="card-sketch sim-events" style="grid-column:1/-1;">
+      <h3 style="margin-top:0; display:inline;">Events</h3>
+      <ul id="sim-events" style="list-style:none; padding:0; margin:0.5rem 0 0; display:flex; flex-wrap:wrap; gap:0.5rem 1rem; font-size:0.9rem;"></ul>
+    </div>
+  </main>
+
+  <script src="/static/js/dashboard.js?v=28"></script>
+</body>
+</html>

@@ -17,11 +17,15 @@ from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
 SIM_DIR = ROOT / "simulation"
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(SIM_DIR))
 
 from aura_processor import AURAPipeline, load_csi_mat, load_csi_npy, merge_csi_mat_npy  # noqa: E402
 from aura_processor.multitarget import estimate_count_from_amplitude, trim_csi_to_video  # noqa: E402
 from aura_processor.serialize import result_to_dict  # noqa: E402
+
+from disaster_alert.router import router as alerts_router, ws_router as alerts_ws_router  # noqa: E402
+from disaster_alert.service import create_engine  # noqa: E402
 
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -29,15 +33,48 @@ UPLOAD_DIR = Path(__file__).resolve().parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
+async def _alert_poll_loop() -> None:
+    """Background hazard API polling (laptop engine — single alert monitor)."""
+    from disaster_alert.service import get_engine
+
+    interval = 120.0
+    try:
+        interval = float(get_engine().config.get("poll_interval_sec", 120))
+    except Exception:
+        pass
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            engine = get_engine()
+            await asyncio.to_thread(engine.poll_once)
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def _app_lifespan(app: FastAPI):
+    create_engine()
+    poll_task = asyncio.create_task(_alert_poll_loop())
+    # Initial poll so /alerts has live source status immediately
+    try:
+        from disaster_alert.service import get_engine
+        await asyncio.to_thread(get_engine().poll_once)
+    except Exception:
+        pass
     yield
+    poll_task.cancel()
+    try:
+        await poll_task
+    except asyncio.CancelledError:
+        pass
 
 
-app = FastAPI(title="AURA Dashboard", version="2.0.0", lifespan=_app_lifespan)
+app = FastAPI(title="AURA", version="3.0.0", lifespan=_app_lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.include_router(alerts_router)
+app.include_router(alerts_ws_router)
 
-PROCESSOR_VERSION = "2026.09.04-41"
+PROCESSOR_VERSION = "2026.09.04-42"
 
 
 def _wimans_label_from_uploads(video_name: str, mat_name: str, npy_name: str) -> str:
@@ -108,8 +145,28 @@ def align_results(results, video_duration_sec: float, n_frames: int) -> list[dic
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
-    return (STATIC_DIR / "index.html").read_text()
+async def landing():
+    return (STATIC_DIR / "landing.html").read_text()
+
+
+@app.get("/simulation", response_class=HTMLResponse)
+async def simulation_page():
+    return (STATIC_DIR / "simulation.html").read_text()
+
+
+@app.get("/alerts", response_class=HTMLResponse)
+async def alerts_page():
+    return (STATIC_DIR / "alerts.html").read_text()
+
+
+@app.get("/manage", response_class=HTMLResponse)
+async def manage_page():
+    return (STATIC_DIR / "manage.html").read_text()
+
+
+@app.get("/early-warning", response_class=HTMLResponse)
+async def early_warning_redirect():
+    return (STATIC_DIR / "alerts.html").read_text()
 
 
 @app.get("/api/version")
@@ -125,6 +182,7 @@ async def get_config():
         "node_positions": cfg.get("node_positions", {}),
         "processor_version": PROCESSOR_VERSION,
         "live_hardware": "python3 tools/field_live.py",
+        "alert_node": "single ESP32 — tools/flash_alert_node.sh",
     }
 
 

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AURA — DM Console</title>
+  <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Patrick+Hand&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=1" />
+</head>
+<body>
+  <nav class="site-nav">
+    <a href="/" class="site-logo">AURA ✎</a>
+    <div class="nav-links">
+      <a href="/">Home</a>
+      <a href="/simulation">Simulation</a>
+      <a href="/alerts">Alerts</a>
+      <a href="/manage" class="active">DM Console</a>
+    </div>
+  </nav>
+
+  <section class="section">
+    <h1 class="section-title">Disaster management console</h1>
+    <p class="section-sub">Review machine-detected hazards → approve public alert → webhook notifies your team.</p>
+
+    <div class="card-sketch tape" style="margin-bottom:1.5rem;">
+      <h3>Alert webhook URL</h3>
+      <p style="font-size:1rem; opacity:0.85;">When you <strong>approve</strong> an alert, AURA POSTs JSON to this URL.</p>
+      <label class="field-label" for="webhook-url" style="display:block; margin:0.75rem 0 0.25rem; font-weight:700;">Webhook URL</label>
+      <input id="webhook-url" class="input-sketch" type="url" placeholder="https://hooks.example.com/aura-alerts" />
+      <label for="webhook-token" style="display:block; margin:0.75rem 0 0.25rem; font-weight:700;">Bearer token (optional)</label>
+      <input id="webhook-token" class="input-sketch" type="password" placeholder="Optional" />
+      <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:1rem; align-items:center;">
+        <button id="btn-save-webhook" class="btn-sketch">Save webhook</button>
+        <button id="btn-test" class="btn-sketch secondary">Send test alert</button>
+        <span id="webhook-status" style="font-size:0.95rem;"></span>
+      </div>
+    </div>
+
+    <div class="card-sketch postit">
+      <h3>Pending approval <span id="pending-count" class="badge-sketch">0</span></h3>
+      <div id="pending-list"><p style="opacity:0.7;">No pending alerts.</p></div>
+    </div>
+  </section>
+
+  <script src="/static/js/manage.js?v=1"></script>
+</body>
+</html>

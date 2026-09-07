@@ -30,18 +30,18 @@ sys.path.insert(0, str(REPO_ROOT / "simulation"))
 from aura_processor.hardware_live import LiveFieldEngine, load_field_config, PROCESSOR_VERSION
 from aura_processor.wireless import DEFAULT_UDP_PORT
 
-# Playful Geometric palette
-BG = "#FFFDF5"
-FG = "#1E293B"
-MUTED = "#64748B"
-BORDER = "#1E293B"
-ACCENT = "#8B5CF6"
-SECONDARY = "#F472B6"
-TERTIARY = "#FBBF24"
-QUAT = "#34D399"
-PANEL = "#FFFFFF"
-GRID = "#E2E8F0"
-PERSON_COLORS = [SECONDARY, QUAT, ACCENT, TERTIARY, "#60A5FA", "#FB923C"]
+# Hand-Drawn sketch palette
+BG = "#fdfbf7"
+FG = "#2d2d2d"
+MUTED = "#e5e0d8"
+BORDER = "#2d2d2d"
+ACCENT = "#ff4d4d"
+SECONDARY = "#2d5da1"
+TERTIARY = "#fff9c4"
+QUAT = "#15803d"
+PANEL = "#ffffff"
+GRID = "#e5e0d8"
+PERSON_COLORS = [ACCENT, SECONDARY, "#f59e0b", QUAT, "#7c3aed", "#ea580c"]
 
 
 def _panel_ax(ax, title: str = "") -> None:
@@ -101,9 +101,15 @@ def main() -> None:
 
     plt.rcParams.update({
         "font.family": "sans-serif",
-        "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica"],
+        "font.sans-serif": ["Patrick Hand", "Kalam", "Comic Sans MS", "DejaVu Sans"],
         "figure.facecolor": BG,
         "axes.facecolor": PANEL,
+        "axes.edgecolor": BORDER,
+        "axes.linewidth": 2,
+        "text.color": FG,
+        "axes.labelcolor": FG,
+        "xtick.color": FG,
+        "ytick.color": FG,
     })
 
     cfg = load_field_config(_resolve_config(args.config))
@@ -154,9 +160,19 @@ def main() -> None:
     except Exception:
         pass
 
-    fig.patches.append(mpatches.Circle(
-        (0.04, 0.92), 0.035, transform=fig.transFigure,
-        facecolor=TERTIARY, edgecolor=BORDER, linewidth=2, zorder=0, alpha=0.45,
+    # Paper grain dots (notebook texture)
+    fig.patches.append(mpatches.Rectangle(
+        (0, 0), 1, 1, transform=fig.transFigure, facecolor=BG, zorder=-2,
+    ))
+    fig.patches.append(mpatches.FancyBboxPatch(
+        (0.02, 0.02), 0.96, 0.96, transform=fig.transFigure,
+        boxstyle="round,pad=0.02,rounding_size=0.04",
+        facecolor="none", edgecolor=BORDER, linewidth=2, linestyle=(0, (8, 5)), zorder=-1, alpha=0.35,
+    ))
+    fig.patches.append(mpatches.FancyBboxPatch(
+        (0.01, 0.88), 0.14, 0.08, transform=fig.transFigure,
+        boxstyle="round,pad=0.01,rounding_size=0.02",
+        facecolor=TERTIARY, edgecolor=BORDER, linewidth=2, zorder=0, alpha=0.85,
     ))
 
     gs = fig.add_gridspec(
@@ -169,8 +185,8 @@ def main() -> None:
 
     ax_title = fig.add_subplot(gs[0, :])
     ax_title.axis("off")
-    ax_title.text(0.0, 0.55, "AURA Field Sensing", fontsize=18, fontweight="bold", color=FG, va="center")
-    ax_title.text(0.0, 0.05, "Live ESP32 · local matplotlib", fontsize=9, color=MUTED, va="center")
+    ax_title.text(0.0, 0.55, "AURA Field Sensing", fontsize=18, fontweight="bold", color=FG, va="center", style="italic")
+    ax_title.text(0.0, 0.05, "✎ hand-drawn live rescue view", fontsize=9, color=FG, va="center", alpha=0.7)
     status_text = ax_title.text(
         1.0, 0.5, "Starting…", fontsize=9, color=MUTED, va="center", ha="right", family="monospace",
     )

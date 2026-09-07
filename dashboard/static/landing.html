@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AURA — Adaptive Urban Rescue Array</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+  <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Patrick+Hand&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=1" />
+</head>
+<body>
+  <nav class="site-nav">
+    <a href="/" class="site-logo">AURA ✎</a>
+    <div class="nav-links">
+      <a href="/#problem">Problem</a>
+      <a href="/#solution">Solution</a>
+      <a href="/#how">How it works</a>
+      <a href="/simulation">Simulation</a>
+      <a href="/alerts">Alerts</a>
+      <a href="/manage">DM Console</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <span class="badge-sketch">Offline · ESP32 · WiFi CSI</span>
+    <h1>Find survivors <span class="scribble">before</span> it's too late</h1>
+    <p style="font-size:1.25rem; max-width:36rem; margin:0 auto 2rem;">
+      AURA warns communities using live hazard APIs on <strong>one alert node</strong>,
+      then switches to multinode rescue sensing when disaster strikes.
+    </p>
+    <div style="display:flex; flex-wrap:wrap; gap:1rem; justify-content:center;">
+      <a href="/simulation" class="btn-sketch">Try simulation →</a>
+      <a href="/alerts" class="btn-sketch secondary">Alert dashboard</a>
+      <a href="/manage" class="btn-sketch pen">DM console</a>
+    </div>
+  </header>
+
+  <section id="problem" class="section">
+    <h2 class="section-title">The problem</h2>
+    <p class="section-sub">When buildings fall and networks die, every minute counts.</p>
+    <div class="grid-2">
+      <div class="card-sketch tape tilt-1">
+        <h3>No early warning</h3>
+        <p>Communities often lack affordable, local systems that turn earthquake, storm, and flood data into actionable evacuations.</p>
+      </div>
+      <div class="card-sketch postit tilt-2">
+        <h3>Rescue is blind</h3>
+        <p>After collapse, USAR teams search huge rubble zones without knowing if anyone is alive inside a marked area.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="solution" class="section">
+    <h2 class="section-title">Our solution</h2>
+    <p class="section-sub">One alert node + four rescue nodes + your laptop. No internet router required for rescue.</p>
+    <div class="grid-3">
+      <div class="card-sketch">
+        <h3>⚠ Early warning</h3>
+        <p><strong>1 ESP32 alert node</strong> on public WiFi polls USGS &amp; Open-Meteo. DM team approves alerts → webhook + nearby WiFi page with safe zones.</p>
+      </div>
+      <div class="card-sketch postit">
+        <h3>📡 Rescue sensing</h3>
+        <p><strong>4 RX + 1 TX</strong> join <code>AURA_HUB</code> after outage. Motion, count, position, vitals — fused on your laptop.</p>
+      </div>
+      <div class="card-sketch">
+        <h3>🖥 Dashboard</h3>
+        <p>Simulation replay, live alert feed, and disaster-management console — all in one hand-drawn web app.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="how" class="section">
+    <h2 class="section-title">How it works</h2>
+    <ol class="steps" style="max-width:40rem;">
+      <li><strong>Monitor</strong> — Alert node on community WiFi checks hazard APIs every 2 min.</li>
+      <li><strong>Verify</strong> — DM console reviews pending alerts; approve or reject.</li>
+      <li><strong>Warn</strong> — Approved alert → webhook to your team + LAN page for nearby phones.</li>
+      <li><strong>Failover</strong> — Network lost → alert node + rescue nodes join <code>AURA_HUB</code>.</li>
+      <li><strong>Rescue</strong> — <code>field_live.py</code> shows count, map, vitals in real time.</li>
+    </ol>
+  </section>
+
+  <section id="setup" class="section">
+    <h2 class="section-title">Hardware setup</h2>
+    <div class="grid-2">
+      <div class="card-sketch">
+        <h3>Flash firmware</h3>
+        <pre style="white-space:pre-wrap; font-size:0.95rem; background:var(--muted); padding:1rem; border-radius:8px; border:2px dashed var(--pencil);">
+# TX (1 board)
+./tools/flash_tx.sh
+
+# Rescue RX (4 boards, IDs 1–4)
+./tools/flash_rx.sh 1
+./tools/flash_rx.sh 2
+./tools/flash_rx.sh 3
+./tools/flash_rx.sh 4
+
+# Alert monitor (1 board ONLY)
+./tools/flash_alert_node.sh
+        </pre>
+      </div>
+      <div class="card-sketch postit">
+        <h3>Field rescue</h3>
+        <pre style="white-space:pre-wrap; font-size:0.95rem; background:var(--white); padding:1rem; border-radius:8px; border:2px dashed var(--pencil);">
+# Laptop hotspot
+SSID: AURA_HUB  pass: aura2026
+
+# Live sensing (close web dashboard first)
+python3 tools/field_live.py
+        </pre>
+        <p style="margin-top:0.75rem;">Calibrate empty area ~5 s → <strong>CAL OK</strong> → walk in to test.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="text-align:center;">
+    <h2 class="section-title">Ready to explore?</h2>
+    <a href="/simulation" class="btn-sketch" style="font-size:1.35rem;">Open simulation lab →</a>
+  </section>
+
+  <footer class="footer-sketch">
+    <p>AURA · Adaptive Urban Rescue Array · Research / demonstration only</p>
+    <p style="font-size:0.95rem; opacity:0.8;">Processor v2026.09.04-42 · Not a certified life-detection device</p>
+  </footer>
+</body>
+</html>

@@ -58,6 +58,10 @@ def main() -> None:
         sys.exit(1)
 
     print(f"AURA Dashboard → http://127.0.0.1:{port}")
+    print(f"  Home:       http://127.0.0.1:{port}/")
+    print(f"  Simulation: http://127.0.0.1:{port}/simulation")
+    print(f"  Alerts:     http://127.0.0.1:{port}/alerts")
+    print(f"  DM Console: http://127.0.0.1:{port}/manage")
     uvicorn.run(
         "dashboard.app:app",
         host=args.host,
