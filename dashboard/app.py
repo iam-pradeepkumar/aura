@@ -191,6 +191,130 @@ async def favicon():
     return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
 
 
+def _process_simulation_files(
+    session_id: str,
+    video_path: Path,
+    mat_path: Path,
+    npy_path: Path,
+    video_name: str,
+    mat_name: str,
+    npy_name: str,
+    sample_rate: float | None = None,
+) -> dict:
+    """Shared pipeline for upload and demo sessions."""
+    import cv2
+
+    mat_data = load_csi_mat(mat_path, sample_rate_hz=sample_rate)
+    npy_data = load_csi_npy(npy_path, sample_rate_hz=sample_rate)
+    data = merge_csi_mat_npy(mat_data, npy_data, sample_rate_hz=sample_rate)
+    load_info = data.get("load_info", {})
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise ValueError("Cannot open video file")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+    duration = n_frames / fps
+    cap.release()
+
+    csi, timestamps_ms, fs_hz = trim_csi_to_video(data["csi"], data["timestamps_ms"], duration)
+    if sample_rate:
+        fs_hz = float(sample_rate)
+    elif data.get("sample_rate_hz", 0) > 25:
+        fs_hz = float(data["sample_rate_hz"])
+
+    amp_count = estimate_count_from_amplitude(
+        data.get("npy_amplitude", npy_data["csi"]),
+        motion_threshold=pipeline_cfg.get("motion_threshold", 0.02),
+        max_people=int(pipeline_cfg.get("max_people", 8)),
+    )
+
+    pipe = build_pipeline(fs_hz=fs_hz)
+    label_stem = _wimans_label_from_uploads(video_name, mat_name, npy_name)
+    results = pipe.process_session(
+        csi, timestamps_ms, video_duration_sec=duration, video_path=str(video_path),
+        amplitude_count=amp_count if amp_count > 0 else None,
+        wimans_amp=data.get("npy_amplitude", npy_data["csi"]),
+        wimans_label=label_stem,
+    )
+    aligned = align_results(results, duration, n_frames)
+    assessment = pipe.session_assessment or {}
+    events = [e for e in pipe.tracker.events if _event_in_duration(e, duration)]
+
+    warnings = list(assessment.get("warnings", []))
+    cfg = load_config()
+    session = SimulationSession(
+        session_id=session_id,
+        video_path=video_path,
+        csi_mat_path=mat_path,
+        csi_npy_path=npy_path,
+        fps=fps,
+        duration_sec=duration,
+        n_frames=n_frames,
+        sample_rate_hz=fs_hz,
+        frames=aligned,
+        events=events,
+        node_positions=cfg.get("node_positions", {}),
+        area_size_m=cfg.get("area_size_m", 10.0),
+    )
+    sessions[session_id] = session
+
+    preview = aligned[len(aligned) // 2] if aligned else {}
+    return {
+        "session_id": session_id,
+        "processor_version": PROCESSOR_VERSION,
+        "mode": "csi-only",
+        "demo": label_stem.startswith("act_demo"),
+        "fps": fps,
+        "duration_sec": round(duration, 3),
+        "n_frames": n_frames,
+        "csi_frames": len(csi),
+        "subcarriers": int(csi.shape[1]),
+        "sample_rate_hz": round(fs_hz, 2),
+        "wimans_sensing": bool(getattr(pipe, "_wimans_meta", {})),
+        "wimans_count": getattr(pipe, "_wimans_meta", {}).get("count"),
+        "target_count": preview.get("target_count", 0),
+        "csi_person_estimate": pipe.estimated_person_count,
+        "sync_score": assessment.get("sync_score", 1.0),
+        "confidence": assessment.get("confidence", preview.get("confidence", 0)),
+        "warnings": warnings,
+        "targets": preview.get("targets", []),
+        "motion_detected": preview.get("motion_detected", False),
+        "respiration_bpm": preview.get("respiration_bpm", 0),
+        "heartbeat_bpm": preview.get("heartbeat_bpm", 0),
+        "events": session.events,
+    }
+
+
+@app.post("/api/simulation/demo")
+async def demo_simulation():
+    """Generate synthetic WiMANS-style sample data and run the pipeline."""
+    from dashboard.demo_simulation import generate_demo_triple
+
+    session_id = str(uuid.uuid4())[:8]
+    session_dir = UPLOAD_DIR / session_id
+    try:
+        paths = generate_demo_triple(session_dir, stem="act_demo_1")
+        video_path = session_dir / f"video.mp4"
+        paths["video"].rename(video_path)
+        mat_path = paths["mat"]
+        npy_path = paths["npy"]
+        return _process_simulation_files(
+            session_id,
+            video_path,
+            mat_path,
+            npy_path,
+            "act_demo_1.mp4",
+            "act_demo_1.mat",
+            "act_demo_1.npy",
+            sample_rate=30.0,
+        )
+    except Exception as exc:
+        import shutil
+        shutil.rmtree(session_dir, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/simulation/upload")
 async def upload_simulation(
     video: UploadFile = File(...),
@@ -229,124 +353,19 @@ async def upload_simulation(
                     "Re-select the file and try again."
                 )
 
-        mat_data = load_csi_mat(mat_path, sample_rate_hz=sample_rate)
-        npy_data = load_csi_npy(npy_path, sample_rate_hz=sample_rate)
-        data = merge_csi_mat_npy(mat_data, npy_data, sample_rate_hz=sample_rate)
-        load_info = data.get("load_info", {})
-
-        cap = cv2.VideoCapture(str(video_path))
-        if not cap.isOpened():
-            raise ValueError("Cannot open video file")
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
-        duration = n_frames / fps
-        cap.release()
-
-        csi, timestamps_ms, fs_hz = trim_csi_to_video(
-            data["csi"], data["timestamps_ms"], duration
+        return _process_simulation_files(
+            session_id,
+            video_path,
+            mat_path,
+            npy_path,
+            video.filename or "",
+            csi_mat.filename or "",
+            csi_npy.filename or "",
+            sample_rate=sample_rate,
         )
-        if sample_rate:
-            fs_hz = float(sample_rate)
-        elif data.get("sample_rate_hz", 0) > 25:
-            fs_hz = float(data["sample_rate_hz"])
-
-        amp_count = estimate_count_from_amplitude(
-            data.get("npy_amplitude", npy_data["csi"]),
-            motion_threshold=pipeline_cfg.get("motion_threshold", 0.02),
-            max_people=int(pipeline_cfg.get("max_people", 8)),
-        )
-
-        pipe = build_pipeline(fs_hz=fs_hz)
-        label_stem = _wimans_label_from_uploads(
-            video.filename or "", csi_mat.filename or "", csi_npy.filename or ""
-        )
-        results = pipe.process_session(
-            csi, timestamps_ms, video_duration_sec=duration, video_path=str(video_path),
-            amplitude_count=amp_count if amp_count > 0 else None,
-            wimans_amp=data.get("npy_amplitude", npy_data["csi"]),
-            wimans_label=label_stem,
-        )
-        aligned = align_results(results, duration, n_frames)
-        assessment = pipe.session_assessment or {}
-        events = [e for e in pipe.tracker.events if _event_in_duration(e, duration)]
-
-        warnings = list(assessment.get("warnings", []))
-        v_stem = Path(video.filename or "").stem.lower()
-        m_stem = Path(csi_mat.filename or "").stem.lower()
-        n_stem = Path(csi_npy.filename or "").stem.lower()
-        if v_stem and m_stem and n_stem:
-            common = max(
-                len(set(v_stem.split("_")) & set(m_stem.split("_"))),
-                len(set(v_stem.split("_")) & set(n_stem.split("_"))),
-                len(set(m_stem.split("_")) & set(n_stem.split("_"))),
-            )
-            if common == 0 and v_stem != m_stem and m_stem != n_stem:
-                warnings.append("Filenames may be from different sessions — verify video, .mat, and .npy match.")
     except Exception as exc:
         shutil.rmtree(session_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    cfg = load_config()
-    session = SimulationSession(
-        session_id=session_id,
-        video_path=video_path,
-        csi_mat_path=mat_path,
-        csi_npy_path=npy_path,
-        fps=fps,
-        duration_sec=duration,
-        n_frames=n_frames,
-        sample_rate_hz=fs_hz,
-        frames=aligned,
-        events=events,
-        node_positions=cfg.get("node_positions", {}),
-        area_size_m=cfg.get("area_size_m", 10.0),
-    )
-    sessions[session_id] = session
-
-    preview = aligned[len(aligned) // 2] if aligned else {}
-    effective_count = preview.get("target_count", 0)
-    return {
-        "session_id": session_id,
-        "processor_version": PROCESSOR_VERSION,
-        "mode": "csi-only",
-        "fps": fps,
-        "duration_sec": round(duration, 3),
-        "n_frames": n_frames,
-        "csi_frames": len(csi),
-        "subcarriers": int(csi.shape[1]),
-        "sample_rate_hz": round(fs_hz, 2),
-        "wimans_sensing": bool(getattr(pipe, "_wimans_meta", {})),
-        "wimans_count": getattr(pipe, "_wimans_meta", {}).get("count"),
-        "wimans_source": getattr(pipe, "_wimans_meta", {}).get("source"),
-        "wimans_activities": getattr(pipe, "_wimans_meta", {}).get("activities", []),
-        "target_count": effective_count,
-        "csi_person_estimate": pipe.estimated_person_count,
-        "csi_fingerprint": assessment.get("csi_fingerprint", ""),
-        "sync_score": assessment.get("sync_score", 1.0),
-        "confidence": assessment.get("confidence", preview.get("confidence", 0)),
-        "reliable": assessment.get("reliable", True),
-        "warnings": warnings,
-        "csi_load": {
-            "format": "mat+npy",
-            "source_field": load_info.get("source_field", ""),
-            "input_shape": list(load_info.get("input_shape", [])),
-            "frames": load_info.get("fused_frames", len(csi)),
-            "subcarriers": load_info.get("fused_subcarriers", int(csi.shape[1])),
-            "has_phase": load_info.get("has_phase", True),
-            "merged_with_npy": load_info.get("merged_with_npy", True),
-            "npy_only_fusion": load_info.get("npy_only_fusion", False),
-            "mat_subcarriers": load_info.get("mat_subcarriers"),
-            "npy_subcarriers": load_info.get("npy_subcarriers"),
-            "mat_frames": load_info.get("mat_frames"),
-            "npy_frames": load_info.get("npy_frames"),
-            "combined_antennas": load_info.get("combined_antennas"),
-        },
-        "targets": preview.get("targets", []),
-        "motion_detected": preview.get("motion_detected", False),
-        "respiration_bpm": preview.get("respiration_bpm", 0),
-        "heartbeat_bpm": preview.get("heartbeat_bpm", 0),
-        "events": session.events,
-    }
 
 
 def _event_in_duration(event: str, duration_sec: float) -> bool:

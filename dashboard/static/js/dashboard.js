@@ -15,11 +15,11 @@ const lastSensing = { sim: null };
 
 const plotLayout = {
   paper_bgcolor: "transparent",
-  plot_bgcolor: "#fdfbf7",
-  font: { color: "#2d2d2d", size: 9, family: "Patrick Hand, cursive" },
+  plot_bgcolor: "#f7f8fa",
+  font: { color: "#0f172a", size: 9, family: "Inter, system-ui, sans-serif" },
   margin: { l: 36, r: 10, t: 10, b: 28 },
-  xaxis: { gridcolor: "#e5e0d8", zerolinecolor: "#2d2d2d", linecolor: "#2d2d2d", linewidth: 2 },
-  yaxis: { gridcolor: "#e5e0d8", zerolinecolor: "#2d2d2d", linecolor: "#2d2d2d", linewidth: 2 },
+  xaxis: { gridcolor: "#e2e8f0", zerolinecolor: "#cbd5e1", linecolor: "#94a3b8" },
+  yaxis: { gridcolor: "#e2e8f0", zerolinecolor: "#cbd5e1", linecolor: "#94a3b8" },
 };
 
 fetch("/api/config").then((r) => r.json()).then((c) => {
@@ -238,6 +238,62 @@ function setRunning(running) {
   });
 });
 
+function applySessionResult(json, statusEl) {
+  simSessionId = json.session_id;
+  simFps = json.fps || 30;
+  const label = json.demo ? "Demo sample loaded" : "Analysis complete";
+  statusEl.textContent = `${label} · ${json.csi_frames} CSI frames @ ${json.sample_rate_hz}Hz`;
+  document.getElementById("sim-meta").textContent =
+    `${json.duration_sec}s · ${json.n_frames} frames · sync ${((json.sync_score || 1) * 100).toFixed(0)}%`;
+  document.getElementById("sim-events").innerHTML =
+    (json.events || []).map((e) => `<li class="alert-pill">${e}</li>`).join("") || "<li>—</li>";
+
+  updateSensingUI({
+    target_count: json.target_count ?? 0,
+    motion_detected: json.motion_detected,
+    targets: json.targets || [],
+    respiration_bpm: json.respiration_bpm,
+    heartbeat_bpm: json.heartbeat_bpm,
+  }, config.node_positions, config.area_size_m);
+
+  videoEl.src = `/api/simulation/${simSessionId}/video`;
+  videoEl.load();
+
+  if (simWs) simWs.close();
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  simWs = new WebSocket(`${proto}://${location.host}/ws/simulation/${simSessionId}`);
+  simWs.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "sensing") updateSensingUI(msg.data, msg.node_positions, msg.area_size_m);
+  };
+
+  fetch(`/api/simulation/${simSessionId}/frame?index=0`)
+    .then((r) => r.json())
+    .then((fr) => { if (fr.data) updateSensingUI(fr.data, fr.node_positions, fr.area_size_m); })
+    .catch(() => {});
+}
+
+document.getElementById("btn-run-demo")?.addEventListener("click", async () => {
+  const status = document.getElementById("sim-status");
+  setRunning(true);
+  status.textContent = "Generating sample CSI + video…";
+  selectedPerson.sim = null;
+  lastSensing.sim = null;
+  try {
+    const res = await fetch("/api/simulation/demo", { method: "POST" });
+    const json = await res.json();
+    if (!res.ok) {
+      status.textContent = "Error: " + (json.detail || res.statusText);
+      return;
+    }
+    applySessionResult(json, status);
+  } catch (err) {
+    status.textContent = "Error: " + err.message;
+  } finally {
+    setRunning(false);
+  }
+});
+
 runBtn.onclick = async () => {
   const videoFile = document.getElementById("sim-video")?.files?.[0];
   const matFile = document.getElementById("sim-csi-mat")?.files?.[0];
@@ -269,40 +325,7 @@ runBtn.onclick = async () => {
       return;
     }
 
-    simSessionId = json.session_id;
-    simFps = json.fps || 30;
-    status.textContent = `${json.csi_frames} CSI frames @ ${json.sample_rate_hz}Hz`;
-    document.getElementById("sim-meta").textContent =
-      `${json.duration_sec}s · ${json.n_frames} frames · sync ${((json.sync_score || 1) * 100).toFixed(0)}%`;
-    document.getElementById("sim-events").innerHTML =
-      (json.events || []).map((e) => `<li class="event-chip">${e}</li>`).join("") || "<li>—</li>";
-
-    updateSensingUI({
-      target_count: json.target_count ?? 0,
-      motion_detected: json.motion_detected,
-      targets: json.targets || [],
-      respiration_bpm: json.respiration_bpm,
-      heartbeat_bpm: json.heartbeat_bpm,
-    }, config.node_positions, config.area_size_m);
-
-    videoEl.src = `/api/simulation/${simSessionId}/video`;
-    videoEl.load();
-    document.querySelector(".video-card")?.classList.add("video-ready");
-
-    if (simWs) simWs.close();
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    simWs = new WebSocket(`${proto}://${location.host}/ws/simulation/${simSessionId}`);
-    simWs.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === "sensing") {
-        updateSensingUI(msg.data, msg.node_positions, msg.area_size_m);
-      }
-    };
-
-    fetch(`/api/simulation/${simSessionId}/frame?index=0`)
-      .then((r) => r.json())
-      .then((fr) => { if (fr.data) updateSensingUI(fr.data, fr.node_positions, fr.area_size_m); })
-      .catch(() => {});
+    applySessionResult(json, status);
   } catch (err) {
     status.textContent = "Error: " + err.message;
   } finally {
