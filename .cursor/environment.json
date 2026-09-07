@@ -1,0 +1,23 @@
+{
+  "name": "AURA Rescue + Alerts",
+  "install": "bash .cursor/scripts/cloud-agent-install.sh",
+  "terminals": [
+    {
+      "name": "dashboard",
+      "command": "python3 dashboard/run.py --port 8847",
+      "description": "AURA web dashboard (landing, simulation, alerts, DM console)"
+    }
+  ],
+  "ports": [
+    {
+      "name": "dashboard",
+      "port": 8847
+    }
+  ],
+  "egressAllowlist": [
+    "api.open-meteo.com",
+    "earthquake.usgs.gov",
+    "fonts.googleapis.com",
+    "fonts.gstatic.com"
+  ]
+}
