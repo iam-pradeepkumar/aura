@@ -186,6 +186,22 @@ async def get_config():
     }
 
 
+DISASTER_IMG_DIR = STATIC_DIR / "images" / "disasters"
+_DISASTER_FILES = frozenset(
+    f.name for f in DISASTER_IMG_DIR.glob("*") if f.is_file()
+) if DISASTER_IMG_DIR.is_dir() else frozenset()
+
+
+@app.get("/images/disasters/{filename}")
+async def disaster_image(filename: str):
+    """Serve disaster illustrations with correct MIME type (Render-safe)."""
+    if filename not in _DISASTER_FILES:
+        raise HTTPException(status_code=404, detail="Image not found")
+    path = DISASTER_IMG_DIR / filename
+    media = "image/svg+xml" if filename.endswith(".svg") else "image/jpeg"
+    return FileResponse(path, media_type=media)
+
+
 @app.get("/favicon.ico")
 async def favicon():
     return FileResponse(STATIC_DIR / "favicon.svg", media_type="image/svg+xml")
