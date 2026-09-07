@@ -1,6 +1,6 @@
 # AURA — Wireless Live + Simulation Reference
 
-Complete reference for **live hardware streaming** and **dataset simulation** in one place.
+**Adaptive Urban Rescue & Alert Array** — complete reference for live hardware streaming and dataset simulation.
 
 ---
 

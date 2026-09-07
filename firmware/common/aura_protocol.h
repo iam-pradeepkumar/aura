@@ -1,5 +1,5 @@
 /**
- * AURA - Adaptive Urban Rescue Array
+ * AURA - Adaptive Urban Rescue & Alert Array
  * Shared protocol definitions for offline ESP32 CSI mesh (no internet/router).
  */
 #pragma once

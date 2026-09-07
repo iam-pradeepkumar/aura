@@ -1,6 +1,6 @@
 # AURA Documentation
 
-Complete documentation for the **Adaptive Urban Rescue Array** — ESP32 WiFi CSI disaster survivor detection.
+Complete documentation for **AURA — Adaptive Urban Rescue & Alert Array** — early warning + ESP32 WiFi CSI disaster survivor detection.
 
 ---
 

@@ -1,6 +1,6 @@
 # WiMANS Training for AURA
 
-AURA integrates the [WiMANS](https://github.com/huangshk/WiMANS) benchmark for **people count**, **localization** (locations A–E), **activities**, and **vitals** on uploaded CSI datasets.
+**Adaptive Urban Rescue & Alert Array** — train on [WiMANS](https://github.com/huangshk/WiMANS) for people count, localization, activities, and vitals.
 
 ---
 

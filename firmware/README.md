@@ -1,6 +1,6 @@
 # AURA Firmware
 
-ESP32 firmware for offline disaster CSI sensing — no internet router required.
+**Adaptive Urban Rescue & Alert Array** — ESP32 firmware for offline disaster CSI sensing and optional alert broadcast.
 
 ---
 

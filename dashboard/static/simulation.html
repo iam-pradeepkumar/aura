@@ -6,7 +6,7 @@
   <title>AURA — Simulation Lab</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
   <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Patrick+Hand&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=4" />
+  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=5" />
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 </head>
 <body class="sim-shell">
@@ -22,52 +22,47 @@
   </nav>
 
   <main class="sim-main">
-    <div class="card-sketch sim-upload tape">
-      <div class="demo-banner-sketch">
-        <h3 style="margin:0 0 0.35rem;">Quick demo ✎</h3>
-        <p style="font-size:0.95rem;opacity:0.85;margin-bottom:0.75rem;">Runs bundled WiMANS <code>act_105_48</code> video + CSI dataset — no upload needed.</p>
-        <button id="btn-run-demo" type="button" class="btn-sketch" style="width:100%;">▶ Run sample simulation</button>
-      </div>
+    <aside class="card-sketch sim-upload tape sim-upload-clean">
+      <h2 style="margin:0;font-size:1.3rem;">Simulation lab</h2>
+      <p style="opacity:0.85;font-size:0.95rem;margin:0.35rem 0 0;">Replay WiMANS CSI data and see survivor count, position, and vitals.</p>
 
-      <h2 style="margin:0 0 0.5rem;font-size:1.25rem;">Dataset upload</h2>
-      <p style="opacity:0.8;font-size:0.95rem;margin-bottom:1rem;">WiMANS triple: video + .mat + .npy</p>
+      <button id="btn-run-demo" type="button" class="btn-sketch" style="width:100%;margin-top:0.5rem;">
+        ▶ Try simulation (act_105_48)
+      </button>
+      <p style="font-size:0.85rem;opacity:0.75;margin:0;">Bundled video + CSI — no upload needed.</p>
 
-      <div class="upload-row">
-        <div class="upload-row-head">
-          <span class="upload-row-num">1</span>
-          <span>Video .mp4</span>
-        </div>
+      <p class="sim-divider">or upload your own</p>
+
+      <div class="sim-file-slot">
+        <label for="sim-video">① Scene video (.mp4)</label>
         <input type="file" id="sim-video" accept="video/*,.mp4" class="file-input" />
-        <span id="sim-video-name" style="font-size:0.85rem;opacity:0.7;">—</span>
+        <span id="sim-video-name" class="file-name">No file chosen</span>
       </div>
 
-      <div class="upload-row">
-        <div class="upload-row-head">
-          <span class="upload-row-num">2</span>
-          <span>CSI .mat</span>
-        </div>
+      <div class="sim-file-slot">
+        <label for="sim-csi-mat">② Raw CSI (.mat)</label>
         <input type="file" id="sim-csi-mat" accept=".mat" class="file-input" />
-        <span id="sim-csi-mat-name" style="font-size:0.85rem;opacity:0.7;">—</span>
+        <span id="sim-csi-mat-name" class="file-name">No file chosen</span>
       </div>
 
-      <div class="upload-row">
-        <div class="upload-row-head">
-          <span class="upload-row-num">3</span>
-          <span>Amplitude .npy</span>
-        </div>
+      <div class="sim-file-slot">
+        <label for="sim-csi-npy">③ Amplitude (.npy)</label>
         <input type="file" id="sim-csi-npy" accept=".npy" class="file-input" />
-        <span id="sim-csi-npy-name" style="font-size:0.85rem;opacity:0.7;">—</span>
+        <span id="sim-csi-npy-name" class="file-name">No file chosen</span>
       </div>
 
-      <label style="font-weight:700;display:block;margin-top:0.75rem;">Sample rate Hz</label>
-      <input type="number" id="sim-fs" placeholder="auto" class="input-sketch" step="0.1" />
+      <div class="sim-file-slot" style="border-style:solid;">
+        <label for="sim-fs">Sample rate (Hz) — optional</label>
+        <input type="number" id="sim-fs" placeholder="auto-detect" class="input-sketch" step="0.1" style="margin-top:0.25rem;" />
+      </div>
 
-      <button id="btn-run-simulation" type="button" class="btn-sketch" style="width:100%;margin-top:1rem;">
-        <span class="btn-label">Run analysis</span>
+      <button id="btn-run-simulation" type="button" class="btn-sketch secondary" style="width:100%;">
+        <span class="btn-label">Run uploaded dataset</span>
         <span class="btn-spinner hidden" id="sim-spinner"></span>
       </button>
-      <p id="sim-status" style="margin-top:0.75rem;font-size:0.95rem;opacity:0.8;"></p>
-    </div>
+
+      <p id="sim-status" style="font-size:0.9rem;opacity:0.8;margin:0;min-height:1.25rem;"></p>
+    </aside>
 
     <div class="card-sketch sim-video">
       <h2 style="margin:0 0 0.75rem;">Scene <span id="sim-time" class="badge-sketch">0.00s</span></h2>
@@ -88,15 +83,15 @@
     <div class="card-sketch"><h3 style="margin:0 0 0.5rem;">Heartbeat</h3><div id="sim-hr-chart" class="chart-fit"></div></div>
 
     <div class="card-sketch sim-events">
-      <h3 style="margin:0 0 0.5rem;display:inline;">Events</h3>
-      <ul id="sim-events" style="list-style:none;padding:0;display:flex;flex-wrap:wrap;gap:0.5rem;margin-top:0.5rem;"></ul>
+      <h3 style="margin:0 0 0.5rem;">Events</h3>
+      <ul id="sim-events" style="list-style:none;padding:0;display:flex;flex-wrap:wrap;gap:0.5rem;"></ul>
     </div>
   </main>
 
   <footer class="footer-sketch" style="margin-top:0;">
-    <span>Live ESP32 sensing → <code>python3 tools/field_live.py</code></span>
+    <span>AURA · Adaptive Urban Rescue &amp; Alert Array · Live ESP32 → <code>python3 tools/field_live.py</code></span>
   </footer>
 
-  <script src="/static/js/dashboard.js?v=32"></script>
+  <script src="/static/js/dashboard.js?v=33"></script>
 </body>
 </html>

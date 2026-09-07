@@ -1,4 +1,4 @@
-"""AURA - Adaptive Urban Rescue Array signal processing."""
+"""AURA - Adaptive Urban Rescue & Alert Array signal processing."""
 
 from .loader import (
     load_csi,

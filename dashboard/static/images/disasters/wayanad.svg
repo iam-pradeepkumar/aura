@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Wayanad landslides">
+  <rect width="640" height="360" fill="#8b7355"/>
+  <path d="M0 280 Q120 200 200 240 T400 200 T640 260 L640 360 L0 360 Z" fill="#5c4a32"/>
+  <path d="M80 260 L140 180 L200 250 Z" fill="#3d3225"/>
+  <path d="M300 270 L380 150 L460 260 Z" fill="#4a3d2e"/>
+  <rect x="420" y="220" width="90" height="50" fill="#6b5344" transform="rotate(-8 465 245)"/>
+  <text x="320" y="40" text-anchor="middle" font-family="Georgia,serif" font-size="22" fill="#fff9c4">Wayanad Landslides · Jul 2024</text>
+  <text x="320" y="330" text-anchor="middle" font-family="Georgia,serif" font-size="14" fill="#fdfbf7">Kerala, India</text>
+</svg>

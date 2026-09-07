@@ -138,7 +138,7 @@ def main():
     aligned = align_results_to_video(results, duration, n_frames)
 
     fig = plt.figure(figsize=(14, 9))
-    fig.suptitle("AURA — Adaptive Urban Rescue Array (CSI-Only Sensing)", fontsize=14, fontweight="bold")
+    fig.suptitle("AURA — Adaptive Urban Rescue & Alert Array (CSI-Only Sensing)", fontsize=14, fontweight="bold")
     gs = fig.add_gridspec(3, 3, hspace=0.35, wspace=0.3)
 
     ax_video = fig.add_subplot(gs[0, :2])

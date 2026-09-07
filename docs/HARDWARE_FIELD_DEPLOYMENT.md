@@ -1,6 +1,6 @@
 # AURA Hardware Field Deployment — Step by Step
 
-Complete guide to deploy **5 ESP32 boards** (1 TX + 4 RX at corners), detect people with **all sensing functions**, and view **live tracking with motion trails** on your laptop.
+**Adaptive Urban Rescue & Alert Array** — deploy 5 ESP32 boards (1 TX + 4 RX), detect survivors, and view live tracking on your laptop.
 
 > Simulation (WiMANS upload) is separate and unchanged. This guide is **hardware only**.
 

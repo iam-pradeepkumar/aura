@@ -6,7 +6,7 @@
   <title>AURA — Detect, Alert &amp; Rescue</title>
   <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
   <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Patrick+Hand&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=4" />
+  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=5" />
 </head>
 <body>
   <nav class="site-nav">
@@ -18,7 +18,7 @@
       <a href="/simulation">Simulation</a>
       <a href="/alerts">Alerts</a>
       <a href="/manage" class="btn-sketch secondary" style="text-decoration:none;min-height:42px;padding:0.4rem 1rem;font-size:1rem;">DM Console</a>
-      <a href="/simulation" class="btn-sketch" style="text-decoration:none;min-height:42px;padding:0.4rem 1rem;font-size:1rem;">Get demo</a>
+      <a href="/simulation" class="btn-sketch" style="text-decoration:none;min-height:42px;padding:0.4rem 1rem;font-size:1rem;">Try simulation</a>
     </div>
   </nav>
 
@@ -74,7 +74,7 @@
       </h1>
       <p class="hero-sub">Early warning for Indian communities, then offline WiFi CSI survivor sensing when networks fail.</p>
       <div class="hero-cta-wrap">
-        <a href="/simulation" class="btn-sketch jiggle-hover">Get free demo →</a>
+        <a href="/simulation" class="btn-sketch jiggle-hover">Try simulation →</a>
         <svg class="sketch-arrow" viewBox="0 0 100 40" aria-hidden="true">
           <path d="M5 20 Q40 5 70 20 T95 18" fill="none" stroke="#2d2d2d" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrowhead)" />
           <defs>
@@ -91,47 +91,68 @@
   <section id="problem" class="section reveal">
     <span class="section-tag">The problem · India &amp; Nepal</span>
     <h2 class="section-title">Recent disasters expose a deadly gap</h2>
-    <p class="section-sub">South Asia faces earthquakes, landslides, and floods every year — yet most communities lack affordable local warning and post-disaster survivor detection.</p>
+    <p class="section-sub">South Asia faces earthquakes, landslides, and floods every year — yet when disaster strikes, responders still cannot answer three basic questions: <strong>where are the survivors, how many are there, and are they still alive?</strong></p>
+
+    <div class="card-sketch problem-gap reveal">
+      <h3>Why rescue teams lose precious hours</h3>
+      <ul>
+        <li><strong>No location</strong> — buried victims cannot call for help; rubble blocks GPS and phone signals.</li>
+        <li><strong>No count</strong> — officials do not know how many people were in a building or village when it collapsed.</li>
+        <li><strong>No right device</strong> — search dogs, microphones, and thermal cameras fail in mud, rain, and deep debris.</li>
+        <li><strong>No local warning</strong> — national bulletins arrive too late; villages lack ward-level evacuation routes.</li>
+      </ul>
+      <p style="margin-top:0.75rem;opacity:0.9;">AURA closes this gap with affordable ESP32 sensing: early alerts before disaster, then WiFi CSI survivor detection after networks fail.</p>
+    </div>
 
     <div class="grid-2">
       <article class="card-sketch case-card tilt-1 reveal reveal-delay-1 jiggle-hover-alt">
-        <img src="https://images.unsplash.com/photo-1584438784894-089d6a62b8f1?w=960&q=80" alt="Wayanad landslides 2024" loading="lazy" />
+        <div class="case-img-wrap">
+          <img src="/static/images/disasters/wayanad.svg" alt="Wayanad landslides 2024" loading="lazy" />
+        </div>
         <div class="case-body">
           <span class="case-tag">Jul 2024 · Kerala</span>
           <h3>Wayanad landslides</h3>
-          <p>400+ deaths in the Western Ghats. Roads cut, villages buried. No hyper-local alert mesh or survivor sensing inside debris zones.</p>
+          <p>400+ deaths in the Western Ghats. Roads cut, villages buried. Rescuers could not locate survivors under debris — no hyper-local alert or through-wall sensing.</p>
         </div>
       </article>
       <article class="card-sketch case-card tilt-2 reveal reveal-delay-2 jiggle-hover-alt">
-        <img src="https://images.unsplash.com/photo-1611273428042-f79237d8ee3f?w=960&q=80" alt="Sikkim flood 2023" loading="lazy" />
+        <div class="case-img-wrap">
+          <img src="/static/images/disasters/sikkim.svg" alt="Sikkim flood 2023" loading="lazy" />
+        </div>
         <div class="case-body">
           <span class="case-tag">Oct 2023 · Sikkim</span>
           <h3>Glacial lake outburst flood</h3>
-          <p>Teesta River flash flood killed 40+ and destroyed the Chungthang dam. Remote valleys had no last-mile evacuation routing.</p>
+          <p>Teesta River flash flood killed 40+. Remote valleys had no last-mile warning — families did not know where to go or who was still trapped upstream.</p>
         </div>
       </article>
       <article class="card-sketch case-card tape reveal reveal-delay-1 jiggle-hover-alt">
-        <img src="https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=960&q=80" alt="Joshimath subsidence" loading="lazy" />
+        <div class="case-img-wrap">
+          <img src="/static/images/disasters/joshimath.svg" alt="Joshimath subsidence" loading="lazy" />
+        </div>
         <div class="case-body">
           <span class="case-tag">Jan 2023 · Uttarakhand</span>
           <h3>Joshimath land subsidence</h3>
-          <p>600+ buildings cracked in a pilgrimage town. Slow-motion disaster needed continuous monitoring — not one national bulletin.</p>
+          <p>600+ buildings cracked. Slow-motion disaster needed continuous monitoring of how many residents remained inside unsafe structures.</p>
         </div>
       </article>
       <article class="card-sketch case-card tack reveal reveal-delay-2 jiggle-hover-alt">
-        <img src="https://images.unsplash.com/photo-1547036967-23d11aacaee0?w=960&q=80" alt="Chennai floods" loading="lazy" />
+        <div class="case-img-wrap">
+          <img src="/static/images/disasters/chennai.svg" alt="Chennai floods" loading="lazy" />
+        </div>
         <div class="case-body">
           <span class="case-tag">Dec 2023 · Tamil Nadu</span>
           <h3>Chennai &amp; coastal floods</h3>
-          <p>Cyclone Michaung left streets underwater. Families needed ward-level safe-house maps on phones already on community WiFi.</p>
+          <p>Cyclone Michaung submerged streets. No ward-level safe-house map — people did not know which shelters had space or how many neighbours were stranded.</p>
         </div>
       </article>
       <article class="card-sketch case-card tape reveal reveal-delay-3 jiggle-hover-alt" style="grid-column:1/-1;max-width:520px;margin:0 auto;">
-        <img src="https://images.unsplash.com/photo-1483728642387-6bc3bdd88c98?w=960&q=80" alt="Nepal earthquake damage" loading="lazy" />
+        <div class="case-img-wrap">
+          <img src="/static/images/disasters/nepal.svg" alt="Nepal Jajarkot earthquake" loading="lazy" />
+        </div>
         <div class="case-body">
           <span class="case-tag">Nov 2023 · Nepal</span>
           <h3>Jajarkot earthquake</h3>
-          <p>Magnitude 6.4 struck western Nepal — 150+ killed, thousands homeless in remote hills. No village-level early warning or survivor sensing under collapsed homes.</p>
+          <p>Magnitude 6.4 struck western Nepal — 150+ killed. Remote hills had no village-level warning and no device to find people under collapsed stone homes.</p>
         </div>
       </article>
     </div>
@@ -140,7 +161,7 @@
   <!-- Solution -->
   <section id="solution" class="section reveal">
     <span class="section-tag">Our solution</span>
-    <h2 class="section-title">AURA — two phases, six ESP32 boards</h2>
+    <h2 class="section-title">AURA — Adaptive Urban Rescue &amp; Alert Array</h2>
     <p class="section-sub">One alert node monitors hazards. Four rescue receivers + one transmitter sense survivors without internet.</p>
 
     <div class="stat-row">
@@ -185,66 +206,79 @@
     </div>
   </section>
 
-  <!-- How it works -->
+  <!-- How it works — concepts & alert flow -->
   <section id="how" class="section reveal">
     <span class="section-tag">How it works</span>
-    <h2 class="section-title">60-second judge demo</h2>
-    <p class="section-sub">Walk judges through alert → broadcast → CSI rescue without touching firmware mid-pitch.</p>
+    <h2 class="section-title">Two phases, one system</h2>
+    <p class="section-sub">AURA combines <strong>early warning</strong> (before disaster) with <strong>rescue sensing</strong> (after networks fail). Here is how each part works.</p>
 
-    <div class="how-grid" style="margin-top:2rem;">
-      <svg class="squiggle-connect" viewBox="0 0 800 24" preserveAspectRatio="none" aria-hidden="true">
-        <path d="M0 12 Q100 2 200 14 T400 10 T600 16 T800 8" fill="none" stroke="#2d2d2d" stroke-width="2" stroke-dasharray="8 5" />
-      </svg>
-      <a href="/manage" class="card-sketch how-card" style="text-decoration:none;color:inherit;">
-        <div class="how-num">1</div>
-        <h3>Simulate alert</h3>
-        <p style="font-size:0.95rem;opacity:0.85;">Create a realistic earthquake at Vellore coords.</p>
-      </a>
-      <a href="/manage" class="card-sketch how-card postit" style="text-decoration:none;color:inherit;">
-        <div class="how-num">2</div>
-        <h3>Approve &amp; broadcast</h3>
-        <p style="font-size:0.95rem;opacity:0.85;">Edit message, safe zones, one-button warn.</p>
-      </a>
-      <a href="/simulation" class="card-sketch how-card tape" style="text-decoration:none;color:inherit;">
-        <div class="how-num">3</div>
-        <h3>Run CSI demo</h3>
-        <p style="font-size:0.95rem;opacity:0.85;">Sample simulation — no WiMANS files needed.</p>
-      </a>
-      <a href="/alerts" class="card-sketch how-card tack" style="text-decoration:none;color:inherit;">
-        <div class="how-num">4</div>
-        <h3>Public feed</h3>
-        <p style="font-size:0.95rem;opacity:0.85;">Residents see approved warnings live.</p>
-      </a>
+    <div class="card-sketch postit tape reveal" style="margin-bottom:1.5rem;">
+      <h3>Phase 1 — Early warning &amp; alert flow</h3>
+      <p style="margin-bottom:1rem;">The laptop (or one ESP32 alert node) watches your configured coordinates for earthquakes and severe weather.</p>
+      <div class="arch-flow">
+        <div class="arch-box">USGS earthquakes</div>
+        <span class="arch-arrow">+</span>
+        <div class="arch-box">Open-Meteo weather</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-box" style="background:var(--postit);">Hazard detected</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-box">DM queue</div>
+      </div>
+      <div class="arch-flow" style="margin-top:0.75rem;">
+        <div class="arch-box">DM reviews &amp; edits message</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-box">Approve + safe zones</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-box" style="background:var(--marker);color:white;">LAN + webhook broadcast</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-box">Public /alerts feed</div>
+      </div>
+      <p style="font-size:0.95rem;opacity:0.85;margin-top:1rem;">Nothing goes public until a disaster manager approves it. You can change watch location on the Alerts or DM Console page.</p>
     </div>
 
-    <div class="timeline reveal" style="margin-top:3rem;">
+    <div class="card-sketch reveal" style="margin-bottom:1.5rem;">
+      <h3>Phase 2 — Rescue sensing (WiFi CSI)</h3>
+      <p style="margin-bottom:1rem;">When cell towers fail, ESP32 nodes form a local mesh. WiFi probe packets bounce off human bodies; receivers measure CSI to find <strong>who</strong>, <strong>where</strong>, and <strong>vitals</strong>.</p>
+      <div class="arch-flow">
+        <div class="arch-box">1× TX node</div>
+        <span class="arch-arrow">probes</span>
+        <div class="arch-box">air + survivors</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-box">4× RX nodes</div>
+        <span class="arch-arrow">→</span>
+        <div class="arch-box" style="background:var(--pen);color:white;">Laptop DSP</div>
+      </div>
+      <p style="font-size:0.95rem;opacity:0.85;margin-top:1rem;">Outputs: person count, XY position map, motion, respiration &amp; heartbeat — no internet required. Test with bundled <code>act_105_48</code> in the simulation lab.</p>
+    </div>
+
+    <div class="timeline reveal">
       <div class="timeline-item">
-        <h3>Phase 1 — Early warning</h3>
-        <p>Single ESP32 polls USGS + Open-Meteo. Hazards queue in DM Console. After approval: LAN multicast + webhook to phones.</p>
+        <h3>What CSI sensing detects</h3>
+        <p>Channel State Information captures tiny changes in WiFi signals when a chest moves (breathing) or a limb shifts (motion). AURA fuses four receiver angles to estimate position inside a 10×10 m zone.</p>
       </div>
       <div class="timeline-item">
-        <h3>Phase 2 — Rescue sensing</h3>
-        <p>When networks fail, <code>AURA_HUB</code> hotspot links 4 RX + 1 TX ESP32. Laptop runs CSI pipeline: count, position, vitals.</p>
+        <h3>What the alert engine monitors</h3>
+        <p>USGS global earthquake feed + Open-Meteo wind/precipitation for your watch coordinates. Thresholds in <code>disaster_alert/config.yaml</code> filter noise; only significant hazards enter the DM queue.</p>
       </div>
       <div class="timeline-item" style="border-left-color:var(--marker);">
-        <h3>Hardware at Vellore</h3>
-        <p>Coords <span class="mono">12.334258, 79.783187</span> · Processor <span class="mono">v2026.09.04-42</span></p>
+        <h3>Try it without hardware</h3>
+        <p><a href="/simulation">Simulation lab</a> replays real WiMANS CSI + video. <a href="/manage">DM Console</a> simulates an earthquake alert and broadcasts to the public feed.</p>
       </div>
     </div>
   </section>
 
   <section class="pitch-cta reveal">
     <h2 class="section-title" style="margin-bottom:1rem;">Ready to try it?</h2>
-    <p class="section-sub" style="margin-bottom:1.5rem;">No hardware required for the web demo — simulation + DM console work on this laptop.</p>
+    <p class="section-sub" style="margin-bottom:1.5rem;">No hardware required — run the simulation lab and DM console on this laptop.</p>
     <div style="display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;">
-      <a href="/simulation" class="btn-sketch">▶ Run sample simulation</a>
+      <a href="/simulation" class="btn-sketch">Try simulation</a>
       <a href="/manage" class="btn-sketch secondary">Open DM Console</a>
       <a href="/alerts" class="btn-sketch pen">View alert feed</a>
     </div>
   </section>
 
   <footer class="footer-sketch">
-    <p>AURA · Adaptive Urban Rescue Array · Vellore</p>
+    <p>AURA · Adaptive Urban Rescue &amp; Alert Array</p>
     <p style="font-size:0.95rem;opacity:0.75;margin-top:0.35rem;">Live rescue: <code>python3 tools/field_live.py</code></p>
   </footer>
 

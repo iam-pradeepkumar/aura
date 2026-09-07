@@ -224,7 +224,7 @@ function setRunning(running) {
   if (!runBtn) return;
   runBtn.disabled = running;
   runSpinner?.classList.toggle("hidden", !running);
-  if (runLabel) runLabel.textContent = running ? "Processing…" : "Run analysis";
+  if (runLabel) runLabel.textContent = running ? "Processing…" : "Run uploaded dataset";
 }
 
 ["sim-video", "sim-csi-mat", "sim-csi-npy"].forEach((id, i) => {

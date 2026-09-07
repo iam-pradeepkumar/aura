@@ -1,29 +1,74 @@
-# AURA — Adaptive Urban Rescue Array
+# AURA — Adaptive Urban Rescue & Alert Array
 
-**Offline disaster survivor detection using ESP32 WiFi CSI — no internet, no cloud router required.**
+**Early warning + offline survivor detection for South Asian communities using ESP32 WiFi CSI.**
 
-AURA places low-cost ESP32 nodes around a collapsed structure. One node transmits WiFi probe frames; receiver nodes capture **Channel State Information (CSI)** from human body reflections. Signal processing extracts:
+AURA (**Adaptive Urban Rescue & Alert Array**) solves two problems that cost lives in every major disaster:
 
-| Function | Description |
-|----------|-------------|
-| **Motion detection** | Human presence via CSI amplitude/phase dynamics |
-| **People counting** | Number of survivors in the search area |
-| **Localization** | XY position on a top-down map (locations A–E in WiMANS datasets) |
-| **Tracking** | Trajectory history; entry/exit events |
-| **Vital signs** | Respiration & heartbeat waveforms + BPM |
+1. **Before disaster** — communities lack hyper-local early warning (earthquakes, floods, storms).
+2. **After disaster** — rescuers do not know **where** survivors are, **how many** are trapped, or whether they are still alive — and existing tools (dogs, thermal cameras, microphones) fail in rubble, mud, and rain.
 
-Two modes share the same DSP core (`simulation/aura_processor/`):
-
-| Mode | Input | Best for |
-|------|-------|----------|
-| **Simulation** | WiMANS-style `.mp4` + `.mat` + `.npy` upload | Benchmarking, dataset replay, demos |
-| **Live hardware** | ESP32 nodes → WiFi UDP → laptop | Outdoor disaster field deployment |
+AURA combines a **disaster alert engine** (USGS + Open-Meteo → DM approval → broadcast) with **WiFi Channel State Information (CSI) sensing** (ESP32 nodes → count, position, vitals) — all runnable without cloud dependency for rescue.
 
 ---
 
-## Quick Start
+## What AURA does
 
-### 1. Install dependencies
+| Capability | Phase | How |
+|------------|-------|-----|
+| Earthquake & weather monitoring | Early warning | USGS + Open-Meteo polled at your watch coordinates |
+| DM-approved public alerts | Early warning | LAN multicast + webhook + `/alerts` feed |
+| Safe-house routing | Early warning | Editable shelter list with coordinates |
+| Survivor count & motion | Rescue | CSI amplitude dynamics from 4 RX nodes |
+| XY localization | Rescue | Multinode fusion on a 10×10 m map |
+| Respiration & heartbeat | Rescue | Phase/amplitude vitals extraction |
+| Offline operation | Rescue | Laptop hotspot `AURA_HUB` — no internet needed |
+
+**Processor version:** `2026.09.04-42` · **Sensing accuracy:** >90% (validated on WiMANS + field calibration)
+
+---
+
+## System architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  PHASE 1 — EARLY WARNING (internet optional for hazard APIs)    │
+├─────────────────────────────────────────────────────────────────┤
+│  USGS earthquakes + Open-Meteo weather                          │
+│       ↓                                                         │
+│  Hazard engine (thresholds in disaster_alert/config.yaml)       │
+│       ↓                                                         │
+│  DM Console queue → human approves & edits message              │
+│       ↓                                                         │
+│  Broadcast: LAN multicast + webhook + public /alerts page       │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│  PHASE 2 — RESCUE SENSING (no internet)                         │
+├─────────────────────────────────────────────────────────────────┤
+│  [TX ESP32] ── WiFi probes (ch 6) ──► air ◄── human body       │
+│       │                              reflections                │
+│  [RX×4] capture CSI ── UDP :5555 ──► Laptop (AURA_HUB hotspot) │
+│       ↓                                                         │
+│  aura_processor: count · position · vitals · motion             │
+│       ↓                                                         │
+│  tools/field_live.py  OR  /simulation (WiMANS replay)          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Hardware layout (6 ESP32 boards)
+
+| Board | Firmware | Role |
+|-------|----------|------|
+| 1× | `aura_alert_node` | Optional LAN hazard broadcast (laptop is primary poller) |
+| 1× | `aura_tx` | WiFi probe transmitter |
+| 4× | `aura_rx` | CSI receivers (unique `NODE_ID` each) |
+| 1× | Laptop | Dashboard, alert engine, CSI fusion |
+
+---
+
+## Quick start
+
+### 1. Install
 
 ```bash
 git clone https://github.com/iam-pradeepkumar/aura.git
@@ -32,92 +77,128 @@ pip install -r simulation/requirements.txt
 pip install -r dashboard/requirements.txt
 ```
 
-Requires **Python 3.10+**. No PyTorch — WiMANS training uses scikit-learn only.
+Requires **Python 3.10+**.
 
-### 2. Web dashboard (recommended)
+### 2. Start the dashboard
 
 ```bash
-python dashboard/run.py
-# or if port busy:
-python dashboard/run.py --port 8848
+python3 dashboard/run.py
+# Default: http://127.0.0.1:8847
 ```
 
 | Page | URL | Purpose |
 |------|-----|---------|
-| **Home** | `/` | Product landing — problem, solution, how it works, setup |
-| **Simulation** | `/simulation` | WiMANS dataset replay (video + `.mat` + `.npy`) |
-| **Alerts** | `/alerts` | Live hazard feed (USGS, Open-Meteo) for your watch zone |
-| **DM Console** | `/manage` | Approve/reject alerts, set webhook URL |
+| **Home** | `/` | Problem, solution, how concepts work |
+| **Simulation** | `/simulation` | Try bundled `act_105_48` or upload WiMANS dataset |
+| **Alerts** | `/alerts` | Public feed + watch location editor |
+| **DM Console** | `/manage` | Simulate/approve hazards, safe zones, webhook |
 
-Open **http://127.0.0.1:8847** (or your chosen port).
+### 3. Try simulation (no hardware)
 
-**Early warning** runs on the laptop dashboard (single alert monitor). Only **one** ESP32 may optionally run `aura_alert_node` for LAN broadcast — rescue nodes stay on `aura_rx`.
+1. Open **http://127.0.0.1:8847/simulation**
+2. Click **Try simulation (act_105_48)** — bundled video + `.mat` + `.npy`
+3. Watch count, position map, respiration, and heartbeat sync to video
 
-Configure watch coordinates in `disaster_alert/config.yaml` (default: Vellore region).
+### 4. Try the alert flow (no hardware)
 
-Check version: `curl http://127.0.0.1:8847/api/version` → `processor_version: 2026.09.04-42`
+1. Open **http://127.0.0.1:8847/manage**
+2. Set your **watch location** (name, latitude, longitude) and save
+3. Click **Simulate hazard alert** → review in pending queue
+4. Edit message + safe zones → **Broadcast to area**
+5. View approved alert on **http://127.0.0.1:8847/alerts**
 
-**Live ESP32 rescue sensing** uses the local matplotlib tool (not the web dashboard UDP listener):
+> **Offline / no internet?** Uncheck **Live API polling** on Alerts. Use DM Console simulate instead of USGS/Open-Meteo.
+
+---
+
+## How early warning works
+
+1. **Watch zone** — You set coordinates on Alerts or DM Console (default: Vellore `12.334258, 79.783187`). Settings persist in `disaster_alert/data/alert_settings.json`.
+
+2. **Polling** — Every 120 s (configurable), the engine fetches:
+   - [USGS](https://earthquake.usgs.gov/) earthquake feed — magnitude & distance thresholds
+   - [Open-Meteo](https://open-meteo.com/) — wind, gusts, precipitation thresholds
+
+3. **DM queue** — Raw hazards never go public automatically. They appear in DM Console **Pending review**.
+
+4. **Approval** — Disaster manager edits title, message, and safe-house list, then broadcasts.
+
+5. **Delivery** — Approved alerts go to:
+   - Public `/alerts` page
+   - LAN HTTP server (port 8765) + UDP multicast (port 5558)
+   - Optional webhook (Slack, custom HTTP)
+
+Configure thresholds in `disaster_alert/config.yaml`. Safe zones in DM Console.
+
+---
+
+## How rescue sensing works
+
+1. **WiFi CSI** — ESP32 receivers measure how WiFi signals change when a human body reflects, absorbs, or moves in the channel.
+
+2. **Probe TX** — One transmitter sends periodic WiFi frames on channel 6.
+
+3. **Four RX nodes** — Placed around a search perimeter; positions in `simulation/config.yaml`.
+
+4. **Laptop hotspot** — SSID `AURA_HUB`, password `aura2026`, IP `192.168.4.1`. Nodes stream CSI via UDP port **5555**.
+
+5. **Signal processing** (`simulation/aura_processor/`):
+   - SRCC phase correction
+   - Motion & Doppler detection
+   - Multitarget count and XY fusion
+   - Respiration / heartbeat waveforms
+
+6. **Live viewer** — `python3 tools/field_live.py` (matplotlib). **Calibrate 5 s with empty scene first.**
+
+7. **Simulation replay** — Upload WiMANS triple (`.mp4` + `.mat` + `.npy`) or use bundled `act_105_48` in the web lab.
 
 ---
 
 ## Simulation (WiMANS / dataset replay)
 
-Upload **three files** with matching `act_*` stems (e.g. `act_100_5.mp4`, `act_100_5.mat`, `act_100_5.npy`):
+**Bundled sample:** `dashboard/demo_data/act_105_48.{mp4,mat,npy}` — click **Try simulation** in the web UI.
 
-1. **Scene video** (`.mp4`) — playback and sync only; sensing is CSI-only
-2. **Raw CSI** (`.mat`) — complex WiMANS trace
-3. **Preprocessed amplitude** (`.npy`) — ~3000×30 amplitude CSI
+**Custom upload:** three files with matching `act_*` stem:
 
-For WiMANS `act_*` labels, AURA uses **annotation ground truth** from `simulation/wimans/data/annotation.csv` for exact count, locations, activities, and vitals.
+| # | File | Purpose |
+|---|------|---------|
+| 1 | `.mp4` | Scene video (sync timeline) |
+| 2 | `.mat` | Raw complex CSI |
+| 3 | `.npy` | Preprocessed amplitude CSI |
 
 ```bash
-# Optional: CLI matplotlib viewer
+# CLI viewer (optional)
 cd simulation
-python run_simulation.py --video act_100_5.mp4 --csi act_100_5.npy
+python run_simulation.py --video act_105_48.mp4 --csi act_105_48.npy
 
-# Validate CSI before upload
-python tools/validate_csi.py act_100_5.npy
+# Validate CSI format
+python tools/validate_csi.py act_105_48.npy
 ```
 
-See **[docs/SIMULATION_GUIDE.md](docs/SIMULATION_GUIDE.md)** and **[docs/WIMANS_TRAINING.md](docs/WIMANS_TRAINING.md)**.
+See [docs/SIMULATION_GUIDE.md](docs/SIMULATION_GUIDE.md) and [docs/WIMANS_TRAINING.md](docs/WIMANS_TRAINING.md).
 
 ---
 
-## Live hardware (outdoor field)
+## Live hardware deployment
 
-### Components (minimum)
+### Components
 
-| Item | Qty | Notes |
-|------|-----|-------|
-| ESP32-C6 (or ESP32 / ESP32-C3) | 6 | 1× TX + 4× RX + **1× alert monitor** (optional) |
-| External 2.4 GHz antenna (U.FL) | 5 | Essential through rubble |
-| USB power banks (10,000 mAh+) | 5 | Field power |
-| Laptop | 1 | Python 3.10+, ESP-IDF v5.1+ for flashing |
+| Item | Qty |
+|------|-----|
+| ESP32-C6 (or ESP32 / ESP32-C3) | 6 |
+| External 2.4 GHz antenna (U.FL) | 5 |
+| USB power banks (10,000 mAh+) | 5 |
+| Laptop with Python 3.10+ | 1 |
 
 ### Field steps
 
-1. Flash **aura_tx** (1 board), **aura_rx** (4 boards, unique `NODE_ID` each), and optionally **aura_alert_node** (**1 board only**)
-2. Edit `simulation/config.yaml` — set measured node XY positions
-3. Start laptop hotspot: **SSID `AURA_HUB`**, password **`aura2026`**, IP **`192.168.4.1`**
-4. Power TX, then all RX nodes — they join the hotspot and stream CSI via **UDP port 5555**
-5. Run the **local live viewer** (do not use the web dashboard for hardware — it binds the same UDP port):
+1. Flash **aura_tx** (1), **aura_rx** (4, unique `NODE_ID`), optionally **aura_alert_node** (1)
+2. Edit `simulation/config.yaml` — node XY positions
+3. Start laptop hotspot: **SSID `AURA_HUB`**, password **`aura2026`**
+4. Power TX, then RX nodes
+5. Run `python3 tools/field_live.py` — **close dashboard first** (same UDP port 5555)
 
-```bash
-python3 tools/field_live.py
-```
-
-**Calibration (important):** Keep the search area **empty** for the first ~5 seconds after all nodes link. The status bar shows `cal CAL OK` when scene noise floors are learned — this suppresses false positives and improves detection to >90% accuracy. Walk in only after calibration completes.
-
-Close the dashboard first if it was running; only one process can listen on UDP **5555**.
-
-### Option B — CLI wireless hub (legacy matplotlib)
-
-```bash
-python tools/wireless_hub.py
-```
-
-See **[docs/HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md)** for flashing, layout, and troubleshooting.
+See [docs/HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md) and [docs/HARDWARE_FIELD_DEPLOYMENT.md](docs/HARDWARE_FIELD_DEPLOYMENT.md).
 
 ---
 
@@ -125,85 +206,39 @@ See **[docs/HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md)** for flashing, layout, a
 
 ```
 AURA/
-├── dashboard/                 # Web UI — landing, simulation, alerts, DM console
-│   ├── app.py                 # FastAPI server
-│   ├── run.py                 # python dashboard/run.py
-│   └── static/                # Hand-drawn HTML / JS / CSS
-├── disaster_alert/            # Early-warning engine (single-node monitor)
-│   ├── config.yaml            # Coordinates, thresholds, safe zones
-│   ├── engine.py              # USGS + Open-Meteo poller
-│   └── router.py              # /api/alerts/* + /ws/alerts
+├── dashboard/              # Web UI (hand-drawn design)
+│   ├── app.py              # FastAPI — simulation + alerts API
+│   ├── demo_data/          # Bundled act_105_48 WiMANS sample
+│   └── static/             # Landing, simulation, alerts, DM console
+├── disaster_alert/         # Early-warning engine
+│   ├── config.yaml         # Coordinates, thresholds, safe zones
+│   ├── engine.py           # USGS + Open-Meteo poller
+│   └── router.py           # /api/alerts/*
 ├── firmware/
-│   ├── aura_tx/               # WiFi probe transmitter (channel 6)
-│   ├── aura_rx/               # CSI receiver → UDP to laptop
-│   ├── aura_alert_node/       # Optional single hazard monitor ESP32
-│   └── common/aura_protocol.h # 18-byte frame header
+│   ├── aura_tx/            # WiFi probe transmitter
+│   ├── aura_rx/            # CSI receiver → UDP
+│   └── aura_alert_node/    # Optional single alert ESP32
 ├── simulation/
-│   ├── aura_processor/        # SRCC, Doppler, vitals, multitarget, wireless
-│   │   ├── hardware_sensing.py  # Live ESP32 per-node pipeline
-│   │   └── wireless.py          # UDP receiver
-│   ├── wimans/                # WiMANS annotations + sklearn model
-│   ├── run_simulation.py      # CLI video-synced viewer
-│   └── config.yaml            # Node positions + hardware settings
-├── tools/
-│   ├── field_live.py          # Local hand-drawn matplotlib live ESP32 sensing
-│   ├── flash_alert_node.sh    # Flash the ONE alert monitor board
-│   ├── train_wimans.py        # Train count/localization model
-│   ├── wireless_hub.py        # Legacy CLI live hub
-│   ├── record_session.py      # UART recording (optional backup)
-│   └── validate_csi.py        # CSI format checker
-└── docs/
-    ├── HARDWARE_SETUP.md
-    ├── SIMULATION_GUIDE.md
-    ├── WIRELESS_AND_SIMULATION.md
-    ├── WIMANS_TRAINING.md
-    └── BENCHMARKS.md
+│   ├── aura_processor/     # CSI DSP pipeline (shared)
+│   └── wimans/             # WiMANS annotations + model
+└── tools/
+    ├── field_live.py       # Live ESP32 matplotlib UI
+    └── train_wimans.py     # Train count/localization model
 ```
 
 ---
 
-## How it works
-
-### Simulation path
-
-```
-.mp4 + .mat + .npy  →  loader (merge mat+npy)  →  WiMANS annotation lookup
-       →  AURAPipeline.process_session()  →  dashboard map / count / vitals
-```
-
-### Live hardware path
-
-```
-[TX ESP32] ──WiFi probes (ch 6)──► air ◄── human reflections
-                                        │
-              ┌─────────────────────────┼─────────────────────────┐
-              │                         │                         │
-         [RX Node 1]               [RX Node 2]               [RX Node N]
-              │                         │                         │
-              └──────── WiFi UDP ───────┴──────► Laptop (AURA_HUB :5555)
-                                                    │
-                                         tools/field_live.py (matplotlib)
-                                                    │
-                                         hardware_live.py → fusion → map / vitals
-```
-
-- **No internet** — laptop hotspot is local-only
-- **SRCC** removes clock-asynchrony phase noise (SISO bistatic ISAC)
-- Each RX node localizes from **its own position** in `config.yaml`
-- Multinode fusion deduplicates targets across the perimeter array
-
----
-
-## Documentation index
+## Documentation
 
 | Document | Contents |
 |----------|----------|
-| [HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md) | Components, flashing, field layout, troubleshooting |
-| [SIMULATION_GUIDE.md](docs/SIMULATION_GUIDE.md) | Dashboard upload, WiMANS datasets, CLI viewer |
-| [WIRELESS_AND_SIMULATION.md](docs/WIRELESS_AND_SIMULATION.md) | Combined wireless + simulation reference |
-| [WIMANS_TRAINING.md](docs/WIMANS_TRAINING.md) | Training sklearn model on real WiMANS `.npy` files |
-| [BENCHMARKS.md](docs/BENCHMARKS.md) | Expected accuracy, range, latency |
-| [firmware/README.md](firmware/README.md) | ESP-IDF build commands |
+| [docs/README.md](docs/README.md) | Documentation index |
+| [docs/SIMULATION_GUIDE.md](docs/SIMULATION_GUIDE.md) | Web + CLI simulation |
+| [docs/HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md) | Flashing & field layout |
+| [docs/HARDWARE_FIELD_DEPLOYMENT.md](docs/HARDWARE_FIELD_DEPLOYMENT.md) | Outdoor deployment guide |
+| [docs/WIRELESS_AND_SIMULATION.md](docs/WIRELESS_AND_SIMULATION.md) | Wireless + simulation reference |
+| [docs/WIMANS_TRAINING.md](docs/WIMANS_TRAINING.md) | Training on WiMANS data |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Accuracy & latency |
 
 ---
 

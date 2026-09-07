@@ -1,6 +1,6 @@
 # AURA Hardware Setup Guide
 
-Complete guide for building and deploying AURA ESP32 nodes in an **outdoor disaster field** — wireless CSI streaming to a laptop, no internet required.
+**AURA — Adaptive Urban Rescue & Alert Array** · Complete guide for ESP32 CSI nodes in outdoor disaster field deployment.
 
 ---
 

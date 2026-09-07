@@ -1,6 +1,6 @@
 # AURA Simulation Guide
 
-Run **CSI-only survivor sensing** synced to scene video using WiMANS-style datasets or your own `.mp4` + `.mat` + `.npy` triplets.
+**AURA — Adaptive Urban Rescue & Alert Array** · Run CSI-only survivor sensing synced to scene video using the bundled sample or your own WiMANS `.mp4` + `.mat` + `.npy` triplets.
 
 ---
 
@@ -11,7 +11,8 @@ Run **CSI-only survivor sensing** synced to scene video using WiMANS-style datas
 | **Sensing input** | CSI only — video is for playback/sync, not person detection |
 | **Required files** | `.mp4` (video) + `.mat` (raw CSI) + `.npy` (preprocessed amplitude) |
 | **WiMANS datasets** | Filename stem `act_X_Y` → exact count/locations from `annotation.csv` |
-| **Dashboard** | Recommended — upload all three files, click **Run Simulation** |
+| **Dashboard** | Recommended — click **Try simulation (act_105_48)** or upload your own triple |
+| **Bundled sample** | `dashboard/demo_data/act_105_48.{mp4,mat,npy}` — no download needed |
 | **CLI** | `simulation/run_simulation.py` — matplotlib viewer |
 
 ---
@@ -38,9 +39,17 @@ python dashboard/run.py
 # default http://127.0.0.1:8847
 ```
 
-### Step 2 — Prepare files
+### Step 2 — Try simulation (fastest)
 
-For WiMANS sample `act_100_5`:
+1. Open **http://127.0.0.1:8847/simulation**
+2. Click **Try simulation (act_105_48)** — uses bundled WiMANS video + CSI
+3. Play the scene video; stats and maps update in real time
+
+No file upload required for the bundled sample.
+
+### Step 3 — Or upload your own files
+
+For WiMANS sample `act_100_5` (or any matching `act_*` stem):
 
 | File | Example | Role |
 |------|---------|------|
@@ -54,16 +63,14 @@ Ground truth for `act_100_5`:
 - **3 users** at locations **a, b, c** in `empty_room`
 - Activities: **wave**, **lie_down**, **pick_up**
 
-### Step 3 — Upload and run
+### Step 4 — Upload and run
 
-1. Open **Simulation** tab
-2. Upload **Scene video** (`.mp4`)
-3. Upload **Raw CSI** (`.mat`)
-4. Upload **Preprocessed amp** (`.npy`)
-5. Leave sample rate blank (auto-detected, typically ~1000 Hz for WiMANS)
-6. Click **Run Simulation**
+1. Open **Simulation** page
+2. Under **or upload your own**, pick video (`.mp4`), raw CSI (`.mat`), amplitude (`.npy`)
+3. Leave sample rate blank (auto-detected)
+4. Click **Run uploaded dataset**
 
-### Step 4 — Read results
+### Step 5 — Read results
 
 | Panel | Shows |
 |-------|-------|

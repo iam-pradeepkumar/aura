@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Nepal Jajarkot earthquake">
+  <rect width="640" height="360" fill="#6b7280"/>
+  <path d="M0 300 L200 120 L400 200 L640 100 L640 360 L0 360 Z" fill="#4b5563"/>
+  <path d="M0 300 L150 180 L300 250 L500 160 L640 220 L640 360 L0 360 Z" fill="#374151"/>
+  <rect x="120" y="200" width="100" height="80" fill="#9ca3af" transform="rotate(-15 170 240)"/>
+  <rect x="280" y="180" width="120" height="90" fill="#d1d5db" transform="rotate(12 340 225)"/>
+  <path d="M300 180 L320 140 L340 180" fill="none" stroke="#ff4d4d" stroke-width="4"/>
+  <circle cx="320" cy="100" r="25" fill="#ff4d4d" opacity="0.7"/>
+  <text x="320" y="40" text-anchor="middle" font-family="Georgia,serif" font-size="22" fill="#fff9c4">Jajarkot Earthquake · Nov 2023</text>
+  <text x="320" y="330" text-anchor="middle" font-family="Georgia,serif" font-size="14" fill="#fdfbf7">Western Nepal · M6.4</text>
+</svg>

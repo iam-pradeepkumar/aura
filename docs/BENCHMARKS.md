@@ -1,6 +1,6 @@
 # AURA Benchmarks & Specifications
 
-Expected performance for ESP32-based offline CSI disaster sensing and WiMANS simulation benchmarks.
+**Adaptive Urban Rescue & Alert Array** — expected performance for ESP32 CSI disaster sensing and WiMANS simulation benchmarks.
 
 Values are **indicative** from ESP32 CSI literature, WiDFS 3.0 (Intel 5300), WiMANS dataset specs, and field testing guidance — **validate in your deployment environment**.
 
