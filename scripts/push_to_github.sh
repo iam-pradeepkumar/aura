@@ -3,7 +3,7 @@
 set -euo pipefail
 
 REPO_URL="${GITHUB_REPO_URL:-https://github.com/iam-pradeepkumar/aura.git}"
-BRANCH="${GITHUB_BRANCH:-main}"
+BRANCHES="${GITHUB_BRANCHES:-main cursor/disaster-alert-package-0853}"
 
 cd "$(dirname "$0")/.."
 
@@ -15,10 +15,14 @@ fi
 
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   echo "Pushing with GITHUB_TOKEN..."
-  git push "https://x-access-token:${GITHUB_TOKEN}@github.com/iam-pradeepkumar/aura.git" "$BRANCH"
+  for BRANCH in $BRANCHES; do
+    git push "https://x-access-token:${GITHUB_TOKEN}@github.com/iam-pradeepkumar/aura.git" "$BRANCH"
+  done
 elif gh auth status &>/dev/null; then
   echo "Pushing with GitHub CLI..."
-  git push github "$BRANCH"
+  for BRANCH in $BRANCHES; do
+    git push github "$BRANCH"
+  done
 else
   echo "ERROR: No GitHub credentials."
   echo ""
@@ -31,8 +35,8 @@ else
   echo "  bash scripts/push_to_github.sh"
   echo ""
   echo "Option 3 — Manual push:"
-  echo "  git push https://github.com/iam-pradeepkumar/aura.git $BRANCH"
+  echo "  git push https://github.com/iam-pradeepkumar/aura.git main"
   exit 1
 fi
 
-echo "Done: $REPO_URL ($BRANCH)"
+echo "Done: $REPO_URL (branches: $BRANCHES)"
