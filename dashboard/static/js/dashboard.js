@@ -15,11 +15,11 @@ const lastSensing = { sim: null };
 
 const plotLayout = {
   paper_bgcolor: "transparent",
-  plot_bgcolor: "#f7f8fa",
-  font: { color: "#0f172a", size: 9, family: "Inter, system-ui, sans-serif" },
+  plot_bgcolor: "#fdfbf7",
+  font: { color: "#2d2d2d", size: 9, family: "Patrick Hand, cursive" },
   margin: { l: 36, r: 10, t: 10, b: 28 },
-  xaxis: { gridcolor: "#e2e8f0", zerolinecolor: "#cbd5e1", linecolor: "#94a3b8" },
-  yaxis: { gridcolor: "#e2e8f0", zerolinecolor: "#cbd5e1", linecolor: "#94a3b8" },
+  xaxis: { gridcolor: "#e5e0d8", zerolinecolor: "#2d2d2d", linecolor: "#2d2d2d" },
+  yaxis: { gridcolor: "#e5e0d8", zerolinecolor: "#2d2d2d", linecolor: "#2d2d2d" },
 };
 
 fetch("/api/config").then((r) => r.json()).then((c) => {
@@ -246,7 +246,7 @@ function applySessionResult(json, statusEl) {
   document.getElementById("sim-meta").textContent =
     `${json.duration_sec}s · ${json.n_frames} frames · sync ${((json.sync_score || 1) * 100).toFixed(0)}%`;
   document.getElementById("sim-events").innerHTML =
-    (json.events || []).map((e) => `<li class="alert-pill">${e}</li>`).join("") || "<li>—</li>";
+    (json.events || []).map((e) => `<li class="badge-sketch">${e}</li>`).join("") || "<li>—</li>";
 
   updateSensingUI({
     target_count: json.target_count ?? 0,
