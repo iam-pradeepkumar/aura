@@ -52,31 +52,36 @@ class NetworkDispatcher:
             logger.warning("LAN multicast failed: %s", exc)
             return False
 
-    def dispatch_webhook(self, alert: DisasterAlert) -> tuple[bool, str]:
+    def dispatch_webhook(
+        self, alert: DisasterAlert, extra: dict[str, Any] | None = None
+    ) -> tuple[bool, str]:
         if not self._dm_enabled:
             return False, "disaster_management disabled"
         url = self._current_webhook()
         if not url:
-            return False, "no webhook_url configured"
+            return False, "no webhook_url configured (LAN multicast still sent)"
         headers: dict[str, str] = {}
         bearer = self._current_bearer()
         if bearer:
             headers["Authorization"] = f"Bearer {bearer}"
+        body: dict[str, Any] = {"alert": alert.to_dict()}
+        if extra:
+            body.update(extra)
         try:
-            status, body = post_json(
+            status, resp = post_json(
                 url,
-                {"alert": alert.to_dict()},
+                body,
                 timeout_sec=self._timeout_sec,
                 headers=headers,
             )
             ok = 200 <= status < 300
-            return ok, f"HTTP {status}: {body[:200]}"
+            return ok, f"HTTP {status}: {resp[:200]}"
         except Exception as exc:
             return False, str(exc)
 
-    def dispatch(self, alert: DisasterAlert) -> dict[str, Any]:
+    def dispatch(self, alert: DisasterAlert, extra: dict[str, Any] | None = None) -> dict[str, Any]:
         lan_ok = self.dispatch_lan(alert)
-        webhook_ok, webhook_msg = self.dispatch_webhook(alert)
+        webhook_ok, webhook_msg = self.dispatch_webhook(alert, extra=extra)
         return {
             "lan": lan_ok,
             "webhook": webhook_ok,

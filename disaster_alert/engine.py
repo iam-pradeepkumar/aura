@@ -155,14 +155,27 @@ class DisasterAlertEngine:
         return deduped
 
     def create_test_alert(self, message: str = "Test alert from disaster_alert engine") -> DisasterAlert:
+        loc = self._config.get("location") or {}
+        lat = float(loc.get("latitude", 12.334258))
+        lon = float(loc.get("longitude", 79.783187))
         alert = DisasterAlert(
-            alert_type=AlertType.TEST,
-            severity=Severity.INFO,
-            title="Test Alert",
-            message=message,
-            source="engine",
-            latitude=float((self._config.get("location") or {}).get("latitude", 0)),
-            longitude=float((self._config.get("location") or {}).get("longitude", 0)),
+            alert_type=AlertType.EARTHQUAKE,
+            severity=Severity.WARNING,
+            title="M4.2 earthquake detected — demo alert",
+            message=message or (
+                "USGS feed reports elevated seismic activity within 120 km of Vellore. "
+                "This is a DM console test — verify message, safe zones, then broadcast."
+            ),
+            source="dm_test",
+            latitude=lat,
+            longitude=lon,
+            distance_km=48.0,
+            metadata={
+                "demo": True,
+                "magnitude": 4.2,
+                "depth_km": 10,
+                "region": loc.get("name", "Vellore region, India"),
+            },
         )
         self._emit(alert)
         return alert

@@ -5,43 +5,77 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AURA — DM Console</title>
   <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Patrick+Hand&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=1" />
+  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=3" />
 </head>
 <body>
   <nav class="site-nav">
     <a href="/" class="site-logo">AURA ✎</a>
     <div class="nav-links">
       <a href="/">Home</a>
-      <a href="/simulation">Simulation</a>
       <a href="/alerts">Alerts</a>
       <a href="/manage" class="active">DM Console</a>
+      <span id="dm-status" class="badge-sketch">loading…</span>
     </div>
   </nav>
 
   <section class="section">
     <h1 class="section-title">Disaster management console</h1>
-    <p class="section-sub">Review machine-detected hazards → approve public alert → webhook notifies your team.</p>
+    <p class="section-sub">Simulate or approve real hazards → edit the public message → <strong>one button</strong> warns everyone in the area.</p>
 
-    <div class="card-sketch tape" style="margin-bottom:1.5rem;">
-      <h3>Alert webhook URL</h3>
-      <p style="font-size:1rem; opacity:0.85;">When you <strong>approve</strong> an alert, AURA POSTs JSON to this URL.</p>
-      <label class="field-label" for="webhook-url" style="display:block; margin:0.75rem 0 0.25rem; font-weight:700;">Webhook URL</label>
-      <input id="webhook-url" class="input-sketch" type="url" placeholder="https://hooks.example.com/aura-alerts" />
-      <label for="webhook-token" style="display:block; margin:0.75rem 0 0.25rem; font-weight:700;">Bearer token (optional)</label>
-      <input id="webhook-token" class="input-sketch" type="password" placeholder="Optional" />
-      <div style="display:flex; gap:0.75rem; flex-wrap:wrap; margin-top:1rem; align-items:center;">
-        <button id="btn-save-webhook" class="btn-sketch">Save webhook</button>
-        <button id="btn-test" class="btn-sketch secondary">Send test alert</button>
-        <span id="webhook-status" style="font-size:0.95rem;"></span>
+    <div id="dm-error" class="error-banner hidden"></div>
+
+    <div class="dm-grid">
+      <div>
+        <div class="card-sketch tape" style="margin-bottom:1.25rem;">
+          <h3>① Simulate hazard (for judges)</h3>
+          <p style="font-size:0.95rem;opacity:0.85;">Creates a realistic earthquake alert at your watch coordinates. It appears below for review — nothing is public until you broadcast.</p>
+          <button id="btn-simulate" class="btn-sketch" style="margin-top:0.75rem;width:100%;">Simulate hazard alert</button>
+          <p id="simulate-status" style="font-size:0.9rem;margin-top:0.5rem;"></p>
+        </div>
+
+        <div class="card-sketch postit">
+          <h3>Pending review <span id="pending-count" class="badge-sketch">0</span></h3>
+          <div id="pending-list"><p style="opacity:0.7;">No pending alerts. Click simulate above.</p></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="card-sketch" style="margin-bottom:1.25rem;">
+          <h3>② Public message (editable)</h3>
+          <label style="font-weight:700;display:block;margin:0.5rem 0 0.25rem;">Alert title</label>
+          <input id="broadcast-title" class="input-sketch" type="text" placeholder="EVACUATION ALERT — Vellore region" />
+          <label style="font-weight:700;display:block;margin:0.75rem 0 0.25rem;">Message to residents</label>
+          <textarea id="broadcast-message" class="textarea-sketch" placeholder="Move to safe zone immediately…"></textarea>
+          <p style="font-size:0.9rem;opacity:0.8;margin-top:0.5rem;">Safe zone list is appended automatically when you broadcast.</p>
+          <button id="btn-save-message" class="btn-sketch secondary" style="margin-top:0.75rem;">Save message template</button>
+        </div>
+
+        <div class="card-sketch">
+          <h3>③ Safe houses &amp; shelters</h3>
+          <p style="font-size:0.9rem;opacity:0.85;">Edit coordinates — shown on public alert and map link.</p>
+          <div id="zone-editor" class="zone-editor" style="margin-top:0.75rem;"></div>
+          <button id="btn-add-zone" class="btn-sketch secondary" style="margin-top:0.75rem;">+ Add safe zone</button>
+          <button id="btn-save-zones" class="btn-sketch" style="margin-top:0.75rem;margin-left:0.5rem;">Save safe zones</button>
+          <iframe id="zone-map" class="map-embed" style="margin-top:1rem;" loading="lazy"
+            title="Safe zone map" src="about:blank"></iframe>
+        </div>
+
+        <div class="card-sketch tape" style="margin-top:1.25rem;">
+          <h3>Webhook (optional)</h3>
+          <input id="webhook-url" class="input-sketch" type="url" placeholder="https://hooks.slack.com/…" style="margin-top:0.5rem;" />
+          <input id="webhook-token" class="input-sketch" type="password" placeholder="Bearer token (optional)" style="margin-top:0.5rem;" />
+          <button id="btn-save-webhook" class="btn-sketch secondary" style="margin-top:0.5rem;">Save webhook</button>
+          <span id="webhook-status" style="display:block;margin-top:0.5rem;font-size:0.9rem;"></span>
+        </div>
       </div>
     </div>
 
-    <div class="card-sketch postit">
-      <h3>Pending approval <span id="pending-count" class="badge-sketch">0</span></h3>
-      <div id="pending-list"><p style="opacity:0.7;">No pending alerts.</p></div>
+    <div class="card-sketch" style="margin-top:1.5rem;">
+      <h3>Broadcast preview</h3>
+      <div id="broadcast-preview" class="preview-box">Select a pending alert to preview the message residents will receive.</div>
     </div>
   </section>
 
-  <script src="/static/js/manage.js?v=1"></script>
+  <script src="/static/js/manage.js?v=3"></script>
 </body>
 </html>

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AURA — Alert Dashboard</title>
   <link href="https://fonts.googleapis.com/css2?family=Kalam:wght@700&family=Patrick+Hand&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=1" />
+  <link rel="stylesheet" href="/static/css/hand-drawn.css?v=3" />
 </head>
 <body>
   <nav class="site-nav">
@@ -20,33 +20,32 @@
   </nav>
 
   <section class="section">
-    <h1 class="section-title">Early warning feed</h1>
-    <p class="section-sub">Live hazard monitoring for <strong id="loc-name">—</strong> · <span id="loc-coords" class="mono">—</span></p>
+    <h1 class="section-title">Public alert feed</h1>
+    <p class="section-sub">Approved warnings for <strong id="loc-name">—</strong> · <span id="loc-coords" class="mono">—</span></p>
+
+    <div id="alert-error" class="error-banner hidden"></div>
 
     <div class="grid-2">
       <div class="card-sketch tape">
-        <h3>API sources</h3>
+        <h3>Monitor status</h3>
         <ul id="source-list" style="padding-left:1.2rem; margin:0;"></ul>
         <p id="last-poll" style="font-size:0.95rem; opacity:0.75; margin-top:1rem;">—</p>
-        <button id="btn-poll" class="btn-sketch" style="margin-top:0.75rem;">Poll now</button>
+        <button id="btn-poll" class="btn-sketch" style="margin-top:0.75rem;">Poll hazard APIs</button>
+        <p style="font-size:0.85rem;opacity:0.75;margin-top:0.5rem;">Raw hazards go to DM Console first. Only approved alerts appear below.</p>
       </div>
       <div class="card-sketch postit">
         <h3>Safe zones</h3>
         <div id="safe-zones"></div>
+        <p style="margin-top:0.75rem;font-size:0.9rem;"><a href="/manage">DM Console</a> can edit shelters &amp; messages.</p>
       </div>
     </div>
 
     <div class="card-sketch" style="margin-top:1.5rem;">
-      <h3>Active &amp; broadcast alerts <span id="alert-count" class="badge-sketch">0</span></h3>
-      <div id="alert-list"><p style="opacity:0.7;">Monitoring…</p></div>
+      <h3>Broadcast alerts <span id="alert-count" class="badge-sketch">0</span></h3>
+      <div id="alert-list"><p style="opacity:0.7;">Loading…</p></div>
     </div>
-
-    <p style="margin-top:1.5rem; font-size:0.95rem;">
-      <strong>Single alert node:</strong> only one ESP32 runs hazard monitoring; rescue nodes stay on <code>aura_rx</code>.
-      DM approval happens in <a href="/manage">DM Console</a>.
-    </p>
   </section>
 
-  <script src="/static/js/alerts.js?v=1"></script>
+  <script src="/static/js/alerts.js?v=3"></script>
 </body>
 </html>
