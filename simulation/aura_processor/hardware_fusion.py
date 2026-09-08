@@ -215,14 +215,30 @@ def consensus_target_count(
     fused_len: int,
     max_people: int,
     motion_active_nodes: int = 0,
+    max_per_node: int = 1,
 ) -> int:
-    """Global count aligned with fused targets and per-node estimates."""
-    if fused_len <= 0:
+    """Global count from fused tracks + per-node CSI estimates (supports crowds)."""
+    if fused_len <= 0 and motion_active_nodes <= 0:
         return 0
-    if not per_node_counts:
-        return min(fused_len, max_people)
-    nz = [c for c in per_node_counts if c > 0]
+
+    nz = [int(c) for c in per_node_counts if int(c) > 0]
     if not nz:
-        return min(fused_len, max_people)
+        return int(np.clip(fused_len, 0, max_people))
+
     median_n = int(np.median(nz))
-    return int(np.clip(min(fused_len, median_n, max_people), 0, max_people))
+    peak_n = int(np.max(nz))
+    summed = int(min(sum(nz), max_people))
+
+    # Crowd heuristic: multiple nodes reporting counts → scale up (avoid double-counting)
+    if len(nz) >= 2:
+        blended = int(
+            np.clip(
+                0.45 * summed + 0.30 * median_n * len(nz) + 0.25 * fused_len,
+                fused_len,
+                max_people,
+            )
+        )
+    else:
+        blended = int(np.clip(max(fused_len, median_n, peak_n), 0, max_people))
+
+    return int(np.clip(max(fused_len, blended), 0, max_people))

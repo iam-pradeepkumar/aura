@@ -14,6 +14,7 @@ def esp32_motion_score(
     rssi: np.ndarray | None = None,
     baseline: float | None = None,
     motion_min: float = 0.58,
+    indoor_mode: bool = False,
 ) -> dict:
     """
     Robust motion score for outdoor ESP32 CSI.
@@ -41,17 +42,20 @@ def esp32_motion_score(
         rssi_jitter = float(np.std(rssi))
 
     # Weighted combination — scale-invariant for int8 ESP32 amplitudes
+    var_scale = 28.0 if indoor_mode else 40.0
     score = (
         0.35 * min(srcc_energy / 1.5, 2.0)
-        + 0.30 * min(temporal_var / 40.0, 2.0)
-        + 0.20 * min(amp_cv / 0.15, 2.0)
+        + 0.30 * min(temporal_var / var_scale, 2.0)
+        + 0.20 * min(amp_cv / (0.12 if indoor_mode else 0.15), 2.0)
         + 0.10 * min(phase_var / 0.5, 2.0)
         + 0.05 * min(rssi_jitter / 2.0, 2.0)
     )
 
-    ref = baseline if baseline and baseline > 0.08 else max(score * 0.5, 0.22)
-    threshold = max(ref * 1.45, motion_min)
-    motion = score > threshold and score >= motion_min * 0.95
+    ref = baseline if baseline and baseline > 0.08 else max(score * 0.5, 0.18 if indoor_mode else 0.22)
+    thr_mul = 1.32 if indoor_mode else 1.45
+    threshold = max(ref * thr_mul, motion_min)
+    motion_floor = motion_min * (0.88 if indoor_mode else 0.95)
+    motion = score > threshold and score >= motion_floor
 
     return {
         "score": float(score),

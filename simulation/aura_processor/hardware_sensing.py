@@ -76,7 +76,7 @@ def detect_hardware_session_targets(
     prepared = np.nan_to_num(srcc(preprocess_csi(csi)))
     motion_level = float(np.mean(motion_energy(prepared)))
 
-    cap = min(max_targets, max_per_node, 2)
+    cap = min(max_targets, max_per_node)
     if not force_motion and motion_level < motion_threshold * 0.45 and motion_score < 0.45:
         return []
 
@@ -151,19 +151,20 @@ def process_hardware_window(
     score = float(motion_info.get("score", 0))
     motion = bool(motion_info.get("motion"))
     motion_min = float(getattr(pipeline, "_hw_motion_min", 0.58))
+    indoor = bool(getattr(pipeline, "_hw_indoor_mode", False))
 
     prepared = preprocess_csi(csi)
     cleaned = np.nan_to_num(srcc(prepared))
     m_energy = float(motion_info.get("energy", np.mean(motion_energy(cleaned))))
-    strong_motion = motion and score >= motion_min * 0.88
+    strong_motion = motion and score >= motion_min * (0.82 if indoor else 0.88)
     quality = _motion_signal_quality(cleaned, eff_threshold)
 
     vcsi = normalize_esp32_csi(vitals_csi if vitals_csi is not None and len(vitals_csi) >= 16 else csi)
     vprepared = preprocess_csi(vcsi)
     vcleaned = np.nan_to_num(srcc(vprepared))
 
-    quality_gate = 0.06 if score >= motion_min * 1.05 else 0.07
-    energy_gate = eff_threshold * 0.48 if score >= motion_min * 1.0 else eff_threshold * 0.55
+    quality_gate = 0.05 if indoor else (0.06 if score >= motion_min * 1.05 else 0.07)
+    energy_gate = eff_threshold * (0.38 if indoor else (0.48 if score >= motion_min * 1.0 else 0.55))
     if not strong_motion or quality < quality_gate or m_energy < energy_gate:
         return SensingResult(
             timestamp_sec=timestamp_sec,
@@ -183,9 +184,9 @@ def process_hardware_window(
     vitals = extract_vitals(vcleaned, pipeline.fs_hz, motion_cutoff_hz=1.2)
     _, _, ddm = delay_doppler_map(cleaned, pipeline.fs_hz)
 
-    cap = min(pipeline.max_targets, max_per_node, 2)
+    cap = min(pipeline.max_targets, max_per_node)
     count_limit = cap
-    loc_threshold = eff_threshold * 0.72
+    loc_threshold = eff_threshold * (0.65 if indoor else 0.72)
     window_dets = localize_motion_sources(
         cleaned,
         pipeline.fs_hz,
@@ -203,8 +204,25 @@ def process_hardware_window(
     ]
     window_dets = _filter_area(window_dets, pipeline.area_size_m, area_margin_m)
 
+    est_count = estimate_person_count(cleaned, m_energy, loc_threshold, max_people=cap)
+    if est_count > len(window_dets) and (window_dets or strong_motion):
+        seed = window_dets[0] if window_dets else _motion_sector_estimate(
+            sensor_xy, pipeline.area_size_m, area_margin_m, m_energy, eff_threshold,
+        )
+        cx, cy = float(seed["x_m"]), float(seed["y_m"])
+        for i in range(len(window_dets), est_count):
+            angle = 2.0 * np.pi * (i / max(est_count, 1))
+            radius = 0.6 + 0.35 * (i % 4)
+            det = dict(seed)
+            det["x_m"] = float(np.clip(cx + radius * np.cos(angle), area_margin_m, pipeline.area_size_m - area_margin_m))
+            det["y_m"] = float(np.clip(cy + radius * np.sin(angle), area_margin_m, pipeline.area_size_m - area_margin_m))
+            det["confidence"] = float(det.get("confidence", 0.35)) * 0.92
+            det["velocity_mps"] = max(float(det.get("velocity_mps", 0)), 0.15)
+            det["is_moving"] = True
+            window_dets.append(det)
+
     allow_fallback = bool(getattr(pipeline, "_hw_allow_sector_fallback", False))
-    if not window_dets and allow_fallback and score >= motion_min * 1.2:
+    if not window_dets and allow_fallback and score >= motion_min * (1.0 if indoor else 1.2):
         window_dets = [
             refine_detection_xy(
                 _motion_sector_estimate(sensor_xy, pipeline.area_size_m, area_margin_m, m_energy, eff_threshold),

@@ -24,7 +24,7 @@ from .hardware_tracker import FieldTracker
 from .serialize import _downsample, target_to_dict
 from .wireless import DEFAULT_UDP_PORT, WirelessReceiver
 
-PROCESSOR_VERSION = "2026.09.04-42"
+PROCESSOR_VERSION = "2026.09.08-48"
 
 
 def load_field_config(path: str | None = None) -> dict:
@@ -112,8 +112,10 @@ class LiveFieldEngine:
                 max_per_node=int(hw.get("max_per_node", 1)),
                 min_confidence=float(hw.get("min_confidence", 0.42)),
                 motion_min=float(hw.get("motion_score_min", 0.58)),
+                indoor_mode=bool(hw.get("indoor_mode", False)),
             )
             pipe._hw_motion_min = float(hw.get("motion_score_min", 0.58))
+            pipe._hw_indoor_mode = bool(hw.get("indoor_mode", False))
             pipe._hw_allow_sector_fallback = bool(hw.get("allow_sector_fallback", False))
         return self.node_states[nid]
 
@@ -126,7 +128,8 @@ class LiveFieldEngine:
         motion_pkts = int(hw_cfg.get("motion_packets", 24))
         vitals_pkts = int(hw_cfg.get("vitals_window_packets", 48))
         link_timeout = float(hw_cfg.get("link_timeout_sec", 20.0))
-        max_people = int(cfg.get("max_people", 4))
+        max_people = int(hw_cfg.get("max_people", cfg.get("max_people", 4)))
+        max_per_node = int(hw_cfg.get("max_per_node", 1))
         fetch_n = max(window_pkts, vitals_pkts, motion_pkts)
 
         now = time.time()
@@ -241,12 +244,14 @@ class LiveFieldEngine:
                 per_node_counts.append(res.target_count)
 
             min_conf = float(hw_cfg.get("min_confidence", 0.38))
+            conf_scale = 0.72 if bool(hw_cfg.get("indoor_mode", False)) else 0.82
+            score_scale = 0.65 if bool(hw_cfg.get("indoor_mode", False)) else 0.75
             for t in res.targets:
                 td = target_to_dict(t)
                 td["source_node"] = nid
                 conf = round(max(float(td.get("confidence", 0)), res.confidence), 2)
                 td["confidence"] = conf
-                if conf >= min_conf * 0.82 and node_score >= motion_score_min * 0.75:
+                if conf >= min_conf * conf_scale and node_score >= motion_score_min * score_scale:
                     all_target_dicts.append(td)
 
             if res.respiration_waveform is not None and len(res.respiration_waveform):
@@ -343,13 +348,22 @@ class LiveFieldEngine:
 
         tracked = self.tracker.update(confirmed, now) if confirmed else []
         fused_count = consensus_target_count(
-            per_node_counts, len(confirmed), max_people, motion_active_nodes=motion_active_nodes,
+            per_node_counts,
+            len(confirmed),
+            max_people,
+            motion_active_nodes=motion_active_nodes,
+            max_per_node=max_per_node,
         )
-        target_count = min(len(tracked), fused_count) if tracked else 0
+        target_count = fused_count
         if tracked and target_count < len(tracked):
             tracked = sorted(tracked, key=lambda t: t.get("confidence", 0), reverse=True)[:target_count]
+        elif tracked and target_count > len(tracked):
+            # Keep all tracked markers; count display can exceed localized tracks
+            pass
 
-        motion_confirmed = motion_verdict["motion"] and target_count > 0
+        motion_confirmed = (
+            motion_verdict["motion"] or motion_active_nodes >= motion_nodes_required
+        ) and target_count > 0
 
         best_vitals = select_best_vitals(node_vitals_pool, static_only=True) if target_count > 0 else {}
         if best_vitals:
@@ -395,7 +409,9 @@ class LiveFieldEngine:
             "sensing_nodes": sensing_count,
             "expected_nodes": len(self.expected_ids),
             "total_packets": packets,
-            "motion_detected": motion_confirmed,
+            "motion_detected": motion_confirmed or (
+                motion_verdict.get("motion", False) and motion_active_nodes >= motion_nodes_required
+            ),
             "motion_energy": round(max_motion_energy, 5),
             "motion_nodes": motion_verdict.get("active_nodes", motion_active_nodes),
             "target_count": target_count,

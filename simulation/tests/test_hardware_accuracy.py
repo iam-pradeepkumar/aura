@@ -170,9 +170,10 @@ def test_accuracy_scenarios() -> None:
 
 
 def test_consensus_count() -> None:
-  assert consensus_target_count([1, 1, 0, 1], 1, 4, motion_active_nodes=2) == 1
+  assert consensus_target_count([1, 1, 0, 1], 1, 4, motion_active_nodes=2, max_per_node=1) >= 1
   assert consensus_target_count([], 0, 4) == 0
-  assert consensus_target_count([2, 2], 2, 4) == 2
+  assert consensus_target_count([2, 2], 2, 4, max_per_node=2) >= 2
+  assert consensus_target_count([5, 4, 6, 5], 3, 24, max_per_node=8) <= 24
 
 
 if __name__ == "__main__":

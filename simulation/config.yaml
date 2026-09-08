@@ -1,7 +1,8 @@
 # AURA node layout — adjust to match your physical deployment (meters)
+# For a room test: measure corner-to-corner distance and set area_size_m + node_positions.
 area_size_m: 10.0
-motion_threshold: 0.02
-max_people: 4
+motion_threshold: 0.015
+max_people: 24
 
 node_positions:
   1: [0.0, 0.0]
@@ -12,31 +13,34 @@ node_positions:
 tx_position: [5.0, -2.0]
 wifi_channel: 0
 
-# Live hardware — accuracy-tuned (calibrate empty area first ~5s)
+# Live hardware — tuned for indoor room sensing + outdoor field use
 hardware:
-  min_packets: 12
-  motion_packets: 28
-  window_packets: 28
-  vitals_window_packets: 56
+  indoor_mode: true
+  min_packets: 8
+  motion_packets: 20
+  window_packets: 20
+  vitals_window_packets: 48
   refresh_every: 1
-  motion_threshold_scale: 0.92
-  motion_score_min: 0.50
-  motion_nodes_required: 2
-  calibration_frames: 25
+  motion_threshold_scale: 0.82
+  motion_score_min: 0.38
+  motion_nodes_required: 1
+  calibration_frames: 18
   allow_motion_consensus: true
-  confirm_frames: 3
-  consensus_extra_frames: 1
+  confirm_frames: 2
+  consensus_extra_frames: 0
   clear_frames: 2
-  fusion_gate_m: 3.2
-  area_margin_m: 0.35
-  min_node_votes: 2
-  min_confidence: 0.36
-  max_per_node: 1
-  max_people: 4
-  allow_sector_fallback: false
-  tracker_alpha: 0.76
-  tracker_miss_frames: 4
-  min_trail_step_m: 0.15
+  fusion_gate_m: 2.4
+  area_margin_m: 0.12
+  min_node_votes: 1
+  min_confidence: 0.28
+  max_per_node: 8
+  max_people: 24
+  allow_sector_fallback: true
+  tracker_alpha: 0.82
+  tracker_miss_frames: 5
+  min_trail_step_m: 0.10
   link_timeout_sec: 20.0
-  trail_length: 40
+  trail_length: 48
   expected_nodes: 4
+  worker_interval_ms: 40
+  display_fps: 20

@@ -36,6 +36,7 @@ class NodePipelineState:
         max_per_node: int = 2,
         min_confidence: float = 0.35,
         motion_min: float = 0.58,
+        indoor_mode: bool = False,
     ):
         self.node_id = node_id
         self.pipeline = pipeline
@@ -48,6 +49,7 @@ class NodePipelineState:
         self.max_per_node = max_per_node
         self.min_confidence = min_confidence
         self._motion_min = motion_min
+        self._indoor_mode = indoor_mode
         self._packet_count = 0
         self._motion_baseline: float | None = None
         self._last_motion_score = 0.0
@@ -71,7 +73,13 @@ class NodePipelineState:
         self.pipeline.fs_hz = fs
         self.pipeline.window_samples = motion_n
 
-        motion_info = esp32_motion_score(motion_csi, motion_rssi, baseline=self._motion_baseline, motion_min=self._motion_min)
+        motion_info = esp32_motion_score(
+            motion_csi,
+            motion_rssi,
+            baseline=self._motion_baseline,
+            motion_min=self._motion_min,
+            indoor_mode=self._indoor_mode,
+        )
         self._last_motion_score = motion_info["score"]
         if not motion_info["motion"]:
             self._motion_baseline = update_baseline(self._motion_baseline, motion_info["score"])
