@@ -181,9 +181,6 @@ def process_hardware_window(
             confidence=0.0,
         )
 
-    vitals = extract_vitals(vcleaned, pipeline.fs_hz, motion_cutoff_hz=1.2)
-    _, _, ddm = delay_doppler_map(cleaned, pipeline.fs_hz)
-
     cap = min(pipeline.max_targets, max_per_node)
     count_limit = cap
     loc_threshold = eff_threshold * (0.65 if indoor else 0.72)
@@ -204,23 +201,6 @@ def process_hardware_window(
     ]
     window_dets = _filter_area(window_dets, pipeline.area_size_m, area_margin_m)
 
-    est_count = estimate_person_count(cleaned, m_energy, loc_threshold, max_people=cap)
-    if est_count > len(window_dets) and (window_dets or strong_motion):
-        seed = window_dets[0] if window_dets else _motion_sector_estimate(
-            sensor_xy, pipeline.area_size_m, area_margin_m, m_energy, eff_threshold,
-        )
-        cx, cy = float(seed["x_m"]), float(seed["y_m"])
-        for i in range(len(window_dets), est_count):
-            angle = 2.0 * np.pi * (i / max(est_count, 1))
-            radius = 0.6 + 0.35 * (i % 4)
-            det = dict(seed)
-            det["x_m"] = float(np.clip(cx + radius * np.cos(angle), area_margin_m, pipeline.area_size_m - area_margin_m))
-            det["y_m"] = float(np.clip(cy + radius * np.sin(angle), area_margin_m, pipeline.area_size_m - area_margin_m))
-            det["confidence"] = float(det.get("confidence", 0.35)) * 0.92
-            det["velocity_mps"] = max(float(det.get("velocity_mps", 0)), 0.15)
-            det["is_moving"] = True
-            window_dets.append(det)
-
     allow_fallback = bool(getattr(pipeline, "_hw_allow_sector_fallback", False))
     if not window_dets and allow_fallback and score >= motion_min * (1.0 if indoor else 1.2):
         window_dets = [
@@ -240,23 +220,23 @@ def process_hardware_window(
     conf = detection_confidence(detections, m_energy, eff_threshold)
 
     if not detections:
-        rb = float(vitals.get("respiration_bpm", 0) or 0)
-        hb = float(vitals.get("heartbeat_bpm", 0) or 0)
-        use_vitals = strong_motion and score >= motion_min * 0.98
         return SensingResult(
             timestamp_sec=timestamp_sec,
             motion_detected=strong_motion,
             motion_energy=m_energy,
             target_count=0,
             targets=[],
-            respiration_bpm=rb if use_vitals else 0.0,
-            heartbeat_bpm=hb if use_vitals else 0.0,
-            respiration_waveform=vitals.get("respiration_waveform") if use_vitals else None,
-            heartbeat_waveform=vitals.get("heartbeat_waveform") if use_vitals else None,
-            delay_doppler_map=ddm,
-            events=list(pipeline.tracker.events),
+            respiration_bpm=0.0,
+            heartbeat_bpm=0.0,
+            respiration_waveform=None,
+            heartbeat_waveform=None,
+            delay_doppler_map=None,
+            events=[],
             confidence=conf,
         )
+
+    vitals = extract_vitals(vcleaned, pipeline.fs_hz, motion_cutoff_hz=1.2)
+    _, _, ddm = delay_doppler_map(cleaned, pipeline.fs_hz)
 
     per_vitals = extract_vitals_for_detections(vcleaned, pipeline.fs_hz, detections)
     for i, det in enumerate(detections):
@@ -277,8 +257,7 @@ def process_hardware_window(
         if det.get("velocity_mps", 0) < 0.12 and strong_motion:
             det["velocity_mps"] = 0.2
 
-    targets = pipeline.tracker.update(detections, timestamp_sec)
-    display_targets = _display_targets(detections, targets)
+    display_targets = _detections_to_targets(detections)
 
     r_vals = [t.respiration_bpm for t in display_targets if t.respiration_bpm > 0]
     h_vals = [t.heartbeat_bpm for t in display_targets if t.heartbeat_bpm > 0]
@@ -308,9 +287,29 @@ def process_hardware_window(
         respiration_waveform=resp_out,
         heartbeat_waveform=hr_out,
         delay_doppler_map=ddm,
-        events=list(pipeline.tracker.events),
+        events=[],
         confidence=conf,
     )
+
+
+def _detections_to_targets(detections: list[dict]) -> list[Target]:
+    """Convert localized detections to targets — global FieldTracker owns IDs."""
+    out: list[Target] = []
+    for i, det in enumerate(detections):
+        out.append(
+            Target(
+                id=i + 1,
+                x_m=float(det["x_m"]),
+                y_m=float(det["y_m"]),
+                velocity_mps=float(det.get("velocity_mps", 0)),
+                respiration_bpm=float(det.get("respiration_bpm", 0)),
+                heartbeat_bpm=float(det.get("heartbeat_bpm", 0)),
+                respiration_waveform=det.get("respiration_waveform"),
+                heartbeat_waveform=det.get("heartbeat_waveform"),
+                is_moving=bool(det.get("is_moving") or det.get("velocity_mps", 0) > 0.12),
+            )
+        )
+    return out
 
 
 def _merge_session_and_window(session: list[dict], window_dets: list[dict]) -> list[dict]:

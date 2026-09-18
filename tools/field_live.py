@@ -132,8 +132,9 @@ def main() -> None:
     cfg = load_field_config(_resolve_config(args.config))
     hw = cfg.get("hardware", {})
     area = float(cfg.get("area_size_m", 10.0))
-    max_people = int(hw.get("max_people", cfg.get("max_people", 24)))
+    max_people = int(hw.get("max_people", cfg.get("max_people", 8)))
     indoor = bool(hw.get("indoor_mode", False))
+    deployment = str(hw.get("deployment_mode", "field" if not indoor else "indoor")).upper()
     node_pos = {int(k): tuple(v) for k, v in cfg.get("node_positions", {}).items()}
     expected_nodes = len(node_pos) or int(hw.get("expected_nodes", 4))
     display_fps = float(args.fps or hw.get("display_fps", 20))
@@ -172,7 +173,7 @@ def main() -> None:
     worker_thread = threading.Thread(target=worker, daemon=True)
     worker_thread.start()
 
-    mode_label = "INDOOR" if indoor else "FIELD"
+    mode_label = deployment
     print(f"AURA Field Live {PROCESSOR_VERSION} [{mode_label}]")
     print(f"UDP :{args.port}  |  Hotspot AURA_HUB / aura2026  |  max {max_people} people")
     print("Stand in empty room ~4s for calibration, then walk the search area. Ctrl+C to quit.\n")
@@ -201,8 +202,7 @@ def main() -> None:
     ax_title = fig.add_subplot(gs[0, :])
     ax_title.axis("off")
     ax_title.text(0.0, 0.62, "AURA Field Sensing", fontsize=20, fontweight="bold", color=FG, va="center")
-    badge = f" {mode_label} " if indoor else " FIELD "
-    ax_title.text(0.0, 0.08, f"✎ live rescue view ·{badge}· max {max_people}", fontsize=10, color=MUTED, va="center")
+    ax_title.text(0.0, 0.08, f"✎ disaster rescue · {mode_label} · max {max_people} survivors", fontsize=10, color=MUTED, va="center")
     status_text = ax_title.text(
         1.0, 0.5, "Starting…", fontsize=10, color=FG, va="center", ha="right", family="monospace",
     )

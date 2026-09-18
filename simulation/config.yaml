@@ -1,8 +1,8 @@
-# AURA node layout — adjust to match your physical deployment (meters)
-# For a room test: measure corner-to-corner distance and set area_size_m + node_positions.
+# AURA field deployment — measure your search cell and set node_positions (meters).
+# SIH26223: device-free survivor detection & localization for disaster rescue.
 area_size_m: 10.0
-motion_threshold: 0.015
-max_people: 24
+motion_threshold: 0.018
+max_people: 8
 
 node_positions:
   1: [0.0, 0.0]
@@ -13,34 +13,36 @@ node_positions:
 tx_position: [5.0, -2.0]
 wifi_channel: 0
 
-# Live hardware — tuned for indoor room sensing + outdoor field use
+# Live hardware — disaster rescue / field deployment (accuracy-first)
 hardware:
-  indoor_mode: true
-  min_packets: 8
-  motion_packets: 20
-  window_packets: 20
-  vitals_window_packets: 48
+  deployment_mode: field
+  indoor_mode: false
+  min_packets: 24
+  motion_packets: 24
+  window_packets: 32
+  vitals_window_packets: 100
   refresh_every: 1
-  motion_threshold_scale: 0.82
-  motion_score_min: 0.38
-  motion_nodes_required: 1
-  calibration_frames: 18
+  motion_threshold_scale: 0.90
+  motion_score_min: 0.48
+  motion_nodes_required: 2
+  calibration_frames: 25
   allow_motion_consensus: true
   confirm_frames: 2
-  consensus_extra_frames: 0
+  consensus_extra_frames: 1
   clear_frames: 2
-  fusion_gate_m: 2.4
-  area_margin_m: 0.12
-  min_node_votes: 1
-  min_confidence: 0.28
-  max_per_node: 8
-  max_people: 24
-  allow_sector_fallback: true
-  tracker_alpha: 0.82
+  fusion_gate_m: 2.8
+  area_margin_m: 0.30
+  min_node_votes: 2
+  min_confidence: 0.34
+  max_per_node: 2
+  max_people: 8
+  allow_sector_fallback: false
+  tracker_alpha: 0.78
   tracker_miss_frames: 5
-  min_trail_step_m: 0.10
-  link_timeout_sec: 20.0
-  trail_length: 48
+  min_trail_step_m: 0.12
+  link_timeout_sec: 12.0
+  link_hold_multiplier: 1.05
+  trail_length: 50
   expected_nodes: 4
-  worker_interval_ms: 40
-  display_fps: 20
+  worker_interval_ms: 80
+  display_fps: 15

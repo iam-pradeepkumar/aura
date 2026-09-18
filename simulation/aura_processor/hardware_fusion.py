@@ -217,28 +217,26 @@ def consensus_target_count(
     motion_active_nodes: int = 0,
     max_per_node: int = 1,
 ) -> int:
-    """Global count from fused tracks + per-node CSI estimates (supports crowds)."""
-    if fused_len <= 0 and motion_active_nodes <= 0:
+    """
+    Conservative rescue count — fused multinode tracks are primary truth.
+
+    Per-node CSI heuristics can overcount on ESP32 SISO links; cap each node's
+    contribution and never report more than fused clusters without agreement.
+    """
+    if fused_len <= 0:
         return 0
 
-    nz = [int(c) for c in per_node_counts if int(c) > 0]
-    if not nz:
+    capped = [min(int(c), max(1, max_per_node)) for c in per_node_counts if int(c) > 0]
+    if not capped:
         return int(np.clip(fused_len, 0, max_people))
 
-    median_n = int(np.median(nz))
-    peak_n = int(np.max(nz))
-    summed = int(min(sum(nz), max_people))
+    median_n = int(np.median(capped))
+    agreeing = sum(1 for c in capped if c >= median_n)
 
-    # Crowd heuristic: multiple nodes reporting counts → scale up (avoid double-counting)
-    if len(nz) >= 2:
-        blended = int(
-            np.clip(
-                0.45 * summed + 0.30 * median_n * len(nz) + 0.25 * fused_len,
-                fused_len,
-                max_people,
-            )
-        )
+    # Only raise above fused_len when 2+ nodes agree on the same count
+    if agreeing >= 2 and median_n > fused_len and median_n - fused_len <= 1:
+        est = median_n
     else:
-        blended = int(np.clip(max(fused_len, median_n, peak_n), 0, max_people))
+        est = fused_len
 
-    return int(np.clip(max(fused_len, blended), 0, max_people))
+    return int(np.clip(min(est, max_people), 0, max_people))

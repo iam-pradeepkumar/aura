@@ -19,7 +19,7 @@ Values are **indicative** from ESP32 CSI literature, WiDFS 3.0 (Intel 5300), WiM
 | Internet | None | None |
 | Power per node | N/A | ~80–150 mA @ 5V |
 
-**Processor version reference:** `2026.08.31-26`
+**Processor version reference:** `2026.09.18-50`
 
 ---
 
@@ -72,7 +72,7 @@ Each live RX node localizes from **its own corner**; `fuse_multinode_targets()` 
 | Heartbeat | 0.7–2.0 | 48–120/min | ~58–85/min | ±5–15 BPM (harder) |
 
 **Live hardware requirements:**
-- `window_packets: 200` (~10 s at 20 Hz) in `config.yaml`
+- `vitals_window_packets: 100` (~5 s at 20 Hz) in `simulation/config.yaml`
 - Subject relatively still
 - Partial line-of-sight through light debris
 

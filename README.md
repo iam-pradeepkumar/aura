@@ -197,6 +197,14 @@ See [docs/SIMULATION_GUIDE.md](docs/SIMULATION_GUIDE.md) and [docs/WIMANS_TRAINI
 3. Start laptop hotspot: **SSID `AURA_HUB`**, password **`aura2026`**
 4. Power TX, then RX nodes
 5. Run `python3 tools/field_live.py` — **close dashboard first** (same UDP port 5555)
+6. **Calibrate** — keep the search area empty until status shows `CAL OK` (~5 s)
+7. **Verify** — walk the perimeter: count on screen must match markers on the survivor map (1:1)
+
+**Disaster rescue checklist (SIH26223):**
+- All 4 RX nodes linked (`linked 4/4`) before entering survivors
+- `motion_nodes_required: 2` in config — two nodes must agree before reporting a person
+- Count cap is 8 fused targets (realistic for ESP32 SISO); adjust `area_size_m` to your rubble cell
+- Stand still near a node for ~5 s to read respiration / heartbeat vitals
 
 See [docs/HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md) and [docs/HARDWARE_FIELD_DEPLOYMENT.md](docs/HARDWARE_FIELD_DEPLOYMENT.md).
 

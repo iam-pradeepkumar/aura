@@ -24,7 +24,7 @@ from .hardware_tracker import FieldTracker
 from .serialize import _downsample, target_to_dict
 from .wireless import DEFAULT_UDP_PORT, WirelessReceiver
 
-PROCESSOR_VERSION = "2026.09.08-48"
+PROCESSOR_VERSION = "2026.09.18-50"
 
 
 def load_field_config(path: str | None = None) -> dict:
@@ -133,7 +133,8 @@ class LiveFieldEngine:
         fetch_n = max(window_pkts, vitals_pkts, motion_pkts)
 
         now = time.time()
-        hold_grace = link_timeout * 1.25
+        hold_mul = float(hw_cfg.get("link_hold_multiplier", 1.05))
+        hold_grace = link_timeout * hold_mul
 
         all_target_dicts: list[dict] = []
         per_node_counts: list[int] = []
@@ -219,7 +220,7 @@ class LiveFieldEngine:
             st = self.node_states[nid]
             node_score = float(st.last_motion_score)
             node_scores[nid] = node_score
-            self._calibrator.update(nid, node_score)
+            self._calibrator.update(nid, node_score, motion_min=motion_score_min)
 
             thr = (
                 self._calibrator.motion_threshold(nid, motion_score_min)
@@ -244,8 +245,9 @@ class LiveFieldEngine:
                 per_node_counts.append(res.target_count)
 
             min_conf = float(hw_cfg.get("min_confidence", 0.38))
-            conf_scale = 0.72 if bool(hw_cfg.get("indoor_mode", False)) else 0.82
-            score_scale = 0.65 if bool(hw_cfg.get("indoor_mode", False)) else 0.75
+            indoor = bool(hw_cfg.get("indoor_mode", False))
+            conf_scale = 0.72 if indoor else 0.85
+            score_scale = 0.65 if indoor else 0.78
             for t in res.targets:
                 td = target_to_dict(t)
                 td["source_node"] = nid
@@ -354,16 +356,13 @@ class LiveFieldEngine:
             motion_active_nodes=motion_active_nodes,
             max_per_node=max_per_node,
         )
-        target_count = fused_count
-        if tracked and target_count < len(tracked):
-            tracked = sorted(tracked, key=lambda t: t.get("confidence", 0), reverse=True)[:target_count]
-        elif tracked and target_count > len(tracked):
-            # Keep all tracked markers; count display can exceed localized tracks
-            pass
+        # Count always matches map markers — rescue operators need 1:1 truth
+        target_count = len(tracked)
+        if target_count == 0 and fused_count > 0 and confirmed:
+            # Tracker warming up — use confirmed clusters until IDs assigned
+            target_count = min(fused_count, max_people)
 
-        motion_confirmed = (
-            motion_verdict["motion"] or motion_active_nodes >= motion_nodes_required
-        ) and target_count > 0
+        motion_confirmed = bool(motion_verdict.get("motion")) and target_count > 0
 
         best_vitals = select_best_vitals(node_vitals_pool, static_only=True) if target_count > 0 else {}
         if best_vitals:
@@ -409,9 +408,7 @@ class LiveFieldEngine:
             "sensing_nodes": sensing_count,
             "expected_nodes": len(self.expected_ids),
             "total_packets": packets,
-            "motion_detected": motion_confirmed or (
-                motion_verdict.get("motion", False) and motion_active_nodes >= motion_nodes_required
-            ),
+            "motion_detected": motion_confirmed,
             "motion_energy": round(max_motion_energy, 5),
             "motion_nodes": motion_verdict.get("active_nodes", motion_active_nodes),
             "target_count": target_count,

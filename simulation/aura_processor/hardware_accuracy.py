@@ -17,8 +17,11 @@ class SceneCalibrator:
         self._floor: dict[int, float] = {}
         self._ready = False
 
-    def update(self, node_id: int, score: float) -> None:
+    def update(self, node_id: int, score: float, motion_min: float = 0.48) -> None:
         if self._ready:
+            return
+        # Skip calibration samples when scene is occupied (avoid low thresholds)
+        if float(score) >= motion_min * 0.92:
             return
         self._history[node_id].append(float(score))
         if not self.expected_ids:

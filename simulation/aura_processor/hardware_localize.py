@@ -156,6 +156,7 @@ def refine_fused_targets(
 
     rssi_xy = rssi_localize(rssi_by_node, node_positions, area_size_m, margin_m)
     n_rssi = len(rssi_by_node)
+    multi = len(targets) > 1
     out: list[dict] = []
     for t in targets:
         t = dict(t)
@@ -164,9 +165,15 @@ def refine_fused_targets(
         moving = bool(t.get("is_moving")) or float(t.get("velocity_mps", 0)) > 0.1
         blended = blend_live_position(csi_xy, rssi_xy, conf, moving)
         if blended is not None:
-            # Trust RSSI more when 3+ nodes contribute (better trilateration)
-            if n_rssi >= 3 and rssi_xy is not None:
+            # With multiple survivors, avoid collapsing all CSI hits to one RSSI centroid
+            if n_rssi >= 3 and rssi_xy is not None and not multi:
                 w = 0.55 if moving else 0.62
+                blended = (
+                    w * rssi_xy[0] + (1 - w) * blended[0],
+                    w * rssi_xy[1] + (1 - w) * blended[1],
+                )
+            elif multi and rssi_xy is not None:
+                w = 0.22 if moving else 0.28
                 blended = (
                     w * rssi_xy[0] + (1 - w) * blended[0],
                     w * rssi_xy[1] + (1 - w) * blended[1],
