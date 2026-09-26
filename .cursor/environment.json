@@ -1,5 +1,10 @@
 {
   "name": "AURA Rescue + Alerts",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "user": "ubuntu",
   "install": "bash .cursor/scripts/cloud-agent-install.sh",
   "terminals": [
     {
@@ -19,7 +24,7 @@
     "earthquake.usgs.gov",
     "fonts.googleapis.com",
     "fonts.gstatic.com",
-    "github.com",
-    "api.github.com"
+    "pypi.org",
+    "files.pythonhosted.org"
   ]
 }
