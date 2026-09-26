@@ -157,8 +157,13 @@ def fuse_hardware_targets(
                 c["velocity_mps"] = max(c.get("velocity_mps", 0), float(t.get("velocity_mps", 0)))
                 c["respiration_bpm"] = max(c.get("respiration_bpm", 0), float(t.get("respiration_bpm", 0)))
                 c["heartbeat_bpm"] = max(c.get("heartbeat_bpm", 0), float(t.get("heartbeat_bpm", 0)))
+                c["resp_confidence"] = max(c.get("resp_confidence", 0), float(t.get("resp_confidence", 0)))
+                c["hr_confidence"] = max(c.get("hr_confidence", 0), float(t.get("hr_confidence", 0)))
+                c["vitals_quality"] = max(c.get("vitals_quality", 0), float(t.get("vitals_quality", 0)))
                 c["is_moving"] = c.get("is_moving") or t.get("is_moving")
                 c["confidence"] = max(c.get("confidence", 0), conf)
+                if t.get("depth_band"):
+                    c["depth_band"] = t["depth_band"]
                 if t.get("respiration_waveform"):
                     c["respiration_waveform"] = t["respiration_waveform"]
                 if t.get("heartbeat_waveform"):

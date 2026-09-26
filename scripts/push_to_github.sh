@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Push AURA to GitHub: https://github.com/iam-pradeepkumar/aura.git
+# Push AURA to GitHub from YOUR LOCAL MACHINE (not Cloud Agent).
+# Repo: https://github.com/iam-pradeepkumar/AURA
 set -euo pipefail
 
-REPO_URL="${GITHUB_REPO_URL:-https://github.com/iam-pradeepkumar/aura.git}"
+REPO_URL="${GITHUB_REPO_URL:-https://github.com/iam-pradeepkumar/AURA.git}"
 BRANCHES="${GITHUB_BRANCHES:-main cursor/disaster-alert-package-0853}"
 
 cd "$(dirname "$0")/.."

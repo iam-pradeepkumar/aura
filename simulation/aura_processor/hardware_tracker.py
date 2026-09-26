@@ -86,6 +86,10 @@ class FieldTracker:
                 tid = self._next_id
                 self._next_id += 1
                 was_moving = False
+                if self.use_kalman:
+                    kf = Kalman2D()
+                    kf.reset(x, y)
+                    self._kalman[tid] = kf
                 self._targets[tid] = {
                     "id": tid,
                     "x_m": x,

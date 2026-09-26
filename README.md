@@ -23,7 +23,7 @@ AURA combines a **disaster alert engine** (USGS + Open-Meteo → DM approval →
 | Respiration & heartbeat | Rescue | Phase/amplitude vitals extraction |
 | Offline operation | Rescue | Laptop hotspot `AURA_HUB` — no internet needed |
 
-**Processor version:** `2026.09.04-42` · **Sensing accuracy:** >90% (validated on WiMANS + field calibration)
+**Processor version:** `2026.09.26-v2` · **Sensing engine:** `sensing_v2` (ensemble vitals, fall/distress, START triage suggestions)
 
 ---
 
@@ -142,11 +142,14 @@ Configure thresholds in `disaster_alert/config.yaml`. Safe zones in DM Console.
 
 4. **Laptop hotspot** — SSID `AURA_HUB`, password `aura2026`, IP `192.168.4.1`. Nodes stream CSI via UDP port **5555**.
 
-5. **Signal processing** (`simulation/aura_processor/`):
-   - SRCC phase correction
-   - Motion & Doppler detection
-   - Multitarget count and XY fusion
-   - Respiration / heartbeat waveforms
+5. **Signal processing** (`simulation/aura_processor/`, engine **`sensing_v2`**):
+   - Gain compensation + subcarrier weighting (esp-csi / spatial-ai inspired)
+   - Motion debounce FSM + wander/jitter features
+   - Ensemble vitals (Goertzel + PSD + confidence scores)
+   - Fall / distress heuristics + START triage **suggestions** (operator approves in DM Console)
+   - Kalman 2D tracking, multinode XY fusion
+
+   Toggle in `simulation/config.yaml`: `hardware.sensing_engine: v2` (default) or `v1`.
 
 6. **Live viewer** — `python3 tools/field_live.py` (matplotlib). **Calibrate 5 s with empty scene first.**
 
