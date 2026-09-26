@@ -18,6 +18,8 @@
     "api.open-meteo.com",
     "earthquake.usgs.gov",
     "fonts.googleapis.com",
-    "fonts.gstatic.com"
+    "fonts.gstatic.com",
+    "github.com",
+    "api.github.com"
   ]
 }
