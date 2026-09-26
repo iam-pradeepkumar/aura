@@ -42,12 +42,12 @@ export function NodeInspector({ node, onClose }: NodeInspectorProps) {
         ×
       </button>
       <div style={{ color: "var(--text)", fontSize: 10, marginBottom: 6 }}>{node.id}</div>
-      <div style={{ color: node.online ? "var(--healthy)" : "var(--critical)" }}>
+      <div style={{ color: node.online ? "var(--healthy)" : "var(--critical)", marginBottom: 10 }}>
         {node.online ? "ONLINE" : "OFFLINE"}
       </div>
-      <div style={{ marginTop: 8, color: "var(--muted)" }}>SIGNAL</div>
-      <div style={{ color: "var(--rf-cyan)" }}>{signalPct}%</div>
-      <div style={{ marginTop: 6, color: "var(--muted)" }}>CSI</div>
+      <div style={{ color: "var(--muted)" }}>SIGNAL</div>
+      <div style={{ color: "var(--rf-cyan)", marginBottom: 8 }}>{signalPct}%</div>
+      <div style={{ color: "var(--muted)" }}>CSI</div>
       <div style={{ color: "var(--text)" }}>ACTIVE</div>
     </div>
   );

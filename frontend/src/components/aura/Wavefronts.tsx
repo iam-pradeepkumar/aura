@@ -4,9 +4,9 @@ import * as THREE from "three";
 import type { DisturbanceState, NodeState } from "../../types/sensing";
 
 const POINTS = 128;
-const WAVES_PER_NODE = 3;
-const FALLOFF = 2.8;
-const BEND_STRENGTH = 1.15;
+const WAVES_PER_NODE = 4;
+const FALLOFF = 2.6;
+const BEND_STRENGTH = 0.95;
 const Y_HEIGHT = 0.08;
 
 interface WavefrontsProps {
@@ -114,7 +114,7 @@ export function Wavefronts({ nodes, disturbance }: WavefrontsProps) {
 
         const tangentX = -dz / Math.max(distance, 0.001);
         const tangentZ = dx / Math.max(distance, 0.001);
-        const bend = influence * BEND_STRENGTH * dist.strength;
+        const bend = influence * BEND_STRENGTH;
 
         x += tangentX * bend;
         z += tangentZ * bend;

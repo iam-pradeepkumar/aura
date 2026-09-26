@@ -6,10 +6,10 @@ export function Header() {
         top: 0,
         left: 0,
         right: 0,
-        height: 48,
-        display: "flex",
+        height: 44,
+        display: "grid",
+        gridTemplateColumns: "1fr auto 1fr",
         alignItems: "center",
-        justifyContent: "space-between",
         padding: "0 20px",
         background: "var(--header-bg)",
         borderBottom: "1px solid var(--border)",
@@ -17,30 +17,32 @@ export function Header() {
         pointerEvents: "none",
       }}
     >
-      <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-        <span
-          style={{
-            fontSize: 13,
-            fontWeight: 600,
-            letterSpacing: "0.22em",
-            color: "var(--text)",
-          }}
-        >
-          AURA
-        </span>
-        <span
-          style={{
-            fontSize: 10,
-            letterSpacing: "0.14em",
-            color: "var(--muted)",
-            textTransform: "uppercase",
-          }}
-        >
-          Wi-Fi Sensing Observatory
-        </span>
-      </div>
+      <span
+        style={{
+          fontSize: 13,
+          fontWeight: 600,
+          letterSpacing: "0.22em",
+          color: "var(--text)",
+        }}
+      >
+        AURA
+      </span>
+
+      <span
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.16em",
+          color: "var(--muted)",
+          textTransform: "uppercase",
+          textAlign: "center",
+        }}
+      >
+        Wi-Fi Sensing Observatory
+      </span>
+
       <div
         style={{
+          justifySelf: "end",
           fontFamily: "var(--font-mono)",
           fontSize: 9,
           letterSpacing: "0.1em",
@@ -56,7 +58,7 @@ export function Header() {
             height: 6,
             borderRadius: "50%",
             background: "var(--healthy)",
-            boxShadow: "0 0 6px rgba(70, 245, 196, 0.5)",
+            boxShadow: "0 0 5px rgba(70, 245, 196, 0.45)",
           }}
         />
         MESH LIVE

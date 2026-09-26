@@ -3,9 +3,11 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { DisturbanceState } from "../../types/sensing";
 
-const GRID = 42;
-const SPAN = 11;
-const FALLOFF = 3.2;
+const GRID_X = 48;
+const GRID_Z = 36;
+const SPAN_X = 12;
+const SPAN_Z = 9;
+const FALLOFF = 3.4;
 
 interface SpatialFieldProps {
   disturbance: DisturbanceState;
@@ -17,17 +19,19 @@ export function SpatialField({ disturbance }: SpatialFieldProps) {
   disturbanceRef.current = disturbance;
 
   const { geometry, basePositions } = useMemo(() => {
-    const count = GRID * GRID;
+    const count = GRID_X * GRID_Z;
     const positions = new Float32Array(count * 3);
     const base = new Float32Array(count * 3);
-    const step = SPAN / (GRID - 1);
-    const half = SPAN / 2;
+    const stepX = SPAN_X / (GRID_X - 1);
+    const stepZ = SPAN_Z / (GRID_Z - 1);
+    const halfX = SPAN_X / 2;
+    const halfZ = SPAN_Z / 2;
     let i = 0;
 
-    for (let row = 0; row < GRID; row++) {
-      for (let col = 0; col < GRID; col++) {
-        const x = -half + col * step;
-        const z = -half + row * step;
+    for (let row = 0; row < GRID_Z; row++) {
+      for (let col = 0; col < GRID_X; col++) {
+        const x = -halfX + col * stepX;
+        const z = -halfZ + row * stepZ;
         base[i] = x;
         base[i + 1] = 0.03;
         base[i + 2] = z;

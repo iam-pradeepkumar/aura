@@ -11,12 +11,21 @@
       "name": "dashboard",
       "command": "python3 dashboard/run.py --port 8847",
       "description": "AURA web dashboard (landing, simulation, alerts, DM console)"
+    },
+    {
+      "name": "aura-observatory",
+      "command": "cd frontend && npm install && npm run dev",
+      "description": "AURA Wi-Fi sensing observatory (Vite + React + Three.js)"
     }
   ],
   "ports": [
     {
       "name": "dashboard",
       "port": 8847
+    },
+    {
+      "name": "aura-observatory",
+      "port": 4317
     }
   ],
   "egressAllowlist": [

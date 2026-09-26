@@ -7,6 +7,7 @@ import { SpatialField } from "./SpatialField";
 import { Wavefronts } from "./Wavefronts";
 import { Disturbance } from "./Disturbance";
 import { DetectionLabel } from "./DetectionLabel";
+import { ConnectionField } from "./ConnectionField";
 import { SensorNode } from "./SensorNode";
 
 interface AuraSceneProps {
@@ -41,6 +42,7 @@ function SceneContent({
 
       <EnvironmentGrid />
       <SpatialField disturbance={sensingState.disturbance} />
+      <ConnectionField nodes={sensingState.nodes} disturbance={sensingState.disturbance} />
       <Wavefronts nodes={sensingState.nodes} disturbance={sensingState.disturbance} />
       <Disturbance disturbance={sensingState.disturbance} />
       <DetectionLabel disturbance={sensingState.disturbance} />
