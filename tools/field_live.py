@@ -244,10 +244,12 @@ def main() -> None:
     # Vitals panel
     ax_vitals = fig.add_subplot(gs[1, 2])
     _panel_ax(ax_vitals, "Vitals")
-    resp_val = ax_vitals.text(0.5, 0.60, "—", ha="center", fontsize=26, color=QUAT, fontweight="bold")
-    ax_vitals.text(0.5, 0.47, "Resp BPM", ha="center", fontsize=9, color=MUTED)
-    hr_val = ax_vitals.text(0.5, 0.24, "—", ha="center", fontsize=26, color=SECONDARY, fontweight="bold")
-    ax_vitals.text(0.5, 0.11, "Heart BPM", ha="center", fontsize=9, color=MUTED)
+    resp_val = ax_vitals.text(0.5, 0.62, "—", ha="center", fontsize=26, color=QUAT, fontweight="bold")
+    ax_vitals.text(0.5, 0.48, "Resp BPM", ha="center", fontsize=9, color=MUTED)
+    resp_conf_txt = ax_vitals.text(0.5, 0.38, "", ha="center", fontsize=8, color=MUTED)
+    hr_val = ax_vitals.text(0.5, 0.22, "—", ha="center", fontsize=26, color=SECONDARY, fontweight="bold")
+    ax_vitals.text(0.5, 0.10, "Heart BPM", ha="center", fontsize=9, color=MUTED)
+    triage_badge = ax_count.text(0.5, -0.02, "", ha="center", fontsize=9, color=ACCENT, fontweight="bold", clip_on=False)
 
     # Nodes panel
     ax_nodes = fig.add_subplot(gs[1, 3])
@@ -287,10 +289,13 @@ def main() -> None:
         motion = bool(d.get("motion_detected"))
         motion_nodes = d.get("motion_nodes", 0)
 
+        engine_tag = d.get("sensing_engine", "v1")
+        distress = d.get("distress_events", [])
+        distress_s = f"  !{len(distress)}evt" if distress else ""
         status_text.set_text(
-            f"v{PROCESSOR_VERSION}  linked {linked}/{expected}  sensing {sensing}/{expected}  "
+            f"v{PROCESSOR_VERSION} [{engine_tag}]  linked {linked}/{expected}  sensing {sensing}/{expected}  "
             f"conf {conf_pct}%  {'CAL OK' if cal_ok else f'cal {cal_pct}%'}  "
-            f"motion {motion_nodes}n  pkts {pkts}  {'MOTION' if motion else 'clear'}"
+            f"motion {motion_nodes}n  pkts {pkts}  {'MOTION' if motion else 'clear'}{distress_s}"
         )
 
         count = int(d.get("target_count", 0))
@@ -311,6 +316,24 @@ def main() -> None:
         hb = float(d.get("heartbeat_bpm") or 0)
         resp_val.set_text(f"{rb:.0f}" if rb and show_vitals else "—")
         hr_val.set_text(f"{hb:.0f}" if hb and show_vitals else "—")
+        best_resp_conf = 0.0
+        best_hr_conf = 0.0
+        top_triage = ""
+        for t in tracked:
+            best_resp_conf = max(best_resp_conf, float(t.get("resp_confidence", 0) or 0))
+            best_hr_conf = max(best_hr_conf, float(t.get("hr_confidence", 0) or 0))
+            tri = t.get("triage_label") or t.get("suggested_triage") or ""
+            if tri and tri != "—":
+                top_triage = str(tri)
+        if show_vitals and best_resp_conf > 0:
+            resp_conf_txt.set_text(f"conf {int(best_resp_conf * 100)}%")
+        else:
+            resp_conf_txt.set_text("")
+        if top_triage:
+            triage_badge.set_text(top_triage[:22])
+            triage_badge.set_color(ACCENT if "IMMEDIATE" in top_triage else SECONDARY)
+        else:
+            triage_badge.set_text("")
 
         nodes_body.set_text(_format_node_lines(d.get("node_status", []), expected))
 
@@ -339,13 +362,23 @@ def main() -> None:
                 marker_artists[tid].set_data([t["x_m"]], [t["y_m"]])
                 marker_artists[tid].set_marker(sym)
                 marker_artists[tid].set_markersize(ms)
+            tri_short = ""
+            tri = t.get("suggested_triage")
+            if tri == "immediate":
+                tri_short = " R"
+            elif tri == "delayed":
+                tri_short = " Y"
+            elif tri == "minor":
+                tri_short = " G"
+            label_txt = f"P{tid}{tri_short}"
             if tid not in label_artists:
                 label_artists[tid] = ax_map.text(
-                    t["x_m"] + 0.25, t["y_m"] + 0.25, f"P{tid}",
+                    t["x_m"] + 0.25, t["y_m"] + 0.25, label_txt,
                     fontsize=8, color=color, fontweight="bold", zorder=7,
                 )
             else:
                 label_artists[tid].set_position((t["x_m"] + 0.25, t["y_m"] + 0.25))
+                label_artists[tid].set_text(label_txt)
 
         for tid in list(trail_lines):
             if tid not in seen:

@@ -15,6 +15,23 @@ wifi_channel: 0
 
 # Live hardware — disaster rescue / field deployment (accuracy-first)
 hardware:
+  sensing_engine: v2
+  sensing_v2:
+    gain_compensation: true
+    subcarrier_weighting: true
+    motion_debounce_frames: 3
+    vitals_ensemble: true
+    fall_detection: true
+    triage_suggestions: true
+    depth_band_estimate: false
+    kalman_tracker: true
+  mqtt:
+    enabled: false
+    broker: "mqtt://127.0.0.1:1883"
+    topic_prefix: "aura/sensing"
+  dm_bridge:
+    enabled: false
+    min_confidence: 0.55
   deployment_mode: field
   indoor_mode: false
   min_packets: 24

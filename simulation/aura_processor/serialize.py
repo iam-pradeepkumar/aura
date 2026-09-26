@@ -16,8 +16,13 @@ def target_to_dict(t: Target) -> dict:
         "velocity_mps": round(t.velocity_mps, 3),
         "acceleration_mps2": round(t.acceleration_mps2, 3),
         "is_moving": t.is_moving,
+        "confidence": round(t.confidence, 2),
         "respiration_bpm": round(t.respiration_bpm, 1),
         "heartbeat_bpm": round(t.heartbeat_bpm, 1),
+        "resp_confidence": round(t.resp_confidence, 2),
+        "hr_confidence": round(t.hr_confidence, 2),
+        "vitals_quality": round(t.vitals_quality, 2),
+        "depth_band": t.depth_band,
         "trajectory": [(round(x, 3), round(y, 3)) for x, y in t.trajectory[-40:]],
     }
     if t.respiration_waveform is not None and len(t.respiration_waveform):

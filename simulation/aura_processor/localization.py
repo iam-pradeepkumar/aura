@@ -18,6 +18,11 @@ class Target:
     heartbeat_bpm: float = 0.0
     respiration_waveform: np.ndarray | None = None
     heartbeat_waveform: np.ndarray | None = None
+    confidence: float = 0.0
+    resp_confidence: float = 0.0
+    hr_confidence: float = 0.0
+    vitals_quality: float = 0.0
+    depth_band: str | None = None
     trajectory: list[tuple[float, float]] = field(default_factory=list)
 
 

@@ -8,6 +8,8 @@ from .hardware_localize import refine_detection_xy
 from .hardware_motion import esp32_motion_score, update_baseline
 from .hardware_sensing import process_hardware_window
 from .pipeline import AURAPipeline
+from .sensing_v2.motion import MotionDebounceFSM, motion_score_v2, update_motion_baseline
+from .sensing_v2.adapter import process_hardware_window_v2
 
 
 def estimate_fs_hz(timestamps_ms: np.ndarray) -> float:
@@ -37,6 +39,8 @@ class NodePipelineState:
         min_confidence: float = 0.35,
         motion_min: float = 0.58,
         indoor_mode: bool = False,
+        sensing_engine: str = "v1",
+        v2_config: dict | None = None,
     ):
         self.node_id = node_id
         self.pipeline = pipeline
@@ -50,9 +54,14 @@ class NodePipelineState:
         self.min_confidence = min_confidence
         self._motion_min = motion_min
         self._indoor_mode = indoor_mode
+        self._sensing_engine = sensing_engine
+        self._v2_config = v2_config or {}
         self._packet_count = 0
         self._motion_baseline: float | None = None
         self._last_motion_score = 0.0
+        self._motion_fsm = MotionDebounceFSM(
+            active_hold_frames=int(self._v2_config.get("motion_debounce_frames", 3)),
+        )
         self._sensor_xy = pipeline.node_positions.get(node_id, pipeline.sensor_xy)
         self.pipeline._hw_motion_scale = motion_threshold_scale
         self.pipeline._hw_motion_min = motion_min
@@ -73,20 +82,55 @@ class NodePipelineState:
         self.pipeline.fs_hz = fs
         self.pipeline.window_samples = motion_n
 
-        motion_info = esp32_motion_score(
-            motion_csi,
-            motion_rssi,
-            baseline=self._motion_baseline,
-            motion_min=self._motion_min,
-            indoor_mode=self._indoor_mode,
-        )
+        use_v2 = self._sensing_engine == "v2"
+        if use_v2:
+            motion_info = motion_score_v2(
+                motion_csi,
+                motion_rssi,
+                baseline=self._motion_baseline,
+                motion_min=self._motion_min,
+                indoor_mode=self._indoor_mode,
+                debounce_frames=int(self._v2_config.get("motion_debounce_frames", 3)),
+                fsm=self._motion_fsm,
+            )
+        else:
+            motion_info = esp32_motion_score(
+                motion_csi,
+                motion_rssi,
+                baseline=self._motion_baseline,
+                motion_min=self._motion_min,
+                indoor_mode=self._indoor_mode,
+            )
         self._last_motion_score = motion_info["score"]
         if not motion_info["motion"]:
-            self._motion_baseline = update_baseline(self._motion_baseline, motion_info["score"])
+            if use_v2:
+                self._motion_baseline = update_motion_baseline(
+                    self._motion_baseline, motion_info["score"],
+                )
+            else:
+                self._motion_baseline = update_baseline(self._motion_baseline, motion_info["score"])
 
         vitals_n = min(self.vitals_packets, n)
         vitals_csi = csi[-vitals_n:]
         t_sec = float(timestamps_ms[-1]) / 1000.0
+        if use_v2:
+            result, _sidecar = process_hardware_window_v2(
+                self.pipeline,
+                motion_csi,
+                t_sec,
+                self.node_id,
+                vitals_csi=vitals_csi,
+                rssi=motion_rssi,
+                area_margin_m=self.area_margin_m,
+                max_per_node=self.max_per_node,
+                min_confidence=self.min_confidence,
+                motion_info=motion_info,
+                sensor_xy=self._sensor_xy,
+                v2_config=self._v2_config,
+                motion_fsm=self._motion_fsm,
+                motion_baseline=self._motion_baseline,
+            )
+            return result
         return process_hardware_window(
             self.pipeline,
             motion_csi,

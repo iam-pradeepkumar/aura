@@ -306,6 +306,11 @@ def _detections_to_targets(detections: list[dict]) -> list[Target]:
                 heartbeat_bpm=float(det.get("heartbeat_bpm", 0)),
                 respiration_waveform=det.get("respiration_waveform"),
                 heartbeat_waveform=det.get("heartbeat_waveform"),
+                confidence=float(det.get("confidence", 0)),
+                resp_confidence=float(det.get("resp_confidence", 0)),
+                hr_confidence=float(det.get("hr_confidence", 0)),
+                vitals_quality=float(det.get("vitals_quality", 0)),
+                depth_band=det.get("depth_band"),
                 is_moving=bool(det.get("is_moving") or det.get("velocity_mps", 0) > 0.12),
             )
         )

@@ -1,6 +1,6 @@
 # AURA Sensing Engine Upgrade — Design Document
 
-**Status:** Draft for review (no implementation in this document)  
+**Status:** Implemented (v2 enabled via `hardware.sensing_engine: v2` in `simulation/config.yaml`)  
 **Project:** AURA — Adaptive Urban Rescue & Alert Array (`iam-pradeepkumar/AURA`)  
 **SIH context:** SIH26223 — device-free survivor detection & localization for disaster management  
 **Processor baseline:** `simulation/aura_processor/` live path v`2026.09.18-50` via `tools/field_live.py`

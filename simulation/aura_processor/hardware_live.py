@@ -22,9 +22,10 @@ from .hardware_localize import refine_fused_targets
 from .hardware_state import NodePipelineState
 from .hardware_tracker import FieldTracker
 from .serialize import _downsample, target_to_dict
+from .sensing_v2.enricher import SensingV2Enricher
 from .wireless import DEFAULT_UDP_PORT, WirelessReceiver
 
-PROCESSOR_VERSION = "2026.09.18-50"
+PROCESSOR_VERSION = "2026.09.26-v2"
 
 
 def load_field_config(path: str | None = None) -> dict:
@@ -50,9 +51,13 @@ class LiveFieldEngine:
     _link_hold_until: dict[int, float] = field(default_factory=dict, init=False)
     _occupancy: OccupancyConfirmFilter = field(init=False)
     _calibrator: SceneCalibrator = field(init=False)
+    _v2_enricher: SensingV2Enricher | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         hw = self.config.get("hardware", {})
+        self._sensing_engine = str(hw.get("sensing_engine", "v1"))
+        if self._sensing_engine == "v2":
+            self._v2_enricher = SensingV2Enricher(self.config)
         area = float(self.config.get("area_size_m", 10.0))
         self.expected_ids = sorted(int(k) for k in self.config.get("node_positions", {}).keys()) or list(
             range(1, int(hw.get("expected_nodes", 4)) + 1)
@@ -69,6 +74,8 @@ class LiveFieldEngine:
             consensus_extra_frames=int(hw.get("consensus_extra_frames", 1)),
         )
         self.rx = WirelessReceiver(port=self.port)
+        v2_cfg = hw.get("sensing_v2", {})
+        use_kalman = bool(v2_cfg.get("kalman_tracker", True)) and self._sensing_engine == "v2"
         self.tracker = FieldTracker(
             area_size_m=area,
             gate_m=float(hw.get("fusion_gate_m", 3.0)),
@@ -78,6 +85,7 @@ class LiveFieldEngine:
             max_miss_frames=int(hw.get("tracker_miss_frames", 4)),
             min_spawn_confidence=float(hw.get("min_confidence", 0.38)) * 0.9,
             min_trail_step_m=float(hw.get("min_trail_step_m", 0.18)),
+            use_kalman=use_kalman,
         )
         self.node_pos = {int(k): tuple(v) for k, v in self.config.get("node_positions", {}).items()}
 
@@ -90,6 +98,8 @@ class LiveFieldEngine:
         if self._started:
             self.rx.stop()
             self._started = False
+        if self._v2_enricher is not None:
+            self._v2_enricher.close()
 
     def _node_state(self, nid: int) -> NodePipelineState:
         if nid not in self.node_states:
@@ -113,6 +123,8 @@ class LiveFieldEngine:
                 min_confidence=float(hw.get("min_confidence", 0.42)),
                 motion_min=float(hw.get("motion_score_min", 0.58)),
                 indoor_mode=bool(hw.get("indoor_mode", False)),
+                sensing_engine=self._sensing_engine,
+                v2_config=hw.get("sensing_v2", {}),
             )
             pipe._hw_motion_min = float(hw.get("motion_score_min", 0.58))
             pipe._hw_indoor_mode = bool(hw.get("indoor_mode", False))
@@ -377,6 +389,7 @@ class LiveFieldEngine:
             target_count, motion_verdict, confirmed, self._calibrator.ready,
         )
 
+        distress_events: list[dict] = []
         if target_count <= 0:
             resp_bpm = 0.0
             hr_bpm = 0.0
@@ -393,6 +406,13 @@ class LiveFieldEngine:
                 if not t.get("heartbeat_waveform") and hr_wave:
                     t["heartbeat_waveform"] = hr_wave
 
+        if self._v2_enricher is not None and tracked:
+            avg_motion = float(np.mean(list(node_scores.values()))) if node_scores else 0.0
+            baseline = motion_score_min
+            tracked, distress_events = self._v2_enricher.enrich_targets(
+                tracked, avg_motion, baseline, now,
+            )
+
         linked_count = sum(
             1 for nid in self.expected_ids
             if now <= self._link_hold_until.get(nid, 0.0)
@@ -400,8 +420,9 @@ class LiveFieldEngine:
         sensing_count = sum(1 for n in node_status if n["status"] == "active")
         packets = sum(self.rx.node_packet_count.values())
 
-        return {
+        frame = {
             "processor_version": PROCESSOR_VERSION,
+            "sensing_engine": self._sensing_engine,
             "timestamp": now,
             "active_nodes": linked_count,
             "linked_nodes": linked_count,
@@ -424,5 +445,11 @@ class LiveFieldEngine:
             "node_positions": self.node_pos,
             "area_size_m": area,
             "events": self.tracker.events[-8:],
+            "distress_events": distress_events[-8:],
             "warnings": self.rx.system_warnings(self.expected_ids, timeout_sec=link_timeout),
         }
+
+        if self._v2_enricher is not None:
+            self._v2_enricher.publish_mqtt(frame)
+
+        return frame

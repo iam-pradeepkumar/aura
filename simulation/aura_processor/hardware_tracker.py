@@ -6,6 +6,8 @@ import time
 
 import numpy as np
 
+from .sensing_v2.kalman import Kalman2D
+
 
 class FieldTracker:
     """Fuse per-frame detections into stable IDs with responsive position updates."""
@@ -21,6 +23,7 @@ class FieldTracker:
         max_miss_frames: int = 6,
         min_spawn_confidence: float = 0.48,
         min_trail_step_m: float = 0.22,
+        use_kalman: bool = False,
     ):
         self.area_size_m = area_size_m
         self.gate_m = gate_m
@@ -31,13 +34,16 @@ class FieldTracker:
         self.max_miss_frames = max_miss_frames
         self.min_spawn_confidence = min_spawn_confidence
         self.min_trail_step_m = min_trail_step_m
+        self.use_kalman = use_kalman
         self._targets: dict[int, dict] = {}
+        self._kalman: dict[int, Kalman2D] = {}
         self._next_id = 1
         self.events: list[str] = []
         self._last_t: float | None = None
 
     def reset(self) -> None:
         self._targets.clear()
+        self._kalman.clear()
         self._next_id = 1
         self.events.clear()
         self._last_t = None
@@ -89,9 +95,13 @@ class FieldTracker:
                     "is_moving": bool(det.get("is_moving")),
                     "respiration_bpm": det.get("respiration_bpm", 0.0),
                     "heartbeat_bpm": det.get("heartbeat_bpm", 0.0),
+                    "resp_confidence": det.get("resp_confidence", 0.0),
+                    "hr_confidence": det.get("hr_confidence", 0.0),
+                    "vitals_quality": det.get("vitals_quality", 0.0),
                     "respiration_waveform": det.get("respiration_waveform", []),
                     "heartbeat_waveform": det.get("heartbeat_waveform", []),
                     "confidence": det.get("confidence", 0.0),
+                    "depth_band": det.get("depth_band"),
                     "trajectory": [(x, y)],
                 }
                 self.events.append(f"t={now:.1f}s: Target {tid} at ({x:.1f}, {y:.1f})")
@@ -102,12 +112,18 @@ class FieldTracker:
                 tgt = self._targets[tid]
                 was_moving = tgt.get("is_moving", False)
                 px, py = tgt["x_m"], tgt["y_m"]
-                sx = alpha * x + (1.0 - alpha) * px
-                sy = alpha * y + (1.0 - alpha) * py
-                vx = (sx - px) / dt
-                vy = (sy - py) / dt
-                vel = float(np.hypot(vx, vy))
-                vel = max(vel, float(det.get("velocity_mps", 0)))
+                if self.use_kalman:
+                    kf = self._kalman.setdefault(tid, Kalman2D())
+                    kf.predict(dt)
+                    sx, sy, vel = kf.update(x, y)
+                    vel = max(vel, float(det.get("velocity_mps", 0)))
+                else:
+                    sx = alpha * x + (1.0 - alpha) * px
+                    sy = alpha * y + (1.0 - alpha) * py
+                    vx = (sx - px) / dt
+                    vy = (sy - py) / dt
+                    vel = float(np.hypot(vx, vy))
+                    vel = max(vel, float(det.get("velocity_mps", 0)))
                 tgt["x_m"] = sx
                 tgt["y_m"] = sy
                 tgt["velocity_mps"] = vel
@@ -115,11 +131,16 @@ class FieldTracker:
                 tgt["is_moving"] = vel > self.motion_threshold_mps or bool(det.get("is_moving"))
                 tgt["respiration_bpm"] = max(tgt.get("respiration_bpm", 0), det.get("respiration_bpm", 0))
                 tgt["heartbeat_bpm"] = max(tgt.get("heartbeat_bpm", 0), det.get("heartbeat_bpm", 0))
+                tgt["resp_confidence"] = max(tgt.get("resp_confidence", 0), det.get("resp_confidence", 0))
+                tgt["hr_confidence"] = max(tgt.get("hr_confidence", 0), det.get("hr_confidence", 0))
+                tgt["vitals_quality"] = max(tgt.get("vitals_quality", 0), det.get("vitals_quality", 0))
                 if det.get("respiration_waveform"):
                     tgt["respiration_waveform"] = det["respiration_waveform"]
                 if det.get("heartbeat_waveform"):
                     tgt["heartbeat_waveform"] = det["heartbeat_waveform"]
                 tgt["confidence"] = max(tgt.get("confidence", 0), det.get("confidence", 0))
+                if det.get("depth_band"):
+                    tgt["depth_band"] = det["depth_band"]
                 traj = list(tgt.get("trajectory", []))
                 step = float(np.hypot(sx - px, sy - py))
                 if not traj or step >= self.min_trail_step_m:
@@ -142,6 +163,7 @@ class FieldTracker:
                 if miss > self.max_miss_frames:
                     self.events.append(f"t={now:.1f}s: Target {tid} lost")
                     del self._targets[tid]
+                    self._kalman.pop(tid, None)
 
         if len(self.events) > 30:
             self.events = self.events[-30:]
