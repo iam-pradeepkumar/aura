@@ -25,6 +25,7 @@
     "fonts.googleapis.com",
     "fonts.gstatic.com",
     "pypi.org",
-    "files.pythonhosted.org"
+    "files.pythonhosted.org",
+    "registry.npmjs.org"
   ]
 }
