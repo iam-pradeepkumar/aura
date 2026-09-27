@@ -6,7 +6,8 @@ Modern landing page built with **Vite**, **TypeScript**, **Tailwind CSS v4**, an
 
 | Path | Purpose |
 |------|---------|
-| `src/components/ui/orbit-delivery-hero.tsx` | Hero layout + story dialogs |
+| `src/components/landing/LandingPage.tsx` | Full scroll landing (RBP-style pill nav + sections) |
+| `src/components/landing/PillNav.tsx` | Fixed pill navigation with scroll spy |
 | `src/components/landing/SketchfabFleet.tsx` | Sketchfab spiderbot + drone embeds |
 | `src/components/ui/button.tsx` | shadcn `Button` primitive |
 | `src/lib/utils.ts` | `cn()` helper for Tailwind class merging |

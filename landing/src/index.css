@@ -1,17 +1,16 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
-  --color-background: #060a12;
-  --color-foreground: #e8edf7;
-  --color-muted: #8b9bb8;
-  --color-accent: #f97316;
-  --color-accent-soft: #fb923c;
-  --color-card: #0c1220;
-  --color-border: #1e2a42;
-  --color-primary: #3b82f6;
-  --color-ring: #60a5fa;
+  --font-sans: "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --color-background: #050505;
+  --color-foreground: #fafafa;
+  --color-muted: #a1a1aa;
+  --color-accent: #0ea5e9;
+  --color-card: #0c0c0c;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --color-primary: #0ea5e9;
+  --color-ring: #38bdf8;
 }
 
 @layer base {
@@ -32,5 +31,11 @@
   button:focus-visible,
   a:focus-visible {
     @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
   }
 }
