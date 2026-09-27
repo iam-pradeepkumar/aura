@@ -68,7 +68,9 @@ function bindUi() {
       S.zoneGeo = ring;
       AuraMap.setDrawMode(false);
       document.getElementById("btn-draw").classList.remove("active");
-      setBanner(`Disaster zone sealed — ${ring.length} points`);
+      const anchor = AuraMap.getAnchor();
+      AuraMap.loadDisasterScape(ring, anchor);
+      setBanner(`Disaster zone sealed — collapsed buildings + debris generated`);
     } else {
       setBanner("Need at least 3 points before closing zone");
     }
@@ -243,6 +245,7 @@ function renderTelemetry(msg) {
 
   AuraMap.showMissionZone(msg);
   AuraMap.updateUnits(units);
+  AuraMap.updateWifiSignals(msg.wifi?.signals || []);
   AuraMap.updateSurvivors(targets);
   if (S.missionRunning && S.fitUnitsOnce && units.some((u) => u.lat != null)) {
     AuraMap.fitToUnits(units);
@@ -279,18 +282,21 @@ function renderFleet(units, targets) {
     <div class="card" data-unit="${u.id}">
       <div class="head">
         <span class="name">${u.name}</span>
-        <span class="badge ${(u.status || "patrol").toLowerCase()}">${u.status || "PATROL"}</span>
+        <span class="badge ${(u.status || "patrol").toLowerCase()}">${u.status || "PATROL"}${u.wifi_signal > 0.12 ? " · CSI" : ""}</span>
       </div>
       <div class="sub">${u.lat != null ? `${u.lat.toFixed(5)}, ${u.lon.toFixed(5)}` : "Deploying…"}</div>
     </div>
   `).join("");
+  const seen = new Set();
   targets.forEach((t) => {
     const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
+    const confirmed = t.confirmed || prob >= 55;
+    seen.add(String(t.id));
     html += `
-      <div class="card survivor-card" data-target="${t.id}">
-        <div style="font-size:0.7rem;color:var(--alert);">SURVIVOR #${t.id}</div>
+      <div class="card survivor-card ${confirmed ? "confirmed" : ""}" data-target="${t.id}">
+        <div style="font-size:0.7rem;color:var(--alert);">${confirmed ? "FOUND" : "SCANNING"} #${t.id}</div>
         <div class="prob">${prob}%</div>
-        <div class="sub">Resp ${t.respiration_bpm ? Math.round(t.respiration_bpm) : "—"} BPM · Vitals ${t.vitals_confidence_pct ?? 0}%</div>
+        <div class="sub">${t.lat != null ? `${t.lat.toFixed(5)}, ${t.lon.toFixed(5)}` : "—"} · Resp ${t.respiration_bpm ? Math.round(t.respiration_bpm) : "—"} BPM</div>
       </div>
     `;
   });

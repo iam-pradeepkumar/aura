@@ -13,6 +13,7 @@ const AuraMap = (function () {
 
   const unitMarkers = {};
   const survivorMarkers = {};
+  const confirmedSurvivorStore = {};
   const placedSurvivorMarkers = {};
   let placedSurvivors = [];
   const vertexMarkers = [];
@@ -38,6 +39,7 @@ const AuraMap = (function () {
       _addLayers();
       mapReady = true;
       map.resize();
+      if (typeof AuraScene3D !== "undefined") AuraScene3D.attach(map);
     });
 
     map.on("click", (e) => {
@@ -126,11 +128,77 @@ const AuraMap = (function () {
       type: "circle",
       source: "units-dots",
       paint: {
-        "circle-radius": 10,
+        "circle-radius": 6,
         "circle-color": ["get", "color"],
-        "circle-stroke-width": 2,
+        "circle-opacity": 0.35,
+        "circle-stroke-width": 1,
         "circle-stroke-color": "#ffffff",
         "circle-pitch-alignment": "viewport",
+      },
+    });
+
+    map.addSource("disaster-buildings", { type: "geojson", data: emptyFC() });
+    map.addLayer({
+      id: "disaster-buildings-layer",
+      type: "fill-extrusion",
+      source: "disaster-buildings",
+      paint: {
+        "fill-extrusion-color": [
+          "case", ["get", "collapsed"], "#4a3728", "#3d4852",
+        ],
+        "fill-extrusion-height": ["get", "height"],
+        "fill-extrusion-base": 0,
+        "fill-extrusion-opacity": 0.82,
+      },
+    });
+
+    map.addSource("disaster-debris", { type: "geojson", data: emptyFC() });
+    map.addLayer({
+      id: "disaster-debris-layer",
+      type: "circle",
+      source: "disaster-debris",
+      paint: {
+        "circle-radius": ["*", ["get", "size"], 3],
+        "circle-color": "#78716c",
+        "circle-opacity": 0.7,
+      },
+    });
+
+    map.addSource("wifi-beams", { type: "geojson", data: emptyFC() });
+    map.addLayer({
+      id: "wifi-beams-layer",
+      type: "line",
+      source: "wifi-beams",
+      paint: {
+        "line-color": "#0ea5e9",
+        "line-width": ["*", ["get", "strength"], 5],
+        "line-opacity": ["*", ["get", "strength"], 0.75],
+        "line-blur": 0.5,
+      },
+    });
+
+    map.addSource("wifi-zones", { type: "geojson", data: emptyFC() });
+    map.addLayer({
+      id: "wifi-zones-layer",
+      type: "fill",
+      source: "wifi-zones",
+      paint: {
+        "fill-color": "#0ea5e9",
+        "fill-opacity": ["*", ["get", "strength"], 0.12],
+      },
+    });
+
+    map.addSource("confirmed-survivors", { type: "geojson", data: emptyFC() });
+    map.addLayer({
+      id: "confirmed-survivors-layer",
+      type: "circle",
+      source: "confirmed-survivors",
+      paint: {
+        "circle-radius": 14,
+        "circle-color": "#ef4444",
+        "circle-stroke-width": 3,
+        "circle-stroke-color": "#fecaca",
+        "circle-opacity": 0.95,
       },
     });
   }
@@ -188,9 +256,33 @@ const AuraMap = (function () {
       features: [{
         type: "Feature",
         geometry: { type: "Polygon", coordinates: [closed] },
+        properties: { disaster: 1 },
       }],
     });
+    map.setPaintProperty("zone-fill-layer", "fill-color", "#92400e");
+    map.setPaintProperty("zone-fill-layer", "fill-opacity", 0.28);
     fitToZone(ring);
+  }
+
+  async function loadDisasterScape(ring, geoAnchor) {
+    if (!mapReady || !ring || ring.length < 3) return;
+    try {
+      const res = await fetch("/api/command/disaster-scape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ zone_polygon_geo: ring, geo_anchor: geoAnchor }),
+      });
+      const scape = await res.json();
+      applyDisasterScape(scape);
+    } catch (e) {
+      console.warn("disaster scape", e);
+    }
+  }
+
+  function applyDisasterScape(scape) {
+    if (!mapReady || !scape) return;
+    map.getSource("disaster-buildings")?.setData(scape.buildings || emptyFC());
+    map.getSource("disaster-debris")?.setData(scape.debris || emptyFC());
   }
 
   function fitToZone(ring) {
@@ -332,17 +424,23 @@ const AuraMap = (function () {
       if (trails[id].length > 120) trails[id].shift();
     }
 
+    const status = (u.status || "PATROL").toLowerCase();
+    const label = u.type === "drone" ? "DR" : "SP";
     if (!unitMarkers[id]) {
       const el = document.createElement("div");
-      el.className = `unit-marker ${u.type === "drone" ? "drone" : "spider"}`;
-      el.innerHTML = `<div class="icon">${u.type === "drone" ? "DR" : "SP"}</div><div class="lbl">${u.name || id}</div>`;
+      el.className = `unit-marker ${u.type === "drone" ? "drone" : "spider"} ${status}`;
+      el.innerHTML = `<div class="icon">${label}</div><div class="lbl">${u.name || id}</div><div class="status-chip">${u.status || "PATROL"}</div>`;
       unitMarkers[id] = new maplibregl.Marker({ element: el, anchor: "bottom" })
         .setLngLat(coord)
         .addTo(map);
     } else {
       unitMarkers[id].setLngLat(coord);
-      const lbl = unitMarkers[id].getElement().querySelector(".lbl");
+      const root = unitMarkers[id].getElement();
+      root.className = `unit-marker ${u.type === "drone" ? "drone" : "spider"} ${status}`;
+      const lbl = root.querySelector(".lbl");
+      const chip = root.querySelector(".status-chip");
       if (lbl) lbl.textContent = u.name || id;
+      if (chip) chip.textContent = u.status || "PATROL";
     }
   }
 
@@ -363,6 +461,7 @@ const AuraMap = (function () {
   function updateUnits(units) {
     if (!mapReady) return;
     (units || []).forEach(_upsertUnitMarker);
+    if (typeof AuraScene3D !== "undefined") AuraScene3D.updateUnitList(units);
     _updateTrails(units);
     map.getSource("units-dots").setData({
       type: "FeatureCollection",
@@ -391,34 +490,69 @@ const AuraMap = (function () {
 
   function updateSurvivors(targets) {
     if (!mapReady) return;
-    const ids = new Set();
     (targets || []).forEach((t) => {
       if (t.lat == null || t.lon == null) return;
       const id = String(t.id);
-      ids.add(id);
+      const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
+      const isConfirmed = t.confirmed || prob >= 55 || t.suggested_triage === "START";
+      if (isConfirmed) confirmedSurvivorStore[id] = { ...t, confirmed: true };
+    });
+
+    const all = Object.values(confirmedSurvivorStore);
+    (targets || []).forEach((t) => {
+      const id = String(t.id);
+      if (!confirmedSurvivorStore[id]) all.push(t);
+    });
+
+    const confirmedFeatures = [];
+    all.forEach((t) => {
+      if (t.lat == null || t.lon == null) return;
+      const id = String(t.id);
       const coord = [t.lon, t.lat];
       const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
+      const isConfirmed = t.confirmed || confirmedSurvivorStore[id];
+
+      if (isConfirmed && placedSurvivorMarkers[id]) {
+        placedSurvivorMarkers[id].remove();
+        delete placedSurvivorMarkers[id];
+      }
 
       if (!survivorMarkers[id]) {
         const el = document.createElement("div");
-        el.className = "survivor-marker";
-        el.title = `Survivor #${id} — ${prob}% probability`;
-        survivorMarkers[id] = new maplibregl.Marker({ element: el })
+        el.className = isConfirmed ? "survivor-marker confirmed" : "survivor-marker scanning";
+        el.innerHTML = isConfirmed
+          ? `<span class="pin-icon">!</span><span class="pin-lbl">#${id} FOUND</span><span class="pin-prob">${prob}%</span>`
+          : `<span class="pin-prob">${prob}%</span>`;
+        survivorMarkers[id] = new maplibregl.Marker({ element: el, anchor: "bottom" })
           .setLngLat(coord)
-          .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(
-            `<strong>Survivor #${id}</strong><br/>Probability: ${prob}%<br/>`
+          .setPopup(new maplibregl.Popup({ offset: 14 }).setHTML(
+            `<strong>Survivor #${id}</strong> ${isConfirmed ? "— CONFIRMED" : "— scanning"}<br/>`
+            + `Probability: ${prob}%<br/>`
             + `Resp: ${t.respiration_bpm ? Math.round(t.respiration_bpm) : "—"} BPM<br/>`
-            + `Vitals conf: ${t.vitals_confidence_pct ?? 0}%`
+            + `Location: ${t.lat.toFixed(6)}, ${t.lon.toFixed(6)}`
           ))
           .addTo(map);
       } else {
         survivorMarkers[id].setLngLat(coord);
+        const el = survivorMarkers[id].getElement();
+        if (isConfirmed) {
+          el.className = "survivor-marker confirmed";
+          el.innerHTML = `<span class="pin-icon">!</span><span class="pin-lbl">#${id} FOUND</span><span class="pin-prob">${prob}%</span>`;
+        }
+      }
+      if (isConfirmed) {
+        confirmedFeatures.push({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: coord },
+          properties: { id, prob },
+        });
       }
     });
 
+    map.getSource("confirmed-survivors")?.setData({ type: "FeatureCollection", features: confirmedFeatures });
     map.getSource("survivor-pulse").setData({
       type: "FeatureCollection",
-      features: (targets || []).filter((t) => t.lat != null).map((t) => ({
+      features: all.filter((t) => t.lat != null).map((t) => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [t.lon, t.lat] },
         properties: { prob: t.probability_pct || 0 },
@@ -426,9 +560,34 @@ const AuraMap = (function () {
     });
   }
 
+  function updateWifiSignals(signals) {
+    if (!mapReady) return;
+    const beams = [];
+    const zones = [];
+    (signals || []).forEach((s) => {
+      if (s.lat == null || s.lon == null || (s.strength || 0) < 0.06) return;
+      const len = 0.00008 * (s.strength || 0.5);
+      const endLon = s.lon + Math.cos(s.bearing_rad || 0) * len;
+      const endLat = s.lat + Math.sin(s.bearing_rad || 0) * len;
+      beams.push({
+        type: "Feature",
+        geometry: { type: "LineString", coordinates: [[s.lon, s.lat], [endLon, endLat]] },
+        properties: { strength: s.strength },
+      });
+      zones.push({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [s.lon, s.lat] },
+        properties: { strength: s.strength },
+      });
+    });
+    map.getSource("wifi-beams")?.setData({ type: "FeatureCollection", features: beams });
+    map.getSource("wifi-zones")?.setData({ type: "FeatureCollection", features: zones });
+  }
+
   function showMissionZone(msg) {
     const ring = msg?.geo?.zone_polygon_geo || msg?.zone?.polygon_geo;
     if (ring && ring.length >= 3) _setZone(ring);
+    if (msg?.disaster_scape) applyDisasterScape(msg.disaster_scape);
   }
 
   function resize() {
@@ -448,6 +607,9 @@ const AuraMap = (function () {
     getPlacedSurvivors,
     updateUnits,
     updateSurvivors,
+    updateWifiSignals,
+    loadDisasterScape,
+    applyDisasterScape,
     showMissionZone,
     fitToZone,
     fitToUnits,

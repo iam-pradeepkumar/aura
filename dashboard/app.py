@@ -437,6 +437,16 @@ async def command_zone():
     return get_zone_defaults()
 
 
+@app.post("/api/command/disaster-scape")
+async def command_disaster_scape(payload: dict = Body(...)):
+    from aura_sim_core.disaster_scape import build_scape_geo
+
+    ring = payload.get("zone_polygon_geo") or []
+    if len(ring) < 3:
+        raise HTTPException(status_code=400, detail="zone_polygon_geo requires 3+ points")
+    return await asyncio.to_thread(build_scape_geo, ring, payload.get("geo_anchor"))
+
+
 @app.get("/api/command/status")
 async def command_status():
     from dashboard.command_sim import get_status

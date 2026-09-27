@@ -21,6 +21,7 @@ bootstrap()
 
 from aura_processor.mobile_field import create_mobile_engine
 from aura_sim_core.bridge import frame_to_bridge_message
+from aura_sim_core.disaster_scape import build_scape_geo
 from aura_sim_core.geo import (
     GeoAnchor,
     area_size_from_polygon,
@@ -144,6 +145,7 @@ def _build_zone_cfg(payload: dict) -> dict:
         else:
             victims = _place_victims(local_poly)
         ground_subcell = list(local_poly)
+        scape = build_scape_geo(ring_geo, geo_anchor)
         return {
             "area_size_m": area,
             "zone_polygon": [[x, y] for x, y in local_poly],
@@ -152,6 +154,7 @@ def _build_zone_cfg(payload: dict) -> dict:
             "obstacles": obstacles,
             "victims": victims,
             "survivors_geo": survivors_geo,
+            "disaster_scape": scape,
             "units": units,
             "geo_anchor": geo_anchor,
             "_anchor": anchor_obj,
@@ -197,10 +200,18 @@ def _merge_sim_targets(frame: dict, sim_targets: list[dict]) -> dict:
         prev = by_id.get(tid)
         if prev is None or float(t.get("confidence", 0)) >= float(prev.get("confidence", 0)):
             by_id[tid] = dict(t)
-    merged = list(by_id.values())
+    merged = []
+    for t in by_id.values():
+        conf = float(t.get("confidence", 0))
+        t["probability_pct"] = round(conf * 100, 1)
+        t["vitals_confidence_pct"] = round(float(t.get("resp_confidence", conf)) * 100, 1)
+        merged.append(t)
+    confirmed = [t for t in merged if t.get("confirmed")]
     frame["targets"] = merged
-    frame["target_count"] = len([t for t in merged if float(t.get("confidence", 0)) >= 0.45])
-    frame["survivors_detected"] = frame["target_count"]
+    frame["target_count"] = len(confirmed) if confirmed else len(
+        [t for t in merged if float(t.get("confidence", 0)) >= 0.45]
+    )
+    frame["survivors_detected"] = len(confirmed) if confirmed else frame["target_count"]
     frame["motion_detected"] = frame.get("motion_detected", False) or frame["target_count"] > 0
     if merged:
         best = max(merged, key=lambda t: float(t.get("confidence", 0)))
@@ -219,6 +230,8 @@ def _enrich_geo(msg: dict, anchor: GeoAnchor | None) -> dict:
         u["y"] = round(_json_num(u.get("y", 0)), 3)
         if u.get("type") == "drone":
             u["alt_m"] = _json_num(u.get("z", 6))
+        if u.get("wifi_signal") is not None:
+            u["wifi_signal"] = round(_json_num(u.get("wifi_signal", 0)), 3)
     for u in msg.get("mission", {}).get("units", []):
         lat, lon = anchor.to_geo(_json_num(u.get("x", 0)), _json_num(u.get("y", 0)))
         u["lat"] = round(lat, 6)
@@ -227,6 +240,10 @@ def _enrich_geo(msg: dict, anchor: GeoAnchor | None) -> dict:
         lat, lon = anchor.to_geo(_json_num(t.get("x_m", 0)), _json_num(t.get("y_m", 0)))
         t["lat"] = round(lat, 6)
         t["lon"] = round(lon, 6)
+    for sig in msg.get("wifi", {}).get("signals", []):
+        lat, lon = anchor.to_geo(_json_num(sig.get("x", 0)), _json_num(sig.get("y", 0)))
+        sig["lat"] = round(lat, 6)
+        sig["lon"] = round(lon, 6)
     return msg
 
 
@@ -333,6 +350,10 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
         )
         msg = _enrich_geo(msg, anchor)
         msg["sim"] = {"time_scale": TIME_SCALE, "tick_hz": TICK_HZ}
+        msg["wifi"] = {"signals": mission.get_wifi_signals()}
+        msg = _enrich_geo(msg, anchor)
+        if zone_cfg.get("disaster_scape"):
+            msg["disaster_scape"] = zone_cfg["disaster_scape"]
         if zone_cfg.get("survivors_geo"):
             msg["geo"]["survivors_placed"] = zone_cfg["survivors_geo"]
         with _lock:

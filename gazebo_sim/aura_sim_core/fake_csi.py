@@ -33,7 +33,8 @@ class FakeCsiGenerator:
         self._packet_idx = 0
         self._stationary_since: dict[int, float | None] = {}
 
-    def _is_stationary(self, node_id: int, linear_mps: float, angular_rps: float, now: float) -> bool:
+    def _is_stationary(self, node_id: int, linear_mps: float, angular_rps: float, now: float | None = None) -> bool:
+        now = now if now is not None else time.time()
         still = linear_mps < 0.05 and angular_rps < 0.08
         if still:
             if self._stationary_since.get(node_id) is None:

@@ -452,7 +452,8 @@ html, body {
 
 .badge.patrol { background: rgba(34,197,94,0.18); color: var(--ok); }
 .badge.holding { background: rgba(245,158,11,0.18); color: var(--warn); }
-.badge.patrol, .badge.holding, .badge.complete, .badge.live { text-transform: uppercase; }
+.badge.homing { background: rgba(14,165,233,0.22); color: var(--accent); }
+.badge.patrol, .badge.holding, .badge.homing, .badge.complete, .badge.live { text-transform: uppercase; }
 
 .card .sub {
   font-family: var(--mono);
@@ -465,6 +466,12 @@ html, body {
   background: rgba(239, 68, 68, 0.08);
 }
 
+.survivor-card.confirmed {
+  border-color: rgba(239, 68, 68, 0.75);
+  background: rgba(239, 68, 68, 0.16);
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.25);
+}
+
 .survivor-card .prob {
   font-family: var(--mono);
   font-size: 1.15rem;
@@ -472,27 +479,41 @@ html, body {
   color: var(--alert);
 }
 
-/* HTML unit markers on map */
+/* HTML unit markers — labels only; 3D mesh rendered by scene3d */
 .unit-marker {
   display: flex;
   flex-direction: column;
   align-items: center;
   cursor: pointer;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 .unit-marker .icon {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  font-size: 0.65rem;
+  display: none;
+}
+
+.unit-marker .status-chip {
+  font-size: 0.55rem;
   font-weight: 700;
   font-family: var(--mono);
-  border: 2px solid #fff;
-  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
-  animation: unit-pulse 2s ease-in-out infinite;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.12rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(7, 11, 16, 0.88);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.unit-marker.homing .status-chip {
+  color: var(--accent);
+  border-color: rgba(14, 165, 233, 0.45);
+  box-shadow: 0 0 10px rgba(14, 165, 233, 0.35);
+}
+
+.unit-marker.holding .status-chip {
+  color: var(--warn);
+  border-color: rgba(245, 158, 11, 0.45);
 }
 
 .unit-marker.spider .icon {
@@ -538,18 +559,55 @@ html, body {
 }
 
 .survivor-marker {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: #ef4444;
-  border: 3px solid #fecaca;
-  box-shadow: 0 0 16px rgba(239,68,68,0.7);
-  animation: survivor-blink 1.5s ease-in-out infinite;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: auto;
 }
 
-@keyframes survivor-blink {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.75; transform: scale(1.15); }
+.survivor-marker.scanning {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(245, 158, 11, 0.85);
+  border: 2px solid #fff;
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.5);
+}
+
+.survivor-marker.confirmed {
+  min-width: 72px;
+  padding: 0.25rem 0.4rem;
+  border-radius: 8px;
+  background: rgba(127, 29, 29, 0.92);
+  border: 2px solid #fecaca;
+  box-shadow: 0 0 20px rgba(239, 68, 68, 0.65);
+  animation: survivor-found 2s ease-in-out infinite;
+}
+
+.survivor-marker .pin-icon {
+  font-weight: 800;
+  color: #fecaca;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.survivor-marker .pin-lbl {
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.05em;
+}
+
+.survivor-marker .pin-prob {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #fecaca;
+}
+
+@keyframes survivor-found {
+  0%, 100% { box-shadow: 0 0 16px rgba(239, 68, 68, 0.55); }
+  50% { box-shadow: 0 0 28px rgba(239, 68, 68, 0.9); }
 }
 
 .draw-vertex {

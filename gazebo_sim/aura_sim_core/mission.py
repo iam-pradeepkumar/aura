@@ -11,6 +11,7 @@ from pathlib import Path
 from .coverage import CoveragePlanner, Waypoint, reorder_waypoints_nearest
 from .detection import SimulationDetector
 from .fake_csi import FakeCsiGenerator
+from .wifi_sensor import WiFiSensor
 from .units import DroneUnit, SpiderbotUnit, UnitSpec, parse_units
 from .world import DisasterWorld, load_world_config, world_from_dict
 
@@ -38,6 +39,9 @@ class MobileMissionController:
     _visited_cells: set[tuple[int, int]] = field(default_factory=set)
     _hold_target_sec: float = 3.5
     detector: SimulationDetector | None = None
+    wifi: WiFiSensor | None = None
+    _wifi_homing_threshold: float = 0.10
+    _sim_time: float = 0.0
 
     @property
     def rover(self):
@@ -83,14 +87,17 @@ class MobileMissionController:
         if self.fake_csi is None:
             self._init_fake_csi()
         self._plan_paths()
-        self.stats.start_time = time.time()
+        self._sim_time = 0.0
+        self.stats.start_time = 0.0
         self._hold_target_sec = random.uniform(2.5, 4.0)
         if self.detector is None:
             self._sync_detection_radius()
 
     def _sync_detection_radius(self) -> None:
-        radius = max(3.5, min(7.0, self.world.area_size_m * 0.14))
-        self.detector = SimulationDetector(self.world, presence_radius_m=radius)
+        radius = max(4.0, min(8.0, self.world.area_size_m * 0.16))
+        sense = max(12.0, min(28.0, self.world.area_size_m * 0.55))
+        self.detector = SimulationDetector(self.world, presence_radius_m=radius, confirm_threshold=0.55)
+        self.wifi = WiFiSensor(self.world, sense_range_m=sense)
         if self.fake_csi is not None:
             self.fake_csi.presence_radius_m = radius
 
@@ -197,7 +204,8 @@ class MobileMissionController:
         return cls(world=world, units=units, **kwargs)
 
     def tick(self, dt: float, now: float | None = None) -> dict:
-        now = now or time.time()
+        self._sim_time += dt
+        now = now if now is not None else self._sim_time
         for sb in self.spiderbots:
             self._step_spider(sb, dt, now)
             if self.detector is not None:
@@ -261,27 +269,88 @@ class MobileMissionController:
             return []
         return self.detector.targets()
 
+    def get_wifi_signals(self) -> list[dict]:
+        out = []
+        for sb in self.spiderbots:
+            if sb.wifi_signal < 0.05:
+                continue
+            out.append({
+                "unit_id": sb.spec.id,
+                "node_id": sb.spec.node_id,
+                "x": sb.rover.state.x,
+                "y": sb.rover.state.y,
+                "strength": round(sb.wifi_signal, 3),
+                "bearing_rad": round(sb.wifi_bearing, 4),
+                "homing_victim_id": sb.homing_victim_id,
+                "mode": sb.patrol_mode,
+            })
+        return out
+
+    def _wifi_reading(self, sb: SpiderbotUnit) -> None:
+        if self.wifi is None:
+            sb.wifi_signal = 0.0
+            return
+        reading = self.wifi.scan(sb.rover.state.x, sb.rover.state.y, self._detected_victims)
+        if reading is None:
+            sb.wifi_signal = 0.0
+            sb.homing_victim_id = None
+            return
+        sb.wifi_signal = reading.strength
+        sb.wifi_bearing = reading.bearing_rad
+        sb.homing_victim_id = reading.victim_id
+
+    def _victim_by_id(self, vid: int):
+        for v in self.world.victims:
+            if v.id == vid:
+                return v
+        return None
+
     def _step_spider(self, sb: SpiderbotUnit, dt: float, now: float) -> None:
         rover = sb.rover
         if rover.state.finished:
             return
+        self._wifi_reading(sb)
+
         if rover.state.holding:
             rover.state.linear_mps = 0.0
+            sb.patrol_mode = "hold"
             if now >= rover.state.hold_until:
                 rover.state.holding = False
-                rover.state.waypoint_idx += 1
-                self._hold_target_sec = random.uniform(2.5, 4.0)
+                sb.patrol_mode = "patrol"
+                if sb.homing_victim_id and sb.homing_victim_id in self._detected_victims:
+                    sb.homing_victim_id = None
+                else:
+                    rover.state.waypoint_idx += 1
+                self._hold_target_sec = random.uniform(1.2, 2.0)
             return
+
+        presence_r = self.fake_csi.presence_radius_m if self.fake_csi else 5.0
+
+        if sb.wifi_signal >= self._wifi_homing_threshold and sb.homing_victim_id is not None:
+            victim = self._victim_by_id(sb.homing_victim_id)
+            if victim is not None:
+                sb.patrol_mode = "homing"
+                target = Waypoint(victim.x, victim.y, 0.0)
+                rover.step_toward(target, dt)
+                dist = math.hypot(victim.x - rover.state.x, victim.y - rover.state.y)
+                if dist < presence_r * 0.85:
+                    rover.state.holding = True
+                    rover.state.hold_until = now + self._hold_target_sec
+                    sb.patrol_mode = "hold"
+                return
+
+        sb.patrol_mode = "patrol"
         if rover.state.waypoint_idx >= len(sb.waypoints):
             rover.state.finished = True
             return
         target = sb.waypoints[rover.state.waypoint_idx]
         rover.step_toward(target, dt)
-        arrival = max(0.8, min(2.0, self.world.area_size_m * 0.03))
+        arrival = max(1.0, min(2.5, self.world.area_size_m * 0.035))
         if math.hypot(target.x - rover.state.x, target.y - rover.state.y) < arrival:
             if self.fake_csi.presence_only(rover.state.x, rover.state.y):
                 rover.state.holding = True
                 rover.state.hold_until = now + self._hold_target_sec
+                sb.patrol_mode = "hold"
             else:
                 rover.state.waypoint_idx += 1
 

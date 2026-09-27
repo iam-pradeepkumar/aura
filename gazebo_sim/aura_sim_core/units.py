@@ -53,21 +53,37 @@ class SpiderbotUnit:
     spec: UnitSpec
     rover: GroundRover = field(default_factory=GroundRover)
     waypoints: list = field(default_factory=list)
+    patrol_mode: str = "patrol"
+    homing_victim_id: int | None = None
+    wifi_signal: float = 0.0
+    wifi_bearing: float = 0.0
 
     def status_dict(self) -> dict:
         s = self.rover.state
-        phase = "holding" if s.holding else ("complete" if s.finished else "patrol")
+        if s.holding:
+            phase = "HOLDING"
+        elif self.patrol_mode == "homing":
+            phase = "HOMING"
+        elif s.finished:
+            phase = "COMPLETE"
+        else:
+            phase = "PATROL"
         return {
             "id": self.spec.id,
             "name": self.spec.name,
             "type": "spiderbot",
             "node_id": self.spec.node_id,
-            "status": phase.upper(),
+            "status": phase,
+            "patrol_mode": self.patrol_mode,
             "x": round(s.x, 3),
             "y": round(s.y, 3),
             "z": 0.0,
+            "yaw": round(s.yaw, 3),
             "holding": s.holding,
             "finished": s.finished,
+            "wifi_signal": round(self.wifi_signal, 3),
+            "wifi_bearing": round(self.wifi_bearing, 3),
+            "homing_victim_id": self.homing_victim_id,
             "sensors": ["CSI", "Motion", "Vitals"],
         }
 
@@ -90,6 +106,7 @@ class DroneUnit:
             "x": round(s.x, 3),
             "y": round(s.y, 3),
             "z": round(s.z, 2),
+            "yaw": round(s.yaw, 3),
             "finished": s.finished,
             "sensors": ["Relay", "Coverage"],
         }

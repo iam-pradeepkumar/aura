@@ -8,7 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/command.css?v=5" />
+  <link rel="stylesheet" href="/static/css/command.css?v=7" />
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 </head>
 <body>
@@ -70,9 +71,9 @@
           <button class="btn btn-alert" id="btn-stop" type="button" style="width:100%;margin-top:0.5rem;display:none;">STOP MISSION</button>
         </div>
         <p style="font-size:0.68rem;color:var(--muted);margin-top:0.75rem;line-height:1.45;">
-          Place survivors inside the marked zone before starting. Spiderbots autonomously patrol
-          the full disaster area with CSI vitals (stationary-gated). Drones lawnmower-cover from above.
-          Detections fuse through aura_processor sensing_v2 + simulation proximity model.
+          Close the zone to generate collapsed buildings + debris. Place survivors, then start.
+          Spiderbots broadcast WiFi CSI — when a survivor signature is detected they home in,
+          confirm the location (red FOUND pin), and continue patrol. Drones cover from above.
         </p>
       </div>
 
@@ -97,7 +98,8 @@
     </section>
   </div>
 
-  <script src="/static/js/command/map.js?v=6"></script>
-  <script src="/static/js/command/app.js?v=6"></script>
+  <script src="/static/js/command/scene3d.js?v=7"></script>
+  <script src="/static/js/command/map.js?v=7"></script>
+  <script src="/static/js/command/app.js?v=7"></script>
 </body>
 </html>
