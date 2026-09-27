@@ -479,16 +479,22 @@ html, body {
   color: var(--alert);
 }
 
-/* HTML unit markers — labels only; 3D mesh rendered by scene3d */
+/* HTML unit markers — compact label chips anchored to ground position */
 .unit-marker {
   display: flex;
   flex-direction: column;
   align-items: center;
   cursor: pointer;
   pointer-events: none;
+  width: max-content;
+  transform: translateY(-6px);
 }
 
 .unit-marker .icon {
+  display: none;
+}
+
+.unit-marker .lbl {
   display: none;
 }
 

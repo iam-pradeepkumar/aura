@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AURA — Adaptive Urban Rescue &amp; Alert Array</title>
+  <meta name="description" content="WiFi CSI search &amp; rescue for disaster zones — spiderbots, drones, and survivor detection without rubble-penetrating sensors." />
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/landing.css?v=1" />
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+
+  <nav class="nav">
+    <a class="nav-brand" href="/">
+      <span class="mark">A</span>
+      <span>AURA</span>
+    </a>
+    <div class="nav-links">
+      <a href="#problem">Problem</a>
+      <a href="#solution">Solution</a>
+      <a href="#feasibility">Feasibility</a>
+      <a href="#demo">Demo</a>
+    </div>
+    <a class="btn btn-primary" href="/command">Try simulation</a>
+  </nav>
+
+  <header class="hero">
+    <div class="hero-copy reveal">
+      <p class="eyebrow">Search &amp; rescue · WiFi CSI · Autonomous field units</p>
+      <h1>Find survivors when<br /><em>every second</em> counts</h1>
+      <p class="lede">
+        AURA deploys spiderbots and drones over disaster zones, sensing survivors through
+        WiFi Channel State Information — no line of sight, no cloud dependency.
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="/command">Launch command center</a>
+        <a class="btn btn-ghost btn-lg" href="#demo">Watch field demo</a>
+      </div>
+      <dl class="hero-stats">
+        <div><dt>Detection</dt><dd>CSI vitals</dd></div>
+        <div><dt>Units</dt><dd>Spiderbots + drones</dd></div>
+        <div><dt>Ops</dt><dd>Offline-capable</dd></div>
+      </dl>
+    </div>
+    <div class="hero-stage reveal reveal-delay-1">
+      <canvas id="hero-3d" aria-hidden="true"></canvas>
+      <div class="stage-glow" aria-hidden="true"></div>
+      <div class="stage-caption">Autonomous SAR fleet · 3D command view</div>
+    </div>
+  </header>
+
+  <section id="problem" class="section">
+    <div class="section-head reveal">
+      <p class="eyebrow">The problem</p>
+      <h2>Rescuers search blind in rubble, mud, and rain</h2>
+    </div>
+    <div class="card-grid">
+      <article class="card reveal">
+        <h3>No visibility</h3>
+        <p>Thermal cameras and optics fail inside collapsed structures. Dogs and microphones cannot scale across city blocks.</p>
+      </article>
+      <article class="card reveal reveal-delay-1">
+        <h3>Slow coverage</h3>
+        <p>Human teams cannot systematically sweep large disaster polygons before the golden rescue window closes.</p>
+      </article>
+      <article class="card reveal reveal-delay-2">
+        <h3>Alert gaps</h3>
+        <p>Communities lack hyper-local early warning; after impact, coordination fragments across agencies.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="solution" class="section section-alt">
+    <div class="split reveal">
+      <div>
+        <p class="eyebrow">Our solution</p>
+        <h2>CSI sensing fleet + command dashboard</h2>
+        <p>
+          Mobile ESP32 nodes on spiderbots capture WiFi reflections from survivors.
+          Drones relay coverage; the command center fuses count, position, respiration, and triage hints on a live map.
+        </p>
+        <ul class="feature-list">
+          <li><strong>Mark</strong> a real disaster polygon on satellite imagery</li>
+          <li><strong>Place</strong> survivor positions for simulation validation</li>
+          <li><strong>Deploy</strong> spiderbots and drones — they patrol, home on CSI, and lock FOUND pins</li>
+          <li><strong>Scale</strong> to Gazebo ROS 2 and NVIDIA Isaac Sim for photoreal training</li>
+        </ul>
+      </div>
+      <div class="flow-diagram" aria-hidden="true">
+        <div class="flow-node">Disaster zone</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node accent">Spiderbot CSI scan</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node accent-2">Drone coverage relay</div>
+        <div class="flow-arrow">↓</div>
+        <div class="flow-node alert">Survivor FOUND</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="feasibility" class="section">
+    <div class="section-head reveal">
+      <p class="eyebrow">Feasibility &amp; viability</p>
+      <h2>Built for field deployment, not a lab demo</h2>
+    </div>
+    <div class="metric-grid">
+      <article class="metric reveal">
+        <span class="metric-val">$40</span>
+        <span class="metric-lbl">ESP32 node BOM</span>
+        <p>Commodity WiFi CSI hardware already proven in research and disaster-response pilots.</p>
+      </article>
+      <article class="metric reveal reveal-delay-1">
+        <span class="metric-val">Offline</span>
+        <span class="metric-lbl">Laptop hotspot mesh</span>
+        <p>No cloud required for rescue sensing — critical when towers are down after earthquakes or floods.</p>
+      </article>
+      <article class="metric reveal reveal-delay-2">
+        <span class="metric-val">8×</span>
+        <span class="metric-lbl">Sim time scale</span>
+        <p>Dashboard simulation accelerates patrol and detection so operators validate workflows before field deploy.</p>
+      </article>
+      <article class="metric reveal reveal-delay-3">
+        <span class="metric-val">ROS 2</span>
+        <span class="metric-lbl">Gazebo + Isaac path</span>
+        <p>Same mission YAML and WebSocket schema from browser sim to photoreal NVIDIA Isaac Sim environments.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="demo" class="section section-video">
+    <div class="section-head reveal">
+      <p class="eyebrow">Field demonstration</p>
+      <h2>See AURA in action</h2>
+      <p>How WiFi CSI sensing locates survivors and feeds the rescue command workflow.</p>
+    </div>
+    <div class="video-wrap reveal">
+      <iframe
+        src="https://www.youtube.com/embed/Tj6D4ykAHcQ?rel=0&modestbranding=1"
+        title="AURA field demonstration"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        allowfullscreen
+        loading="lazy"
+      ></iframe>
+    </div>
+  </section>
+
+  <section class="section cta-section">
+    <div class="cta-panel reveal">
+      <div>
+        <h2>Run the live simulation</h2>
+        <p>Mark a disaster zone, place survivors, and watch autonomous units detect them on the command map.</p>
+      </div>
+      <a class="btn btn-primary btn-lg" href="/command">Open command center →</a>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <div>
+      <strong>AURA</strong> — Adaptive Urban Rescue &amp; Alert Array
+    </div>
+    <div class="footer-links">
+      <a href="/command">Command center</a>
+      <a href="https://github.com/iam-pradeepkumar/aura" target="_blank" rel="noopener">GitHub</a>
+    </div>
+    <p class="footer-note">ESP32 CSI sensing · Gazebo · Isaac Sim roadmap</p>
+  </footer>
+
+  <script src="/static/js/landing/hero3d.js?v=1"></script>
+  <script src="/static/js/landing/app.js?v=1"></script>
+</body>
+</html>

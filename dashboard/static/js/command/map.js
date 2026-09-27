@@ -21,6 +21,17 @@ const AuraMap = (function () {
   let clickTimer = null;
   const STYLE = "https://tiles.openfreemap.org/styles/liberty";
 
+  /** Keep HTML markers glued to map coordinates when the view is pitched. */
+  function mapMarkerOpts(anchor = "bottom") {
+    return { element: null, anchor, pitchAlignment: "map", rotationAlignment: "map" };
+  }
+
+  function makeMarker(el, coord, anchor = "bottom") {
+    const opts = mapMarkerOpts(anchor);
+    opts.element = el;
+    return new maplibregl.Marker(opts).setLngLat(coord).addTo(map);
+  }
+
   function init(containerId) {
     map = new maplibregl.Map({
       container: containerId,
@@ -133,7 +144,7 @@ const AuraMap = (function () {
         "circle-opacity": 0.35,
         "circle-stroke-width": 1,
         "circle-stroke-color": "#ffffff",
-        "circle-pitch-alignment": "viewport",
+        "circle-pitch-alignment": "map",
       },
     });
 
@@ -187,10 +198,7 @@ const AuraMap = (function () {
   function _addVertexMarker(coord) {
     const el = document.createElement("div");
     el.className = "draw-vertex";
-    const m = new maplibregl.Marker({ element: el, anchor: "center" })
-      .setLngLat(coord)
-      .addTo(map);
-    vertexMarkers.push(m);
+    vertexMarkers.push(makeMarker(el, coord, "center"));
   }
 
   function _clearVertices() {
@@ -280,9 +288,7 @@ const AuraMap = (function () {
     el.className = "placed-survivor-marker";
     el.innerHTML = `<span>${id}</span>`;
     el.title = `Placed survivor #${id}`;
-    placedSurvivorMarkers[id] = new maplibregl.Marker({ element: el, anchor: "center" })
-      .setLngLat(coord)
-      .addTo(map);
+    placedSurvivorMarkers[id] = makeMarker(el, coord, "center");
     if (onSurvivorChange) onSurvivorChange(placedSurvivors.slice());
     return true;
   }
@@ -379,9 +385,7 @@ const AuraMap = (function () {
       const el = document.createElement("div");
       el.className = `unit-marker ${u.type === "drone" ? "drone" : "spider"} ${status}`;
       el.innerHTML = `<div class="icon">${label}</div><div class="lbl">${u.name || id}</div><div class="status-chip">${u.status || "PATROL"}</div>`;
-      unitMarkers[id] = new maplibregl.Marker({ element: el, anchor: "bottom" })
-        .setLngLat(coord)
-        .addTo(map);
+      unitMarkers[id] = makeMarker(el, coord, "center");
     } else {
       unitMarkers[id].setLngLat(coord);
       const root = unitMarkers[id].getElement();
@@ -480,10 +484,8 @@ const AuraMap = (function () {
           ? `<div class="pin-dot">${id}</div><div class="pin-stem"></div>`
           : `<div class="pin-dot scan">${prob}%</div><div class="pin-stem scan"></div>`;
         el.title = isConfirmed ? `Survivor #${id} found — ${prob}%` : `Scanning — ${prob}%`;
-        survivorMarkers[id] = new maplibregl.Marker({ element: el, anchor: "bottom" })
-          .setLngLat(coord)
-          .setPopup(new maplibregl.Popup({ offset: 12, closeButton: false }).setHTML(popupHtml))
-          .addTo(map);
+        survivorMarkers[id] = makeMarker(el, coord, "center")
+          .setPopup(new maplibregl.Popup({ offset: 12, closeButton: false, anchor: "bottom" }).setHTML(popupHtml));
       } else {
         survivorMarkers[id].setLngLat(coord);
         const el = survivorMarkers[id].getElement();

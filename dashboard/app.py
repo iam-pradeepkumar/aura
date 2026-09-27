@@ -21,7 +21,12 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/", response_class=HTMLResponse)
+async def landing_page() -> str:
+    return (STATIC_DIR / "landing.html").read_text()
+
+
 @app.get("/command", response_class=HTMLResponse)
+@app.get("/simulation", response_class=HTMLResponse)
 async def command_center() -> str:
     return (STATIC_DIR / "command.html").read_text()
 

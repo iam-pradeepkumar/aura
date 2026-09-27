@@ -182,26 +182,44 @@ def _json_num(v) -> float:
         return 0.0
 
 
-def _merge_sim_targets(frame: dict, sim_targets: list[dict]) -> dict:
+def _victim_geo_lookup(victims: list[dict] | None) -> dict[int, tuple[float, float]]:
+    out: dict[int, tuple[float, float]] = {}
+    for v in victims or []:
+        vid = int(v.get("id", 0))
+        lat, lon = v.get("lat"), v.get("lon")
+        if vid and lat is not None and lon is not None:
+            out[vid] = (float(lat), float(lon))
+    return out
+
+
+def _merge_sim_targets(
+    frame: dict,
+    sim_targets: list[dict],
+    victim_geo: dict[int, tuple[float, float]] | None = None,
+) -> dict:
     if not sim_targets:
         return frame
+    sim_by_id = {int(t.get("id", 0)): dict(t) for t in sim_targets if int(t.get("id", 0))}
     by_id: dict[int, dict] = {}
     for t in frame.get("targets", []):
         tid = int(t.get("id", 0))
         if tid:
             by_id[tid] = dict(t)
-    for t in sim_targets:
-        tid = int(t.get("id", 0))
-        if not tid:
-            continue
+    for tid, sim in sim_by_id.items():
         prev = by_id.get(tid)
-        if prev is None or float(t.get("confidence", 0)) >= float(prev.get("confidence", 0)):
-            by_id[tid] = dict(t)
+        if prev is None or float(sim.get("confidence", 0)) >= float(prev.get("confidence", 0)):
+            merged = dict(sim)
+            merged["x_m"] = sim.get("x_m")
+            merged["y_m"] = sim.get("y_m")
+            by_id[tid] = merged
     merged = []
     for t in by_id.values():
         conf = float(t.get("confidence", 0))
         t["probability_pct"] = round(conf * 100, 1)
         t["vitals_confidence_pct"] = round(float(t.get("resp_confidence", conf)) * 100, 1)
+        tid = int(t.get("id", 0))
+        if victim_geo and tid in victim_geo and (t.get("confirmed") or conf >= 0.55):
+            t["lat"], t["lon"] = victim_geo[tid]
         merged.append(t)
     confirmed = [t for t in merged if t.get("confirmed")]
     frame["targets"] = merged
@@ -216,7 +234,11 @@ def _merge_sim_targets(frame: dict, sim_targets: list[dict]) -> dict:
     return frame
 
 
-def _enrich_geo(msg: dict, anchor: GeoAnchor | None) -> dict:
+def _enrich_geo(
+    msg: dict,
+    anchor: GeoAnchor | None,
+    victim_geo: dict[int, tuple[float, float]] | None = None,
+) -> dict:
     if anchor is None:
         return msg
     for u in msg.get("units_roster", []):
@@ -234,9 +256,14 @@ def _enrich_geo(msg: dict, anchor: GeoAnchor | None) -> dict:
         u["lat"] = round(lat, 6)
         u["lon"] = round(lon, 6)
     for t in msg.get("data", {}).get("targets", []):
-        lat, lon = anchor.to_geo(_json_num(t.get("x_m", 0)), _json_num(t.get("y_m", 0)))
-        t["lat"] = round(lat, 6)
-        t["lon"] = round(lon, 6)
+        tid = int(t.get("id", 0))
+        if victim_geo and tid in victim_geo and (t.get("confirmed") or float(t.get("confidence", 0)) >= 0.55):
+            t["lat"] = round(victim_geo[tid][0], 6)
+            t["lon"] = round(victim_geo[tid][1], 6)
+        else:
+            lat, lon = anchor.to_geo(_json_num(t.get("x_m", 0)), _json_num(t.get("y_m", 0)))
+            t["lat"] = round(lat, 6)
+            t["lon"] = round(lon, 6)
     for sig in msg.get("wifi", {}).get("signals", []):
         lat, lon = anchor.to_geo(_json_num(sig.get("x", 0)), _json_num(sig.get("y", 0)))
         sig["lat"] = round(lat, 6)
@@ -308,6 +335,7 @@ def start_mission(payload: dict) -> dict:
 def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
     global _mission_status
     anchor = zone_cfg.get("_anchor")
+    victim_geo = _victim_geo_lookup(zone_cfg.get("victims"))
     mission = MobileMissionController.from_mission_dict(zone_cfg)
     polygon = [(float(p[0]), float(p[1])) for p in zone_cfg["zone_polygon"]]
     ground = zone_cfg.get("ground_subcell")
@@ -334,7 +362,7 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
         engine.update_node_positions(mission.node_positions())
         mission.inject_csi(engine.rx, CSI_PACKETS_PER_TICK)
         frame = engine.process_frame()
-        frame = _merge_sim_targets(frame, mission.get_sim_targets())
+        frame = _merge_sim_targets(frame, mission.get_sim_targets(), victim_geo)
         msg = frame_to_bridge_message(
             frame,
             status,
@@ -345,10 +373,10 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
             obstacles=mission.world.obstacles,
             units_roster=status.get("units", []),
         )
-        msg = _enrich_geo(msg, anchor)
+        msg = _enrich_geo(msg, anchor, victim_geo)
         msg["sim"] = {"time_scale": TIME_SCALE, "tick_hz": TICK_HZ}
         msg["wifi"] = {"signals": mission.get_wifi_signals()}
-        msg = _enrich_geo(msg, anchor)
+        msg = _enrich_geo(msg, anchor, victim_geo)
         if zone_cfg.get("survivors_geo"):
             msg["geo"]["survivors_placed"] = zone_cfg["survivors_geo"]
         with _lock:

@@ -174,6 +174,15 @@ async function startMission() {
     alert("Search and fly to a real-world address first.");
     return;
   }
+  const centroid = ring.reduce(
+    (acc, p) => ({ lon: acc.lon + p[0], lat: acc.lat + p[1] }),
+    { lon: 0, lat: 0 }
+  );
+  const geoAnchor = {
+    lat: centroid.lat / ring.length,
+    lon: centroid.lon / ring.length,
+    label: S.addressLabel || anchor.label,
+  };
   document.getElementById("btn-start").disabled = true;
   await api("/api/command/start", {
     method: "POST",
@@ -181,7 +190,7 @@ async function startMission() {
     body: JSON.stringify({
       mode: S.mode,
       units: S.roster,
-      geo_anchor: { lat: anchor.lat, lon: anchor.lon, label: S.addressLabel || anchor.label },
+      geo_anchor: geoAnchor,
       zone_polygon_geo: ring,
       survivors_geo: survivors,
       gazebo: S.mode === "gazebo",
