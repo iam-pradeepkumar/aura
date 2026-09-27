@@ -1,142 +1,206 @@
-/* MapLibre real-world 3D SAR map */
+/* MapLibre full-screen SAR map with reliable polygon draw + live unit markers */
 
 const AuraMap = (function () {
   let map = null;
+  let mapReady = false;
   let drawPts = [];
+  let closedZone = [];
   let drawMode = false;
   let anchor = null;
   let onZoneChange = null;
 
+  const unitMarkers = {};
+  const survivorMarkers = {};
+  const vertexMarkers = [];
+  const trails = {};
+  let clickTimer = null;
   const STYLE = "https://tiles.openfreemap.org/styles/liberty";
 
   function init(containerId) {
     map = new maplibregl.Map({
       container: containerId,
       style: STYLE,
-      center: [-122.1661, 37.4241],
+      center: [80.2707, 13.0827],
       zoom: 15,
-      pitch: 55,
-      bearing: -18,
+      pitch: 60,
+      bearing: -20,
       antialias: true,
     });
 
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
+    map.addControl(new maplibregl.ScaleControl(), "bottom-left");
 
     map.on("load", () => {
-      _ensureLayers();
-      if (map.getLayer("building-3d")) {
-        map.setLayoutProperty("building-3d", "visibility", "visible");
-      }
+      _addLayers();
+      mapReady = true;
+      map.resize();
     });
 
     map.on("click", (e) => {
-      if (!drawMode) return;
-      drawPts.push([e.lngLat.lng, e.lngLat.lat]);
-      _renderDraw();
-      if (onZoneChange) onZoneChange(drawPts.slice());
+      if (!drawMode || !mapReady) return;
+      if (clickTimer) clearTimeout(clickTimer);
+      clickTimer = setTimeout(() => {
+        clickTimer = null;
+        const pt = [e.lngLat.lng, e.lngLat.lat];
+        drawPts.push(pt);
+        _addVertexMarker(pt);
+        _updateDrawLayers();
+        if (onZoneChange) onZoneChange(drawPts.slice());
+      }, 220);
     });
 
+    map.on("dblclick", (e) => {
+      if (!drawMode) return;
+      e.preventDefault();
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = null;
+      }
+      closePolygon();
+    });
+
+    window.addEventListener("resize", () => map?.resize());
     return map;
   }
 
-  function _ensureLayers() {
-    const sources = ["zone-fill", "zone-line", "draw-line", "units", "survivors", "coverage"];
-    sources.forEach((id) => {
-      if (!map.getSource(id)) {
-        if (id === "zone-fill") {
-          map.addSource(id, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-          map.addLayer({
-            id: `${id}-layer`,
-            type: "fill",
-            source: id,
-            paint: { "fill-color": "#f59e0b", "fill-opacity": 0.18 },
-          });
-        } else if (id === "zone-line" || id === "draw-line") {
-          map.addSource(id, { type: "geojson", data: { type: "Feature", geometry: { type: "LineString", coordinates: [] } } });
-          map.addLayer({
-            id: `${id}-layer`,
-            type: "line",
-            source: id,
-            paint: { "line-color": id === "zone-line" ? "#fbbf24" : "#0ea5e9", "line-width": 2.5 },
-          });
-        } else if (id === "units") {
-          map.addSource(id, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-          map.addLayer({
-            id: "units-spider",
-            type: "circle",
-            source: id,
-            filter: ["==", ["get", "kind"], "spiderbot"],
-            paint: {
-              "circle-radius": 9,
-              "circle-color": "#0ea5e9",
-              "circle-stroke-width": 2,
-              "circle-stroke-color": "#e0f2fe",
-            },
-          });
-          map.addLayer({
-            id: "units-drone",
-            type: "circle",
-            source: id,
-            filter: ["==", ["get", "kind"], "drone"],
-            paint: {
-              "circle-radius": 8,
-              "circle-color": "#22c55e",
-              "circle-stroke-width": 2,
-              "circle-stroke-color": "#dcfce7",
-            },
-          });
-          map.addLayer({
-            id: "units-label",
-            type: "symbol",
-            source: id,
-            layout: {
-              "text-field": ["get", "name"],
-              "text-size": 11,
-              "text-offset": [0, 1.4],
-              "text-anchor": "top",
-            },
-            paint: { "text-color": "#e8eef4" },
-          });
-        } else if (id === "survivors") {
-          map.addSource(id, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-          map.addLayer({
-            id: "survivors-pulse",
-            type: "circle",
-            source: id,
-            paint: {
-              "circle-radius": ["+", 10, ["*", ["get", "prob"], 0.08]],
-              "circle-color": "#ef4444",
-              "circle-opacity": 0.35,
-              "circle-blur": 0.6,
-            },
-          });
-          map.addLayer({
-            id: "survivors-core",
-            type: "circle",
-            source: id,
-            paint: {
-              "circle-radius": 7,
-              "circle-color": "#ef4444",
-              "circle-stroke-width": 2,
-              "circle-stroke-color": "#fecaca",
-            },
-          });
-        } else if (id === "coverage") {
-          map.addSource(id, { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-          map.addLayer({
-            id: "coverage-layer",
-            type: "line",
-            source: id,
-            paint: { "line-color": "#38bdf8", "line-width": 1.5, "line-opacity": 0.45 },
-          });
-        }
-      }
+  function _addLayers() {
+    if (map.getSource("zone-fill")) return;
+
+    map.addSource("zone-fill", { type: "geojson", data: emptyFC() });
+    map.addLayer({
+      id: "zone-fill-layer",
+      type: "fill",
+      source: "zone-fill",
+      paint: { "fill-color": "#f59e0b", "fill-opacity": 0.22 },
     });
+
+    map.addSource("zone-line", { type: "geojson", data: emptyLine() });
+    map.addLayer({
+      id: "zone-line-layer",
+      type: "line",
+      source: "zone-line",
+      paint: { "line-color": "#fbbf24", "line-width": 3 },
+    });
+
+    map.addSource("draw-line", { type: "geojson", data: emptyLine() });
+    map.addLayer({
+      id: "draw-line-layer",
+      type: "line",
+      source: "draw-line",
+      paint: { "line-color": "#0ea5e9", "line-width": 2, "line-dasharray": [2, 1] },
+    });
+
+    map.addSource("trails", { type: "geojson", data: emptyFC() });
+    map.addLayer({
+      id: "trails-layer",
+      type: "line",
+      source: "trails",
+      paint: { "line-color": ["get", "color"], "line-width": 2.5, "line-opacity": 0.75 },
+    });
+
+    map.addSource("survivor-pulse", { type: "geojson", data: emptyFC() });
+    map.addLayer({
+      id: "survivor-pulse-layer",
+      type: "circle",
+      source: "survivor-pulse",
+      paint: {
+        "circle-radius": 22,
+        "circle-color": "#ef4444",
+        "circle-opacity": 0.25,
+        "circle-blur": 0.5,
+      },
+    });
+
+    map.addSource("units-dots", { type: "geojson", data: emptyFC() });
+    map.addLayer({
+      id: "units-dots-layer",
+      type: "circle",
+      source: "units-dots",
+      paint: {
+        "circle-radius": 10,
+        "circle-color": ["get", "color"],
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#ffffff",
+        "circle-pitch-alignment": "viewport",
+      },
+    });
+  }
+
+  function emptyFC() {
+    return { type: "FeatureCollection", features: [] };
+  }
+
+  function emptyLine() {
+    return { type: "Feature", geometry: { type: "LineString", coordinates: [] } };
+  }
+
+  function _addVertexMarker(coord) {
+    const el = document.createElement("div");
+    el.className = "draw-vertex";
+    const m = new maplibregl.Marker({ element: el, anchor: "center" })
+      .setLngLat(coord)
+      .addTo(map);
+    vertexMarkers.push(m);
+  }
+
+  function _clearVertices() {
+    vertexMarkers.forEach((m) => m.remove());
+    vertexMarkers.length = 0;
+  }
+
+  function _updateDrawLayers() {
+    if (!mapReady) return;
+    const coords = drawPts.slice();
+    map.getSource("draw-line").setData({
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: coords },
+    });
+    if (coords.length >= 3) {
+      map.getSource("zone-fill").setData({
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          geometry: { type: "Polygon", coordinates: [[...coords, coords[0]]] },
+        }],
+      });
+    }
+  }
+
+  function _setZone(ring) {
+    if (!mapReady || !ring || ring.length < 3) return;
+    closedZone = ring.slice();
+    const closed = [...ring, ring[0]];
+    map.getSource("zone-line").setData({
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: closed },
+    });
+    map.getSource("zone-fill").setData({
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        geometry: { type: "Polygon", coordinates: [closed] },
+      }],
+    });
+    fitToZone(ring);
+  }
+
+  function fitToZone(ring) {
+    if (!ring || ring.length < 3) return;
+    const lngs = ring.map((p) => p[0]);
+    const lats = ring.map((p) => p[1]);
+    map.fitBounds(
+      [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+      { padding: { top: 80, bottom: 140, left: 40, right: 320 }, pitch: 55, duration: 1200 }
+    );
   }
 
   function flyTo(lat, lon, label) {
     anchor = { lat, lon, label };
-    map.flyTo({ center: [lon, lat], zoom: 16, pitch: 58, duration: 1800 });
+    if (!mapReady) {
+      map.once("load", () => flyTo(lat, lon, label));
+      return;
+    }
+    map.flyTo({ center: [lon, lat], zoom: 17, pitch: 58, bearing: -15, duration: 1600 });
   }
 
   function getAnchor() {
@@ -145,12 +209,39 @@ const AuraMap = (function () {
 
   function setDrawMode(on) {
     drawMode = on;
-    map.getCanvas().style.cursor = on ? "crosshair" : "";
+    if (map) {
+      map.getCanvas().style.cursor = on ? "crosshair" : "";
+      if (on) {
+        drawPts = [];
+        closedZone = [];
+        _clearVertices();
+        if (mapReady) {
+          map.getSource("draw-line")?.setData(emptyLine());
+          map.getSource("zone-line")?.setData(emptyLine());
+          map.getSource("zone-fill")?.setData(emptyFC());
+        }
+        map.doubleClickZoom.disable();
+      } else {
+        map.doubleClickZoom.enable();
+      }
+    }
   }
 
   function clearDraw() {
     drawPts = [];
-    _renderDraw();
+    closedZone = [];
+    _clearVertices();
+    if (mapReady) {
+      map.getSource("draw-line")?.setData(emptyLine());
+      map.getSource("zone-fill")?.setData(emptyFC());
+      map.getSource("zone-line")?.setData(emptyLine());
+      map.getSource("trails")?.setData(emptyFC());
+    }
+    Object.values(unitMarkers).forEach((m) => m.remove());
+    Object.values(survivorMarkers).forEach((m) => m.remove());
+    Object.keys(unitMarkers).forEach((k) => delete unitMarkers[k]);
+    Object.keys(survivorMarkers).forEach((k) => delete survivorMarkers[k]);
+    Object.keys(trails).forEach((k) => delete trails[k]);
     if (onZoneChange) onZoneChange([]);
   }
 
@@ -159,84 +250,132 @@ const AuraMap = (function () {
     const ring = drawPts.slice();
     _setZone(ring);
     drawPts = [];
-    _renderDraw();
+    _clearVertices();
+    setDrawMode(false);
+    if (mapReady) map.getSource("draw-line")?.setData(emptyLine());
+    if (onZoneChange) onZoneChange(ring);
     return ring;
   }
 
-  function _renderDraw() {
-    if (!map || !map.getSource("draw-line")) return;
-    const coords = drawPts.length ? drawPts : [];
-    map.getSource("draw-line").setData({
-      type: "Feature",
-      geometry: { type: "LineString", coordinates: coords },
-    });
-    if (drawPts.length >= 3) {
-      map.getSource("zone-fill").setData({
-        type: "FeatureCollection",
-        features: [{
-          type: "Feature",
-          geometry: { type: "Polygon", coordinates: [[...drawPts, drawPts[0]]] },
-        }],
-      });
+  function getZoneGeo() {
+    if (closedZone.length >= 3) return closedZone.slice();
+    if (drawPts.length >= 3) return drawPts.slice();
+    return null;
+  }
+
+  function _upsertUnitMarker(u) {
+    if (u.lat == null || u.lon == null) return;
+    const id = u.id;
+    const coord = [u.lon, u.lat];
+
+    if (!trails[id]) trails[id] = [];
+    const last = trails[id][trails[id].length - 1];
+    if (!last || Math.hypot(last[0] - coord[0], last[1] - coord[1]) > 0.000008) {
+      trails[id].push(coord);
+      if (trails[id].length > 120) trails[id].shift();
+    }
+
+    if (!unitMarkers[id]) {
+      const el = document.createElement("div");
+      el.className = `unit-marker ${u.type === "drone" ? "drone" : "spider"}`;
+      el.innerHTML = `<div class="icon">${u.type === "drone" ? "DR" : "SP"}</div><div class="lbl">${u.name || id}</div>`;
+      unitMarkers[id] = new maplibregl.Marker({ element: el, anchor: "bottom" })
+        .setLngLat(coord)
+        .addTo(map);
+    } else {
+      unitMarkers[id].setLngLat(coord);
+      const lbl = unitMarkers[id].getElement().querySelector(".lbl");
+      if (lbl) lbl.textContent = u.name || id;
     }
   }
 
-  function _setZone(ring) {
-    if (!map || !map.getSource("zone-line")) return;
-    map.getSource("zone-line").setData({
-      type: "Feature",
-      geometry: { type: "LineString", coordinates: [...ring, ring[0]] },
-    });
-    map.getSource("zone-fill").setData({
-      type: "FeatureCollection",
-      features: [{
+  function _updateTrails(units) {
+    if (!mapReady) return;
+    const features = (units || []).map((u) => {
+      const path = trails[u.id] || [];
+      if (path.length < 2) return null;
+      return {
         type: "Feature",
-        geometry: { type: "Polygon", coordinates: [[...ring, ring[0]]] },
-      }],
-    });
-  }
-
-  function getZoneGeo() {
-    return drawPts.length >= 3 ? drawPts.slice() : null;
+        geometry: { type: "LineString", coordinates: path },
+        properties: { color: u.type === "drone" ? "#22c55e" : "#0ea5e9" },
+      };
+    }).filter(Boolean);
+    map.getSource("trails").setData({ type: "FeatureCollection", features });
   }
 
   function updateUnits(units) {
-    if (!map || !map.getSource("units")) return;
-    const features = (units || []).filter((u) => u.lat != null && u.lon != null).map((u) => ({
-      type: "Feature",
-      geometry: {
-        type: "Point",
-        coordinates: [u.lon, u.lat],
-      },
-      properties: {
-        id: u.id,
-        name: u.name,
-        kind: u.type,
-        status: u.status,
-      },
-    }));
-    map.getSource("units").setData({ type: "FeatureCollection", features });
+    if (!mapReady) return;
+    (units || []).forEach(_upsertUnitMarker);
+    _updateTrails(units);
+    map.getSource("units-dots").setData({
+      type: "FeatureCollection",
+      features: (units || []).filter((u) => u.lat != null && u.lon != null).map((u) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [u.lon, u.lat] },
+        properties: { color: u.type === "drone" ? "#22c55e" : "#0ea5e9" },
+      })),
+    });
+  }
+
+  function fitToUnits(units) {
+    const pts = (units || []).filter((u) => u.lat != null && u.lon != null);
+    if (!pts.length) return;
+    const lngs = pts.map((u) => u.lon);
+    const lats = pts.map((u) => u.lat);
+    if (closedZone.length >= 3) {
+      lngs.push(...closedZone.map((p) => p[0]));
+      lats.push(...closedZone.map((p) => p[1]));
+    }
+    map.fitBounds(
+      [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
+      { padding: { top: 80, bottom: 140, left: 40, right: 320 }, pitch: 55, duration: 800, maxZoom: 18 }
+    );
   }
 
   function updateSurvivors(targets) {
-    if (!map || !map.getSource("survivors")) return;
-    const features = (targets || []).filter((t) => t.lat != null && t.lon != null).map((t) => ({
-      type: "Feature",
-      geometry: { type: "Point", coordinates: [t.lon, t.lat] },
-      properties: {
-        id: t.id,
-        prob: t.probability_pct || Math.round((t.confidence || 0) * 100),
-        resp: t.respiration_bpm || 0,
-        vitals: t.vitals_confidence_pct || 0,
-        triage: t.suggested_triage || "assessing",
-      },
-    }));
-    map.getSource("survivors").setData({ type: "FeatureCollection", features });
+    if (!mapReady) return;
+    const ids = new Set();
+    (targets || []).forEach((t) => {
+      if (t.lat == null || t.lon == null) return;
+      const id = String(t.id);
+      ids.add(id);
+      const coord = [t.lon, t.lat];
+      const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
+
+      if (!survivorMarkers[id]) {
+        const el = document.createElement("div");
+        el.className = "survivor-marker";
+        el.title = `Survivor #${id} — ${prob}% probability`;
+        survivorMarkers[id] = new maplibregl.Marker({ element: el })
+          .setLngLat(coord)
+          .setPopup(new maplibregl.Popup({ offset: 12 }).setHTML(
+            `<strong>Survivor #${id}</strong><br/>Probability: ${prob}%<br/>`
+            + `Resp: ${t.respiration_bpm ? Math.round(t.respiration_bpm) : "—"} BPM<br/>`
+            + `Vitals conf: ${t.vitals_confidence_pct ?? 0}%`
+          ))
+          .addTo(map);
+      } else {
+        survivorMarkers[id].setLngLat(coord);
+      }
+    });
+
+    map.getSource("survivor-pulse").setData({
+      type: "FeatureCollection",
+      features: (targets || []).filter((t) => t.lat != null).map((t) => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [t.lon, t.lat] },
+        properties: { prob: t.probability_pct || 0 },
+      })),
+    });
   }
 
   function showMissionZone(msg) {
     const ring = msg?.geo?.zone_polygon_geo || msg?.zone?.polygon_geo;
     if (ring && ring.length >= 3) _setZone(ring);
+  }
+
+  function resize() {
+    map?.resize();
   }
 
   return {
@@ -250,6 +389,9 @@ const AuraMap = (function () {
     updateUnits,
     updateSurvivors,
     showMissionZone,
+    fitToZone,
+    fitToUnits,
+    resize,
     set onZoneChange(cb) { onZoneChange = cb; },
   };
 })();

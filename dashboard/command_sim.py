@@ -112,13 +112,16 @@ def _build_zone_cfg(payload: dict) -> dict:
     zone_polygon_geo = payload.get("zone_polygon_geo")
     anchor_obj: GeoAnchor | None = None
 
-    if geo_anchor and zone_polygon_geo and len(zone_polygon_geo) >= 3:
-        anchor_obj = GeoAnchor(
-            float(geo_anchor["lat"]),
-            float(geo_anchor["lon"]),
-            str(geo_anchor.get("label", "")),
-        )
+    if zone_polygon_geo and len(zone_polygon_geo) >= 3:
         ring_geo = [[float(p[0]), float(p[1])] for p in zone_polygon_geo]
+        lngs = [p[0] for p in ring_geo]
+        lats = [p[1] for p in ring_geo]
+        clat = sum(lats) / len(lats)
+        clon = sum(lngs) / len(lngs)
+        label = str((geo_anchor or {}).get("label", ""))
+        anchor_obj = GeoAnchor(clat, clon, label)
+        if geo_anchor is None:
+            geo_anchor = {"lat": clat, "lon": clon, "label": label}
         local_poly = polygon_geo_to_local(anchor_obj, ring_geo)
         area = area_size_from_polygon(local_poly)
         ref = float(defaults["area_size_m"])
@@ -159,17 +162,30 @@ def _build_zone_cfg(payload: dict) -> dict:
     }
 
 
+def _json_num(v) -> float:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _enrich_geo(msg: dict, anchor: GeoAnchor | None) -> dict:
     if anchor is None:
         return msg
     for u in msg.get("units_roster", []):
-        lat, lon = anchor.to_geo(float(u.get("x", 0)), float(u.get("y", 0)))
+        lat, lon = anchor.to_geo(_json_num(u.get("x", 0)), _json_num(u.get("y", 0)))
         u["lat"] = round(lat, 6)
         u["lon"] = round(lon, 6)
+        u["x"] = round(_json_num(u.get("x", 0)), 3)
+        u["y"] = round(_json_num(u.get("y", 0)), 3)
         if u.get("type") == "drone":
-            u["alt_m"] = float(u.get("z", 6))
+            u["alt_m"] = _json_num(u.get("z", 6))
+    for u in msg.get("mission", {}).get("units", []):
+        lat, lon = anchor.to_geo(_json_num(u.get("x", 0)), _json_num(u.get("y", 0)))
+        u["lat"] = round(lat, 6)
+        u["lon"] = round(lon, 6)
     for t in msg.get("data", {}).get("targets", []):
-        lat, lon = anchor.to_geo(float(t.get("x_m", 0)), float(t.get("y_m", 0)))
+        lat, lon = anchor.to_geo(_json_num(t.get("x_m", 0)), _json_num(t.get("y_m", 0)))
         t["lat"] = round(lat, 6)
         t["lon"] = round(lon, 6)
     return msg

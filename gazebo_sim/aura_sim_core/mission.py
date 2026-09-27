@@ -84,10 +84,17 @@ class MobileMissionController:
         self.stats.start_time = time.time()
         self._hold_target_sec = random.uniform(5.0, 8.0)
 
+    def _polygon_centroid(self) -> tuple[float, float]:
+        poly = self.world.zone_polygon
+        if not poly:
+            return 4.0, 4.0
+        return sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly)
+
     def _init_units(self) -> None:
         self.spiderbots = []
         self.drones = []
-        offsets = [(4.0, 4.0), (6.0, 4.0), (8.0, 4.0)]
+        cx, cy = self._polygon_centroid()
+        offsets = [(0, 0), (3, 0), (-3, 0)]
         si = 0
         for spec in self.units:
             if not spec.enabled:
@@ -95,12 +102,14 @@ class MobileMissionController:
             if spec.is_spider:
                 ox, oy = offsets[si % len(offsets)]
                 rover = SpiderbotUnit(spec=spec)
-                rover.rover.state.x = ox
-                rover.rover.state.y = oy
+                rover.rover.state.x = cx + ox
+                rover.rover.state.y = cy + oy
                 self.spiderbots.append(rover)
                 si += 1
             elif spec.is_drone:
                 du = DroneUnit(spec=spec)
+                du.drone.state.x = cx
+                du.drone.state.y = cy
                 du.drone.state.z = 6.0
                 self.drones.append(du)
 

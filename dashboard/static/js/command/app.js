@@ -9,6 +9,7 @@ const S = {
   missionRunning: false,
   zoneGeo: [],
   addressLabel: "",
+  fitUnitsOnce: false,
 };
 
 let ws = null;
@@ -29,8 +30,12 @@ async function boot() {
   renderUnits();
   AuraMap.init("map");
   AuraMap.onZoneChange = (pts) => {
-    S.zoneGeo = pts;
-    setBanner(`${pts.length} corner(s) marked — close polygon or start rescue`);
+    if (pts.length >= 3) S.zoneGeo = pts;
+    setBanner(
+      pts.length < 3
+        ? `Click ${3 - pts.length} more corner(s) on the map (double-click to finish)`
+        : `${pts.length} corners — click "Close polygon" or double-click map`
+    );
   };
   if (zone.default_geo) {
     AuraMap.flyTo(zone.default_geo.lat, zone.default_geo.lon, zone.default_geo.label);
@@ -50,7 +55,7 @@ function bindUi() {
   document.getElementById("btn-draw").addEventListener("click", () => {
     AuraMap.setDrawMode(true);
     document.getElementById("btn-draw").classList.add("active");
-    setBanner("Click map corners to outline the disaster area");
+    setBanner("Click map corners to outline the disaster area (double-click to close)");
   });
   document.getElementById("btn-close-zone").addEventListener("click", () => {
     const ring = AuraMap.closePolygon();
@@ -79,6 +84,13 @@ function bindUi() {
   document.querySelectorAll(".tabs button").forEach((b) => {
     b.addEventListener("click", () => switchTab(b.dataset.tab));
   });
+  document.getElementById("btn-toggle-sidebar")?.addEventListener("click", () => {
+    const sb = document.querySelector(".sidebar");
+    const btn = document.getElementById("btn-toggle-sidebar");
+    sb?.classList.toggle("collapsed");
+    if (btn) btn.textContent = sb?.classList.contains("collapsed") ? "▶" : "◀";
+    setTimeout(() => AuraMap.resize(), 280);
+  });
 }
 
 async function searchAddress() {
@@ -103,7 +115,9 @@ async function searchAddress() {
       S.addressLabel = r.label;
       document.getElementById("address-input").value = r.label;
       box.classList.remove("open");
-      setBanner(`Located: ${r.label} — mark disaster polygon on map`);
+      AuraMap.setDrawMode(true);
+      document.getElementById("btn-draw").classList.add("active");
+      setBanner(`Located: ${r.label} — click map corners to mark disaster zone`);
     });
   });
 }
@@ -143,9 +157,13 @@ async function startMission() {
     }),
   });
   S.missionRunning = true;
+  S.zoneGeo = ring;
+  S.fitUnitsOnce = true;
   document.getElementById("btn-stop").style.display = "block";
   document.getElementById("mission-phase").textContent = "RUNNING";
-  setBanner("Rescue mission active — spiderbots + drones deploying CSI coverage");
+  AuraMap.fitToZone(ring);
+  AuraMap.resize();
+  setBanner("Rescue mission active — blue SP spiderbots and green DR drones patrol inside the yellow zone");
 }
 
 async function stopMission() {
@@ -193,6 +211,10 @@ function renderTelemetry(msg) {
   AuraMap.showMissionZone(msg);
   AuraMap.updateUnits(units);
   AuraMap.updateSurvivors(targets);
+  if (S.missionRunning && S.fitUnitsOnce && units.some((u) => u.lat != null)) {
+    AuraMap.fitToUnits(units);
+    S.fitUnitsOnce = false;
+  }
   renderFleet(units, targets);
 
   if (S.selectedUnit) showUnitDetail(S.selectedUnit, data);
