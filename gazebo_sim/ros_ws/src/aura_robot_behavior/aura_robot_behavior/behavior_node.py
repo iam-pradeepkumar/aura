@@ -28,10 +28,9 @@ from aura_sim_core.mission import MobileMissionController
 class BehaviorNode(Node):
     def __init__(self) -> None:
         super().__init__("aura_robot_behavior")
-        zone = self.declare_parameter(
-            "zone_config",
-            str(ROOT.parent.parent / "gazebo_sim" / "config" / "disaster_zone.yaml"),
-        ).value
+        active = ROOT.parent.parent / "gazebo_sim" / "config" / "active_mission.yaml"
+        default_zone = active if active.exists() else ROOT.parent.parent / "gazebo_sim" / "config" / "disaster_zone.yaml"
+        zone = self.declare_parameter("zone_config", str(default_zone)).value
         self.mission = MobileMissionController.from_config(zone)
         self.pose_pub = self.create_publisher(PoseStamped, "/aura/rover/pose", 10)
         self.drone_pub = self.create_publisher(PoseStamped, "/aura/drone/pose", 10)

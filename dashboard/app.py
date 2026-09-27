@@ -145,22 +145,10 @@ def align_results(results, video_duration_sec: float, n_frames: int) -> list[dic
 
 
 @app.get("/", response_class=HTMLResponse)
-async def command_center():
-    return (STATIC_DIR / "command.html").read_text()
-
-
 @app.get("/command", response_class=HTMLResponse)
-async def command_center_alias():
-    return (STATIC_DIR / "command.html").read_text()
-
-
 @app.get("/simulation", response_class=HTMLResponse)
-async def simulation_page():
-    return (STATIC_DIR / "command.html").read_text()
-
-
 @app.get("/mobile", response_class=HTMLResponse)
-async def mobile_page():
+async def command_center():
     return (STATIC_DIR / "command.html").read_text()
 
 
@@ -423,6 +411,18 @@ async def get_frame(session_id: str, index: int = 0):
         "node_positions": session.node_positions,
         "area_size_m": session.area_size_m,
     }
+
+
+@app.get("/api/command/geocode")
+async def command_geocode(q: str = ""):
+    from dashboard.geocode import geocode_address
+
+    if not q.strip():
+        return {"results": []}
+    try:
+        return {"results": await asyncio.to_thread(geocode_address, q.strip())}
+    except Exception as exc:
+        return {"results": [], "error": str(exc)}
 
 
 @app.get("/api/command/roster")

@@ -8,7 +8,7 @@
 
 ```json
 {
-  "type": "mobile_sensing",
+  "type": "command_sensing",
   "timestamp": 1730000000.0,
   "mode": "mobile",
   "processor_version": "2026.09.26-v2",

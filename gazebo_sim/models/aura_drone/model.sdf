@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<sdf version="1.8">
+  <model name="aura_drone">
+    <link name="link">
+      <pose>0 0 6 0 0 0</pose>
+      <inertial><mass>2</mass></inertial>
+      <collision name="collision">
+        <geometry><box><size>0.5 0.5 0.15</size></box></geometry>
+      </collision>
+      <visual name="visual">
+        <geometry><box><size>0.5 0.5 0.15</size></box></geometry>
+        <material><ambient>0.2 0.7 0.3 1</ambient></material>
+      </visual>
+    </link>
+  </model>
+</sdf>

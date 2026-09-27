@@ -1,5 +1,10 @@
 # SAR disaster zone — polygon in meters (world frame, Z up ignored)
+# Geo demo anchor: Stanford CA — dashboard uses real lat/lon via active_mission.yaml
 area_size_m: 40.0
+default_geo:
+  lat: 37.4241
+  lon: -122.1661
+  label: "Stanford, CA (demo)"
 
 zone_polygon:
   - [2.0, 2.0]

@@ -22,6 +22,8 @@ def frame_to_bridge_message(
     *,
     mode: str = "simulation",
     zone_polygon: list | None = None,
+    zone_polygon_geo: list | None = None,
+    geo_anchor: dict | None = None,
     obstacles: list | None = None,
     units_roster: list | None = None,
 ) -> dict:
@@ -56,8 +58,13 @@ def frame_to_bridge_message(
         "timestamp": frame.get("timestamp"),
         "mode": mode,
         "mission": mission_status,
+        "geo": {
+            "anchor": geo_anchor or {},
+            "zone_polygon_geo": zone_polygon_geo or [],
+        },
         "zone": {
             "polygon": zone_polygon or [],
+            "polygon_geo": zone_polygon_geo or [],
             "obstacles": obs_out,
             "area_size_m": frame.get("area_size_m", 40.0),
         },

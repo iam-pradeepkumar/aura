@@ -13,7 +13,7 @@ python3 gazebo_sim/standalone/run_mission.py
 
 # Dashboard live view
 python3 dashboard/run.py
-# Open http://127.0.0.1:8847/ → assign units, mark zone, Start Rescue
+# Open http://127.0.0.1:8847/ → search address, mark disaster polygon, assign units, Start Rescue
 ```
 
 ## ROS 2 + Gazebo (local machine with ROS 2 Humble + Gazebo Garden)
@@ -22,7 +22,8 @@ python3 dashboard/run.py
 cd gazebo_sim/ros_ws
 colcon build --symlink-install
 source install/setup.bash
-ros2 launch aura_bringup mobile_mission.launch.py
+ros2 launch aura_bringup mobile_mission.launch.py use_gazebo:=true
+# Dashboard writes gazebo_sim/config/active_mission.yaml when you start a geo mission
 ```
 
 Set `hardware.mode: mobile` in `simulation/config.yaml` when using this path.

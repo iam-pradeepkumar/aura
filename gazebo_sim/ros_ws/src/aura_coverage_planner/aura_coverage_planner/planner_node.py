@@ -26,10 +26,9 @@ from aura_sim_core.world import load_world_config
 class CoveragePlannerNode(Node):
     def __init__(self) -> None:
         super().__init__("aura_coverage_planner")
-        zone = self.declare_parameter(
-            "zone_config",
-            str(ROOT.parent.parent / "gazebo_sim" / "config" / "disaster_zone.yaml"),
-        ).value
+        active = ROOT.parent.parent / "gazebo_sim" / "config" / "active_mission.yaml"
+        default_zone = active if active.exists() else ROOT.parent.parent / "gazebo_sim" / "config" / "disaster_zone.yaml"
+        zone = self.declare_parameter("zone_config", str(default_zone)).value
         self.pub = self.create_publisher(String, "/aura/mission/waypoints", 10, latch=True)
         world = load_world_config(zone)
         planner = CoveragePlanner(world)

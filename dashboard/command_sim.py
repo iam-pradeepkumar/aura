@@ -1,13 +1,12 @@
-"""AURA Command Center — mission orchestration for simulation + hardware."""
+"""AURA Command Center — geo-aware mission orchestration (sim + hardware + Gazebo)."""
 
 from __future__ import annotations
 
-import json
+import random
 import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -22,16 +21,17 @@ bootstrap()
 
 from aura_processor.mobile_field import create_mobile_engine
 from aura_sim_core.bridge import frame_to_bridge_message
+from aura_sim_core.geo import GeoAnchor, area_size_from_polygon, bbox_from_polygon, polygon_geo_to_local
 from aura_sim_core.mission import MobileMissionController
 from aura_sim_core.units import DEFAULT_UNIT_ROSTER, parse_units
-from aura_sim_core.world import load_world_config, world_from_dict
+from aura_sim_core.world import DisasterWorld, world_from_dict
 
 _lock = threading.Lock()
 _latest: dict = {}
 _running = False
 _thread: threading.Thread | None = None
 _mission_config: dict = {}
-_mission_status: str = "idle"  # idle | running | complete | error
+_mission_status: str = "idle"
 
 
 def get_roster() -> list[dict]:
@@ -39,15 +39,22 @@ def get_roster() -> list[dict]:
 
 
 def get_zone_defaults() -> dict:
-    zone_path = ROOT / "gazebo_sim" / "config" / "disaster_zone.yaml"
+    active = ROOT / "gazebo_sim" / "config" / "active_mission.yaml"
+    zone_path = active if active.exists() else ROOT / "gazebo_sim" / "config" / "disaster_zone.yaml"
     with zone_path.open() as f:
         cfg = yaml.safe_load(f) or {}
+    base_path = ROOT / "gazebo_sim" / "config" / "disaster_zone.yaml"
+    with base_path.open() as f:
+        base = yaml.safe_load(f) or {}
     return {
         "area_size_m": cfg.get("area_size_m", 40.0),
         "zone_polygon": cfg.get("zone_polygon", []),
         "ground_subcell": cfg.get("ground_subcell", []),
         "obstacles": cfg.get("obstacles", []),
         "victims": [{"id": v["id"], "x": v["x"], "y": v["y"]} for v in cfg.get("victims", [])],
+        "default_geo": base.get("default_geo", {"lat": 37.4241, "lon": -122.1661, "label": "Stanford, CA"}),
+        "geo_anchor": cfg.get("geo_anchor"),
+        "zone_polygon_geo": cfg.get("zone_polygon_geo", []),
     }
 
 
@@ -67,35 +74,143 @@ def stop_mission() -> None:
     _mission_status = "idle"
 
 
+def _point_in_polygon(x: float, y: float, poly: list[tuple[float, float]]) -> bool:
+    w = DisasterWorld(40, poly, poly)
+    return w.point_in_polygon(x, y, poly)
+
+
+def _place_victims(local_poly: list[tuple[float, float]], n: int = 3) -> list[dict]:
+    xmin, ymin, xmax, ymax = bbox_from_polygon(local_poly)
+    victims = []
+    rng = random.Random(42)
+    for i in range(n):
+        for _ in range(80):
+            x = rng.uniform(xmin + 2, xmax - 2)
+            y = rng.uniform(ymin + 2, ymax - 2)
+            if _point_in_polygon(x, y, local_poly):
+                victims.append({"id": i + 1, "x": x, "y": y, "resp_bpm": float(rng.randint(11, 18))})
+                break
+    return victims
+
+
+def _scale_obstacles(template: list, local_poly: list[tuple[float, float]], ref_size: float) -> list:
+    xmin, ymin, xmax, ymax = bbox_from_polygon(local_poly)
+    w, h = max(xmax - xmin, 1), max(ymax - ymin, 1)
+    out = []
+    for o in template:
+        ox = xmin + (float(o[0]) / ref_size) * w * 0.85 + w * 0.05
+        oy = ymin + (float(o[1]) / ref_size) * h * 0.45 + h * 0.05
+        if _point_in_polygon(ox, oy, local_poly):
+            out.append([ox, oy, float(o[2])])
+    return out
+
+
+def _build_zone_cfg(payload: dict) -> dict:
+    units = payload.get("units") or get_roster()
+    defaults = get_zone_defaults()
+    geo_anchor = payload.get("geo_anchor")
+    zone_polygon_geo = payload.get("zone_polygon_geo")
+    anchor_obj: GeoAnchor | None = None
+
+    if geo_anchor and zone_polygon_geo and len(zone_polygon_geo) >= 3:
+        anchor_obj = GeoAnchor(
+            float(geo_anchor["lat"]),
+            float(geo_anchor["lon"]),
+            str(geo_anchor.get("label", "")),
+        )
+        ring_geo = [[float(p[0]), float(p[1])] for p in zone_polygon_geo]
+        local_poly = polygon_geo_to_local(anchor_obj, ring_geo)
+        area = area_size_from_polygon(local_poly)
+        ref = float(defaults["area_size_m"])
+        obstacles = _scale_obstacles(defaults["obstacles"], local_poly, ref)
+        victims = _place_victims(local_poly)
+        ys = [p[1] for p in local_poly]
+        mid = (min(ys) + max(ys)) / 2
+        ground_subcell = [(x, y) for x, y in local_poly if y <= mid]
+        if len(ground_subcell) < 3:
+            ground_subcell = list(local_poly)
+        return {
+            "area_size_m": area,
+            "zone_polygon": [[x, y] for x, y in local_poly],
+            "zone_polygon_geo": ring_geo,
+            "ground_subcell": [[x, y] for x, y in ground_subcell],
+            "obstacles": obstacles,
+            "victims": victims,
+            "units": units,
+            "geo_anchor": geo_anchor,
+            "_anchor": anchor_obj,
+            "gazebo": bool(payload.get("gazebo", False)),
+        }
+
+    zone_polygon = payload.get("zone_polygon")
+    if not zone_polygon or len(zone_polygon) < 3:
+        zone_polygon = defaults["zone_polygon"]
+    return {
+        "area_size_m": float(payload.get("area_size_m", defaults["area_size_m"])),
+        "zone_polygon": zone_polygon,
+        "ground_subcell": payload.get("ground_subcell") or zone_polygon,
+        "obstacles": payload.get("obstacles") or defaults["obstacles"],
+        "victims": defaults["victims"],
+        "units": units,
+        "geo_anchor": geo_anchor,
+        "zone_polygon_geo": zone_polygon_geo or [],
+        "_anchor": anchor_obj,
+        "gazebo": bool(payload.get("gazebo", False)),
+    }
+
+
+def _enrich_geo(msg: dict, anchor: GeoAnchor | None) -> dict:
+    if anchor is None:
+        return msg
+    for u in msg.get("units_roster", []):
+        lat, lon = anchor.to_geo(float(u.get("x", 0)), float(u.get("y", 0)))
+        u["lat"] = round(lat, 6)
+        u["lon"] = round(lon, 6)
+        if u.get("type") == "drone":
+            u["alt_m"] = float(u.get("z", 6))
+    for t in msg.get("data", {}).get("targets", []):
+        lat, lon = anchor.to_geo(float(t.get("x_m", 0)), float(t.get("y_m", 0)))
+        t["lat"] = round(lat, 6)
+        t["lon"] = round(lon, 6)
+    return msg
+
+
+def _write_mission_yaml(zone_cfg: dict) -> Path:
+    out = ROOT / "gazebo_sim" / "config" / "active_mission.yaml"
+    doc = {
+        "area_size_m": zone_cfg["area_size_m"],
+        "zone_polygon": zone_cfg["zone_polygon"],
+        "ground_subcell": zone_cfg.get("ground_subcell", zone_cfg["zone_polygon"]),
+        "obstacles": zone_cfg.get("obstacles", []),
+        "victims": zone_cfg.get("victims", []),
+        "geo_anchor": zone_cfg.get("geo_anchor"),
+        "zone_polygon_geo": zone_cfg.get("zone_polygon_geo", []),
+    }
+    with out.open("w") as f:
+        yaml.safe_dump(doc, f)
+    return out
+
+
 def start_mission(payload: dict) -> dict:
-    """Start rescue mission from command center payload."""
     global _running, _thread, _mission_config, _mission_status
 
     if _running:
         return {"status": "already_running", "ws": "/ws/command"}
 
     mode = str(payload.get("mode", "simulation"))
-    units = payload.get("units") or get_roster()
-    zone_polygon = payload.get("zone_polygon")
-    if not zone_polygon or len(zone_polygon) < 3:
-        defaults = get_zone_defaults()
-        zone_polygon = defaults["zone_polygon"]
-
-    zone_cfg = {
-        "area_size_m": float(payload.get("area_size_m", 40.0)),
-        "zone_polygon": zone_polygon,
-        "ground_subcell": payload.get("ground_subcell") or zone_polygon,
-        "obstacles": payload.get("obstacles") or get_zone_defaults().get("obstacles", []),
-        "victims": get_zone_defaults().get("victims", []),
-        "units": units,
-    }
+    zone_cfg = _build_zone_cfg(payload)
+    if mode == "gazebo":
+        mode = "simulation"
+        zone_cfg["gazebo"] = True
 
     _mission_config = {
         "mode": mode,
-        "units": units,
-        "zone_polygon": zone_polygon,
-        "area_size_m": zone_cfg["area_size_m"],
+        "units": zone_cfg["units"],
+        "geo_anchor": zone_cfg.get("geo_anchor"),
+        "zone_polygon_geo": zone_cfg.get("zone_polygon_geo"),
+        "gazebo": zone_cfg.get("gazebo", False),
     }
+    _write_mission_yaml(zone_cfg)
     _running = True
     _mission_status = "running"
 
@@ -103,9 +218,9 @@ def start_mission(payload: dict) -> dict:
         global _running, _mission_status
         try:
             if mode == "hardware":
-                _hardware_loop(zone_cfg, units)
+                _hardware_loop(zone_cfg, zone_cfg["units"])
             else:
-                _simulation_loop(zone_cfg, units)
+                _simulation_loop(zone_cfg, zone_cfg["units"])
         except Exception as exc:
             with _lock:
                 _mission_status = "error"
@@ -118,11 +233,12 @@ def start_mission(payload: dict) -> dict:
 
     _thread = threading.Thread(target=loop, daemon=True)
     _thread.start()
-    return {"status": "started", "ws": "/ws/command", "mode": mode}
+    return {"status": "started", "ws": "/ws/command", "mode": mode, "gazebo": zone_cfg.get("gazebo")}
 
 
 def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
     global _mission_status
+    anchor = zone_cfg.get("_anchor")
     mission = MobileMissionController.from_mission_dict(zone_cfg)
     polygon = [(float(p[0]), float(p[1])) for p in zone_cfg["zone_polygon"]]
     ground = zone_cfg.get("ground_subcell")
@@ -133,10 +249,11 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
     cfg_path = str(ROOT / "simulation" / "config.yaml")
     engine = create_mobile_engine(cfg_path)
     engine.config["area_size_m"] = mission.world.area_size_m
-    enabled_nodes = [int(u["node_id"]) for u in units if u.get("enabled")]
-    engine.expected_ids = [nid for nid in enabled_nodes if any(
-        u.get("type") == "spiderbot" and int(u.get("node_id")) == nid for u in units
-    )] or [1]
+    spider_ids = [
+        int(u["node_id"]) for u in units
+        if u.get("enabled") and u.get("type") == "spiderbot"
+    ]
+    engine.expected_ids = spider_ids or [1]
     for nid in engine.expected_ids:
         engine.rx.link_node(nid)
 
@@ -151,9 +268,12 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
             status,
             mode="simulation",
             zone_polygon=zone_cfg["zone_polygon"],
+            zone_polygon_geo=zone_cfg.get("zone_polygon_geo"),
+            geo_anchor=zone_cfg.get("geo_anchor"),
             obstacles=mission.world.obstacles,
             units_roster=status.get("units", []),
         )
+        msg = _enrich_geo(msg, anchor)
         with _lock:
             _latest.clear()
             _latest.update(msg)
@@ -164,9 +284,9 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
 
 
 def _hardware_loop(zone_cfg: dict, units: list[dict]) -> None:
-    """Live ESP32 mobile hardware — UDP CSI ingest with runtime positions."""
     from aura_processor.hardware_live import LiveFieldEngine, load_field_config
 
+    anchor = zone_cfg.get("_anchor")
     cfg = load_field_config(str(ROOT / "simulation" / "config.yaml"))
     cfg.setdefault("hardware", {})["mode"] = "mobile"
     cfg["area_size_m"] = float(zone_cfg.get("area_size_m", 40.0))
@@ -198,9 +318,12 @@ def _hardware_loop(zone_cfg: dict, units: list[dict]) -> None:
             status,
             mode="hardware",
             zone_polygon=zone_cfg["zone_polygon"],
+            zone_polygon_geo=zone_cfg.get("zone_polygon_geo"),
+            geo_anchor=zone_cfg.get("geo_anchor"),
             obstacles=zone_cfg.get("obstacles", []),
             units_roster=status.get("units", []),
         )
+        msg = _enrich_geo(msg, anchor)
         with _lock:
             _latest.clear()
             _latest.update(msg)
