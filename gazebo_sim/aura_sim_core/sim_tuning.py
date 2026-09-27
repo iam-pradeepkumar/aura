@@ -6,11 +6,11 @@ from .mission import MobileMissionController
 
 # Wall-clock loop runs TICK_HZ; each frame advances TICK_HZ * TIME_SCALE sim-seconds.
 TICK_HZ: float = 20.0
-TIME_SCALE: float = 6.0          # 6× faster than real time on the map
-ROVER_SPEED_MPS: float = 5.5
-DRONE_SPEED_MPS: float = 16.0
-HOLD_SEC_MIN: float = 1.2
-HOLD_SEC_MAX: float = 2.0
+TIME_SCALE: float = 8.0          # 8× sim speed on the map
+ROVER_SPEED_MPS: float = 8.0
+DRONE_SPEED_MPS: float = 26.0
+HOLD_SEC_MIN: float = 0.8
+HOLD_SEC_MAX: float = 1.4
 CSI_PACKETS_PER_TICK: int = 32
 
 
@@ -26,4 +26,5 @@ def apply_dashboard_tuning(mission: MobileMissionController) -> None:
     if mission.fake_csi is not None:
         mission.fake_csi.vitals_stationary_sec = 1.2
     if mission.detector is not None:
-        mission.detector.confirm_threshold = 0.58
+        mission.detector.confirm_threshold = 0.52
+    mission._wifi_homing_threshold = 0.07

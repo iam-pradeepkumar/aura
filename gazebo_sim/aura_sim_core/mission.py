@@ -150,7 +150,6 @@ class MobileMissionController:
         ground_all = self.planner.ground_nav2_style(polygon=zone)
         if not ground_all:
             ground_all = self.planner.ground_patrol(polygon=zone)
-        drone_all = self.planner.drone_lawnmower(altitude_m=6.0)
         n_spiders = max(len(self.spiderbots), 1)
         n_drones = max(len(self.drones), 1)
         victim_wps = [Waypoint(v.x, v.y, 0.0) for v in self.world.victims]
@@ -159,8 +158,13 @@ class MobileMissionController:
             combined = chunk + victim_wps if victim_wps else chunk
             sb.waypoints = reorder_waypoints_nearest(combined, sb.rover.state.x, sb.rover.state.y)
         for i, dr in enumerate(self.drones):
-            chunk = [drone_all[j] for j in range(i, len(drone_all), n_drones)]
-            dr.waypoints = reorder_waypoints_nearest(chunk, dr.drone.state.x, dr.drone.state.y)
+            full = self.planner.drone_corner_coverage(altitude_m=8.0)
+            if n_drones > 1:
+                dr.waypoints = [full[j] for j in range(i, len(full), n_drones)]
+            else:
+                dr.waypoints = full
+            dr.patrol_mode = "patrol"
+            dr.drone.state.finished = False
 
     def apply_zone(self, zone_polygon: list[tuple[float, float]], ground_subcell: list[tuple[float, float]] | None = None) -> None:
         self.world.zone_polygon = zone_polygon
@@ -219,7 +223,17 @@ class MobileMissionController:
                     dt,
                 )
         for dr in self.drones:
-            self._step_drone_unit(dr, dt)
+            self._step_drone_unit(dr, dt, now)
+            if self.detector is not None and not dr.drone.state.finished:
+                st = dr.drone.state
+                self.detector.scan(
+                    dr.spec.node_id,
+                    st.x,
+                    st.y,
+                    st.linear_mps * 0.5,
+                    dr.patrol_mode == "hold",
+                    dt,
+                )
         if self.detector is not None:
             self._detected_victims = self.detector.confirmed_ids()
             self.stats.confirmed_detections = len(self._detected_victims)
@@ -277,6 +291,7 @@ class MobileMissionController:
             out.append({
                 "unit_id": sb.spec.id,
                 "node_id": sb.spec.node_id,
+                "type": "spiderbot",
                 "x": sb.rover.state.x,
                 "y": sb.rover.state.y,
                 "strength": round(sb.wifi_signal, 3),
@@ -284,9 +299,23 @@ class MobileMissionController:
                 "homing_victim_id": sb.homing_victim_id,
                 "mode": sb.patrol_mode,
             })
+        for dr in self.drones:
+            if dr.drone.state.finished or dr.wifi_signal < 0.05:
+                continue
+            out.append({
+                "unit_id": dr.spec.id,
+                "node_id": dr.spec.node_id,
+                "type": "drone",
+                "x": dr.drone.state.x,
+                "y": dr.drone.state.y,
+                "strength": round(dr.wifi_signal, 3),
+                "bearing_rad": round(dr.wifi_bearing, 4),
+                "homing_victim_id": dr.homing_victim_id,
+                "mode": dr.patrol_mode,
+            })
         return out
 
-    def _wifi_reading(self, sb: SpiderbotUnit) -> None:
+    def _wifi_reading_spider(self, sb: SpiderbotUnit) -> None:
         if self.wifi is None:
             sb.wifi_signal = 0.0
             return
@@ -299,6 +328,19 @@ class MobileMissionController:
         sb.wifi_bearing = reading.bearing_rad
         sb.homing_victim_id = reading.victim_id
 
+    def _wifi_reading_drone(self, dr: DroneUnit) -> None:
+        if self.wifi is None or dr.drone.state.finished:
+            dr.wifi_signal = 0.0
+            return
+        reading = self.wifi.scan(dr.drone.state.x, dr.drone.state.y, self._detected_victims)
+        if reading is None:
+            dr.wifi_signal = 0.0
+            dr.homing_victim_id = None
+            return
+        dr.wifi_signal = reading.strength
+        dr.wifi_bearing = reading.bearing_rad
+        dr.homing_victim_id = reading.victim_id
+
     def _victim_by_id(self, vid: int):
         for v in self.world.victims:
             if v.id == vid:
@@ -309,7 +351,7 @@ class MobileMissionController:
         rover = sb.rover
         if rover.state.finished:
             return
-        self._wifi_reading(sb)
+        self._wifi_reading_spider(sb)
 
         if rover.state.holding:
             rover.state.linear_mps = 0.0
@@ -354,21 +396,53 @@ class MobileMissionController:
             else:
                 rover.state.waypoint_idx += 1
 
-    def _step_drone_unit(self, dr: DroneUnit, dt: float) -> None:
+    def _step_drone_unit(self, dr: DroneUnit, dt: float, now: float) -> None:
         drone = dr.drone
-        if drone.state.finished or not dr.waypoints:
-            drone.state.finished = True
+        if drone.state.finished:
+            dr.patrol_mode = "complete"
             return
+        if not dr.waypoints:
+            drone.state.finished = True
+            dr.patrol_mode = "complete"
+            return
+
+        self._wifi_reading_drone(dr)
+        presence_r = self.fake_csi.presence_radius_m if self.fake_csi else 5.0
+
+        if (
+            dr.wifi_signal >= self._wifi_homing_threshold
+            and dr.homing_victim_id is not None
+            and drone.state.waypoint_idx < len(dr.waypoints)
+        ):
+            victim = self._victim_by_id(dr.homing_victim_id)
+            if victim is not None:
+                dr.patrol_mode = "homing"
+                target = Waypoint(victim.x, victim.y, drone.state.z)
+                drone.step_toward(target, dt)
+                dist = math.hypot(victim.x - drone.state.x, victim.y - drone.state.y)
+                if dist < presence_r * 1.1:
+                    dr.patrol_mode = "patrol"
+                return
+
+        dr.patrol_mode = "patrol"
         if drone.state.waypoint_idx >= len(dr.waypoints):
             drone.state.finished = True
+            dr.patrol_mode = "complete"
+            drone.state.linear_mps = 0.0
             return
+
         target = dr.waypoints[drone.state.waypoint_idx]
         drone.step_toward(target, dt)
         ddx = target.x - drone.state.x
         ddy = target.y - drone.state.y
         ddz = target.z - drone.state.z
-        if math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz) < 0.4:
+        arrive = max(1.2, min(3.0, self.world.area_size_m * 0.04))
+        if math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz) < arrive:
             drone.state.waypoint_idx += 1
+            if drone.state.waypoint_idx >= len(dr.waypoints):
+                drone.state.finished = True
+                dr.patrol_mode = "complete"
+                drone.state.linear_mps = 0.0
 
     def _record_coverage(self) -> None:
         for sb in self.spiderbots:

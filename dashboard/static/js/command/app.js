@@ -68,9 +68,7 @@ function bindUi() {
       S.zoneGeo = ring;
       AuraMap.setDrawMode(false);
       document.getElementById("btn-draw").classList.remove("active");
-      const anchor = AuraMap.getAnchor();
-      AuraMap.loadDisasterScape(ring, anchor);
-      setBanner(`Disaster zone sealed — collapsed buildings + debris generated`);
+      setBanner(`Disaster zone sealed — ${ring.length} points. Place survivors inside the zone.`);
     } else {
       setBanner("Need at least 3 points before closing zone");
     }
@@ -198,7 +196,7 @@ async function startMission() {
   document.getElementById("mission-phase").textContent = "RUNNING";
   AuraMap.fitToZone(ring);
   AuraMap.resize();
-  setBanner("Rescue mission active — blue SP spiderbots and green DR drones patrol inside the yellow zone");
+  setBanner("Rescue active — units patrol on CSI; HOMING when a survivor WiFi signal is detected");
 }
 
 async function stopMission() {

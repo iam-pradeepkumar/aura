@@ -21,7 +21,6 @@ bootstrap()
 
 from aura_processor.mobile_field import create_mobile_engine
 from aura_sim_core.bridge import frame_to_bridge_message
-from aura_sim_core.disaster_scape import build_scape_geo
 from aura_sim_core.geo import (
     GeoAnchor,
     area_size_from_polygon,
@@ -145,7 +144,6 @@ def _build_zone_cfg(payload: dict) -> dict:
         else:
             victims = _place_victims(local_poly)
         ground_subcell = list(local_poly)
-        scape = build_scape_geo(ring_geo, geo_anchor)
         return {
             "area_size_m": area,
             "zone_polygon": [[x, y] for x, y in local_poly],
@@ -154,7 +152,6 @@ def _build_zone_cfg(payload: dict) -> dict:
             "obstacles": obstacles,
             "victims": victims,
             "survivors_geo": survivors_geo,
-            "disaster_scape": scape,
             "units": units,
             "geo_anchor": geo_anchor,
             "_anchor": anchor_obj,
@@ -352,8 +349,6 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
         msg["sim"] = {"time_scale": TIME_SCALE, "tick_hz": TICK_HZ}
         msg["wifi"] = {"signals": mission.get_wifi_signals()}
         msg = _enrich_geo(msg, anchor)
-        if zone_cfg.get("disaster_scape"):
-            msg["disaster_scape"] = zone_cfg["disaster_scape"]
         if zone_cfg.get("survivors_geo"):
             msg["geo"]["survivors_placed"] = zone_cfg["survivors_geo"]
         with _lock:

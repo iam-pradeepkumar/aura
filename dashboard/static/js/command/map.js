@@ -137,33 +137,6 @@ const AuraMap = (function () {
       },
     });
 
-    map.addSource("disaster-buildings", { type: "geojson", data: emptyFC() });
-    map.addLayer({
-      id: "disaster-buildings-layer",
-      type: "fill-extrusion",
-      source: "disaster-buildings",
-      paint: {
-        "fill-extrusion-color": [
-          "case", ["get", "collapsed"], "#4a3728", "#3d4852",
-        ],
-        "fill-extrusion-height": ["get", "height"],
-        "fill-extrusion-base": 0,
-        "fill-extrusion-opacity": 0.82,
-      },
-    });
-
-    map.addSource("disaster-debris", { type: "geojson", data: emptyFC() });
-    map.addLayer({
-      id: "disaster-debris-layer",
-      type: "circle",
-      source: "disaster-debris",
-      paint: {
-        "circle-radius": ["*", ["get", "size"], 3],
-        "circle-color": "#78716c",
-        "circle-opacity": 0.7,
-      },
-    });
-
     map.addSource("wifi-beams", { type: "geojson", data: emptyFC() });
     map.addLayer({
       id: "wifi-beams-layer",
@@ -256,33 +229,9 @@ const AuraMap = (function () {
       features: [{
         type: "Feature",
         geometry: { type: "Polygon", coordinates: [closed] },
-        properties: { disaster: 1 },
       }],
     });
-    map.setPaintProperty("zone-fill-layer", "fill-color", "#92400e");
-    map.setPaintProperty("zone-fill-layer", "fill-opacity", 0.28);
     fitToZone(ring);
-  }
-
-  async function loadDisasterScape(ring, geoAnchor) {
-    if (!mapReady || !ring || ring.length < 3) return;
-    try {
-      const res = await fetch("/api/command/disaster-scape", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ zone_polygon_geo: ring, geo_anchor: geoAnchor }),
-      });
-      const scape = await res.json();
-      applyDisasterScape(scape);
-    } catch (e) {
-      console.warn("disaster scape", e);
-    }
-  }
-
-  function applyDisasterScape(scape) {
-    if (!mapReady || !scape) return;
-    map.getSource("disaster-buildings")?.setData(scape.buildings || emptyFC());
-    map.getSource("disaster-debris")?.setData(scape.debris || emptyFC());
   }
 
   function fitToZone(ring) {
@@ -587,7 +536,6 @@ const AuraMap = (function () {
   function showMissionZone(msg) {
     const ring = msg?.geo?.zone_polygon_geo || msg?.zone?.polygon_geo;
     if (ring && ring.length >= 3) _setZone(ring);
-    if (msg?.disaster_scape) applyDisasterScape(msg.disaster_scape);
   }
 
   function resize() {
@@ -608,8 +556,6 @@ const AuraMap = (function () {
     updateUnits,
     updateSurvivors,
     updateWifiSignals,
-    loadDisasterScape,
-    applyDisasterScape,
     showMissionZone,
     fitToZone,
     fitToUnits,

@@ -31,9 +31,22 @@ class CoveragePlanner:
         xmin, ymin, xmax, ymax = self._bbox(polygon)
         w = max(xmax - xmin, 1.0)
         h = max(ymax - ymin, 1.0)
-        lane = self.lane_spacing if self.lane_spacing is not None else max(3.0, min(8.0, w / 4.5))
-        step = max(2.5, min(7.0, min(w, h) / 5.0))
+        lane = self.lane_spacing if self.lane_spacing is not None else max(2.5, min(6.0, w / 5.5))
+        step = max(1.8, min(5.0, min(w, h) / 7.0))
         return lane, step
+
+    def drone_corner_coverage(self, altitude_m: float = 8.0) -> list[Waypoint]:
+        """Visit polygon corners, sweep the zone, return to start corner — then stop."""
+        poly = self.world.zone_polygon
+        if len(poly) < 3:
+            return self.drone_lawnmower(altitude_m)
+        wps: list[Waypoint] = []
+        for x, y in poly:
+            wps.append(Waypoint(float(x), float(y), altitude_m))
+        wps.extend(self.drone_lawnmower(altitude_m))
+        x0, y0 = poly[0]
+        wps.append(Waypoint(float(x0), float(y0), altitude_m))
+        return wps
 
     def drone_lawnmower(self, altitude_m: float = 6.0) -> list[Waypoint]:
         poly = self.world.zone_polygon
