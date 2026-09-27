@@ -466,42 +466,39 @@ const AuraMap = (function () {
         delete placedSurvivorMarkers[id];
       }
 
+      const popupHtml = (
+        `<strong>Survivor #${id}</strong> ${isConfirmed ? "— FOUND" : "— scanning"}<br/>`
+        + `Probability: ${prob}%<br/>`
+        + `Resp: ${t.respiration_bpm ? Math.round(t.respiration_bpm) : "—"} BPM<br/>`
+        + `${t.lat.toFixed(6)}, ${t.lon.toFixed(6)}`
+      );
+
       if (!survivorMarkers[id]) {
         const el = document.createElement("div");
-        el.className = isConfirmed ? "survivor-marker confirmed" : "survivor-marker scanning";
+        el.className = isConfirmed ? "survivor-pin confirmed" : "survivor-pin scanning";
         el.innerHTML = isConfirmed
-          ? `<span class="pin-icon">!</span><span class="pin-lbl">#${id} FOUND</span><span class="pin-prob">${prob}%</span>`
-          : `<span class="pin-prob">${prob}%</span>`;
+          ? `<div class="pin-dot">${id}</div><div class="pin-stem"></div>`
+          : `<div class="pin-dot scan">${prob}%</div><div class="pin-stem scan"></div>`;
+        el.title = isConfirmed ? `Survivor #${id} found — ${prob}%` : `Scanning — ${prob}%`;
         survivorMarkers[id] = new maplibregl.Marker({ element: el, anchor: "bottom" })
           .setLngLat(coord)
-          .setPopup(new maplibregl.Popup({ offset: 14 }).setHTML(
-            `<strong>Survivor #${id}</strong> ${isConfirmed ? "— CONFIRMED" : "— scanning"}<br/>`
-            + `Probability: ${prob}%<br/>`
-            + `Resp: ${t.respiration_bpm ? Math.round(t.respiration_bpm) : "—"} BPM<br/>`
-            + `Location: ${t.lat.toFixed(6)}, ${t.lon.toFixed(6)}`
-          ))
+          .setPopup(new maplibregl.Popup({ offset: 12, closeButton: false }).setHTML(popupHtml))
           .addTo(map);
       } else {
         survivorMarkers[id].setLngLat(coord);
         const el = survivorMarkers[id].getElement();
         if (isConfirmed) {
-          el.className = "survivor-marker confirmed";
-          el.innerHTML = `<span class="pin-icon">!</span><span class="pin-lbl">#${id} FOUND</span><span class="pin-prob">${prob}%</span>`;
+          el.className = "survivor-pin confirmed";
+          el.innerHTML = `<div class="pin-dot">${id}</div><div class="pin-stem"></div>`;
+          el.title = `Survivor #${id} found — ${prob}%`;
         }
-      }
-      if (isConfirmed) {
-        confirmedFeatures.push({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: coord },
-          properties: { id, prob },
-        });
       }
     });
 
-    map.getSource("confirmed-survivors")?.setData({ type: "FeatureCollection", features: confirmedFeatures });
+    map.getSource("confirmed-survivors")?.setData({ type: "FeatureCollection", features: [] });
     map.getSource("survivor-pulse").setData({
       type: "FeatureCollection",
-      features: all.filter((t) => t.lat != null).map((t) => ({
+      features: all.filter((t) => t.lat != null && !t.confirmed && !(t.probability_pct >= 55)).map((t) => ({
         type: "Feature",
         geometry: { type: "Point", coordinates: [t.lon, t.lat] },
         properties: { prob: t.probability_pct || 0 },

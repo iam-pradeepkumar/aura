@@ -558,56 +558,62 @@ html, body {
   font-family: var(--mono);
 }
 
-.survivor-marker {
+/* Compact map pins — details in popup + fleet bar only */
+.survivor-pin {
   display: flex;
   flex-direction: column;
   align-items: center;
+  width: 28px;
+  max-width: 28px;
   pointer-events: auto;
-}
-
-.survivor-marker.scanning {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: rgba(245, 158, 11, 0.85);
-  border: 2px solid #fff;
-  box-shadow: 0 0 12px rgba(245, 158, 11, 0.5);
-}
-
-.survivor-marker.confirmed {
-  min-width: 72px;
-  padding: 0.25rem 0.4rem;
-  border-radius: 8px;
-  background: rgba(127, 29, 29, 0.92);
-  border: 2px solid #fecaca;
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.65);
-  animation: survivor-found 2s ease-in-out infinite;
-}
-
-.survivor-marker .pin-icon {
-  font-weight: 800;
-  color: #fecaca;
-  font-size: 0.9rem;
   line-height: 1;
 }
 
-.survivor-marker .pin-lbl {
-  font-size: 0.58rem;
-  font-weight: 700;
-  color: #fff;
-  letter-spacing: 0.05em;
-}
-
-.survivor-marker .pin-prob {
+.survivor-pin .pin-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
   font-family: var(--mono);
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 700;
-  color: #fecaca;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
 }
 
-@keyframes survivor-found {
-  0%, 100% { box-shadow: 0 0 16px rgba(239, 68, 68, 0.55); }
-  50% { box-shadow: 0 0 28px rgba(239, 68, 68, 0.9); }
+.survivor-pin .pin-dot.scan {
+  width: 24px;
+  height: 24px;
+  font-size: 0.5rem;
+  background: rgba(245, 158, 11, 0.9);
+  color: #1a1200;
+}
+
+.survivor-pin.confirmed .pin-dot {
+  background: #ef4444;
+  color: #fff;
+  animation: pin-glow 2s ease-in-out infinite;
+}
+
+.survivor-pin .pin-stem {
+  width: 2px;
+  height: 8px;
+  background: #ef4444;
+  margin-top: -1px;
+}
+
+.survivor-pin .pin-stem.scan {
+  background: #f59e0b;
+}
+
+@keyframes pin-glow {
+  0%, 100% { box-shadow: 0 0 6px rgba(239, 68, 68, 0.5); }
+  50% { box-shadow: 0 0 14px rgba(239, 68, 68, 0.85); }
+}
+
+.maplibregl-marker:has(.survivor-pin) {
+  width: auto !important;
 }
 
 .draw-vertex {
