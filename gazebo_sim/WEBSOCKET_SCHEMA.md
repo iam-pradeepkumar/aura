@@ -10,7 +10,11 @@
 {
   "type": "command_sensing",
   "timestamp": 1730000000.0,
-  "mode": "mobile",
+  "mode": "simulation",
+  "geo": {
+    "anchor": { "lat": 37.4241, "lon": -122.1661, "label": "Stanford, CA" },
+    "zone_polygon_geo": [[-122.17, 37.42], [-122.16, 37.42], [-122.16, 37.43], [-122.17, 37.43]]
+  },
   "processor_version": "2026.09.26-v2",
   "area_size_m": 40.0,
   "node_positions": {
