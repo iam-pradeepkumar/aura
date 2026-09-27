@@ -50,3 +50,37 @@ def bbox_from_polygon(ring: list) -> tuple[float, float, float, float]:
 def area_size_from_polygon(ring: list) -> float:
     xmin, ymin, xmax, ymax = bbox_from_polygon(ring)
     return max(xmax - xmin, ymax - ymin, 20.0)
+
+
+def survivors_geo_to_local(
+    anchor: GeoAnchor,
+    survivors_geo: list,
+    local_poly: list[tuple[float, float]],
+) -> list[dict]:
+    """Convert admin-placed lat/lon survivors into local meter victims inside the zone."""
+    out: list[dict] = []
+    for i, raw in enumerate(survivors_geo):
+        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            lon, lat = float(raw[0]), float(raw[1])
+        else:
+            lat = float(raw.get("lat"))
+            lon = float(raw.get("lon"))
+        x, y = anchor.to_local(lat, lon)
+        inside = False
+        n = len(local_poly)
+        for j in range(n):
+            x1, y1 = local_poly[j]
+            x2, y2 = local_poly[(j + 1) % n]
+            if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1 + 1e-12) + x1):
+                inside = not inside
+        if not inside:
+            continue
+        out.append({
+            "id": int(raw.get("id", i + 1)) if not isinstance(raw, (list, tuple)) else i + 1,
+            "x": x,
+            "y": y,
+            "resp_bpm": float(raw.get("resp_bpm", 12 + (i % 5))) if not isinstance(raw, (list, tuple)) else float(12 + (i % 5)),
+            "lat": lat,
+            "lon": lon,
+        })
+    return out

@@ -2,6 +2,10 @@
 
 Autonomous ground rover + aerial drone patrol a marked disaster zone. CSI is **faked** using a distance-to-victim model and fed into the **real** `aura_processor` `sensing_v2` pipeline (not a parallel rewrite).
 
+## Ubuntu: install Gazebo + run locally
+
+See **[GAZEBO_UBUNTU.md](GAZEBO_UBUNTU.md)** for full ROS 2 Humble + Gazebo Garden setup, dashboard flow, and troubleshooting.
+
 ## Quick start (no Gazebo — kinematic sim)
 
 ```bash
@@ -13,7 +17,8 @@ python3 gazebo_sim/standalone/run_mission.py
 
 # Dashboard live view
 python3 dashboard/run.py
-# Open http://127.0.0.1:8847/ → search address, mark disaster polygon, assign units, Start Rescue
+# Open http://127.0.0.1:8847/
+# → search address → mark disaster polygon → place survivors → assign units → Start Rescue
 ```
 
 ## ROS 2 + Gazebo (local machine with ROS 2 Humble + Gazebo Garden)

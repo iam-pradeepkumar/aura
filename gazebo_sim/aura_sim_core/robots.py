@@ -25,7 +25,7 @@ class RobotState:
 @dataclass
 class GroundRover:
     state: RobotState = field(default_factory=lambda: RobotState(4.0, 4.0))
-    speed_mps: float = 0.6
+    speed_mps: float = 1.1
 
     def step_toward(self, target: Waypoint, dt: float) -> None:
         if self.state.holding:

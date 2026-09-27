@@ -6,11 +6,15 @@ const AuraMap = (function () {
   let drawPts = [];
   let closedZone = [];
   let drawMode = false;
+  let survivorMode = false;
   let anchor = null;
   let onZoneChange = null;
+  let onSurvivorChange = null;
 
   const unitMarkers = {};
   const survivorMarkers = {};
+  const placedSurvivorMarkers = {};
+  let placedSurvivors = [];
   const vertexMarkers = [];
   const trails = {};
   let clickTimer = null;
@@ -37,11 +41,16 @@ const AuraMap = (function () {
     });
 
     map.on("click", (e) => {
-      if (!drawMode || !mapReady) return;
+      if (!mapReady) return;
+      const pt = [e.lngLat.lng, e.lngLat.lat];
+      if (survivorMode) {
+        _addPlacedSurvivor(pt);
+        return;
+      }
+      if (!drawMode) return;
       if (clickTimer) clearTimeout(clickTimer);
       clickTimer = setTimeout(() => {
         clickTimer = null;
-        const pt = [e.lngLat.lng, e.lngLat.lat];
         drawPts.push(pt);
         _addVertexMarker(pt);
         _updateDrawLayers();
@@ -207,8 +216,56 @@ const AuraMap = (function () {
     return anchor;
   }
 
+  function _pointInClosedZone(lng, lat) {
+    const ring = closedZone.length >= 3 ? closedZone : drawPts;
+    if (ring.length < 3) return false;
+    let inside = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0], yi = ring[i][1];
+      const xj = ring[j][0], yj = ring[j][1];
+      if (((yi > lat) !== (yj > lat)) && (lng < (xj - xi) * (lat - yi) / (yj - yi + 1e-12) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  function _addPlacedSurvivor(coord) {
+    if (!_pointInClosedZone(coord[0], coord[1])) return false;
+    const id = placedSurvivors.length + 1;
+    const entry = { id, lat: coord[1], lon: coord[0] };
+    placedSurvivors.push(entry);
+    const el = document.createElement("div");
+    el.className = "placed-survivor-marker";
+    el.innerHTML = `<span>${id}</span>`;
+    el.title = `Placed survivor #${id}`;
+    placedSurvivorMarkers[id] = new maplibregl.Marker({ element: el, anchor: "center" })
+      .setLngLat(coord)
+      .addTo(map);
+    if (onSurvivorChange) onSurvivorChange(placedSurvivors.slice());
+    return true;
+  }
+
+  function setSurvivorMode(on) {
+    survivorMode = on;
+    if (on) setDrawMode(false);
+    if (map) map.getCanvas().style.cursor = on ? "cell" : "";
+  }
+
+  function clearPlacedSurvivors() {
+    Object.values(placedSurvivorMarkers).forEach((m) => m.remove());
+    Object.keys(placedSurvivorMarkers).forEach((k) => delete placedSurvivorMarkers[k]);
+    placedSurvivors = [];
+    if (onSurvivorChange) onSurvivorChange([]);
+  }
+
+  function getPlacedSurvivors() {
+    return placedSurvivors.slice();
+  }
+
   function setDrawMode(on) {
     drawMode = on;
+    if (on) setSurvivorMode(false);
     if (map) {
       map.getCanvas().style.cursor = on ? "crosshair" : "";
       if (on) {
@@ -386,6 +443,9 @@ const AuraMap = (function () {
     clearDraw,
     closePolygon,
     getZoneGeo,
+    setSurvivorMode,
+    clearPlacedSurvivors,
+    getPlacedSurvivors,
     updateUnits,
     updateSurvivors,
     showMissionZone,
@@ -393,5 +453,6 @@ const AuraMap = (function () {
     fitToUnits,
     resize,
     set onZoneChange(cb) { onZoneChange = cb; },
+    set onSurvivorChange(cb) { onSurvivorChange = cb; },
   };
 })();

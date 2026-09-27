@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/command.css?v=4" />
+  <link rel="stylesheet" href="/static/css/command.css?v=5" />
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 </head>
 <body>
@@ -40,9 +40,11 @@
         <button class="btn" id="btn-draw" type="button">Mark disaster zone</button>
         <button class="btn" id="btn-close-zone" type="button">Close polygon</button>
         <button class="btn" id="btn-clear-zone" type="button">Clear</button>
+        <button class="btn" id="btn-place-survivors" type="button">Place survivors</button>
+        <button class="btn" id="btn-clear-survivors" type="button">Clear survivors</button>
       </div>
       <div id="geo-results" class="geo-results"></div>
-      <div class="map-banner" id="map-banner">Search address → mark disaster area → assign units → start rescue</div>
+      <div class="map-banner" id="map-banner">Search address → mark zone → place survivors → assign units → start rescue</div>
     </main>
 
     <aside class="sidebar">
@@ -68,8 +70,9 @@
           <button class="btn btn-alert" id="btn-stop" type="button" style="width:100%;margin-top:0.5rem;display:none;">STOP MISSION</button>
         </div>
         <p style="font-size:0.68rem;color:var(--muted);margin-top:0.75rem;line-height:1.45;">
-          Spiderbots crawl the ground sub-zone with WiFi CSI vitals (stationary-gated).
-          Drones lawnmower-cover the full polygon. Detections fuse through aura_processor sensing_v2.
+          Place survivors inside the marked zone before starting. Spiderbots autonomously patrol
+          the full disaster area with CSI vitals (stationary-gated). Drones lawnmower-cover from above.
+          Detections fuse through aura_processor sensing_v2 + simulation proximity model.
         </p>
       </div>
 
@@ -94,7 +97,7 @@
     </section>
   </div>
 
-  <script src="/static/js/command/map.js?v=4"></script>
-  <script src="/static/js/command/app.js?v=4"></script>
+  <script src="/static/js/command/map.js?v=5"></script>
+  <script src="/static/js/command/app.js?v=5"></script>
 </body>
 </html>

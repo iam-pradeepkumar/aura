@@ -8,7 +8,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .coverage import CoveragePlanner, Waypoint
+from .coverage import CoveragePlanner, Waypoint, reorder_waypoints_nearest
+from .detection import SimulationDetector
 from .fake_csi import FakeCsiGenerator
 from .units import DroneUnit, SpiderbotUnit, UnitSpec, parse_units
 from .world import DisasterWorld, load_world_config, world_from_dict
@@ -35,7 +36,8 @@ class MobileMissionController:
     _zone_config_path: str | None = None
     _detected_victims: set[int] = field(default_factory=set)
     _visited_cells: set[tuple[int, int]] = field(default_factory=set)
-    _hold_target_sec: float = 6.0
+    _hold_target_sec: float = 3.5
+    detector: SimulationDetector | None = None
 
     @property
     def rover(self):
@@ -82,7 +84,15 @@ class MobileMissionController:
             self._init_fake_csi()
         self._plan_paths()
         self.stats.start_time = time.time()
-        self._hold_target_sec = random.uniform(5.0, 8.0)
+        self._hold_target_sec = random.uniform(2.5, 4.0)
+        if self.detector is None:
+            self._sync_detection_radius()
+
+    def _sync_detection_radius(self) -> None:
+        radius = max(3.5, min(7.0, self.world.area_size_m * 0.14))
+        self.detector = SimulationDetector(self.world, presence_radius_m=radius)
+        if self.fake_csi is not None:
+            self.fake_csi.presence_radius_m = radius
 
     def _polygon_centroid(self) -> tuple[float, float]:
         poly = self.world.zone_polygon
@@ -129,14 +139,21 @@ class MobileMissionController:
         )
 
     def _plan_paths(self) -> None:
-        ground_all = self.planner.ground_nav2_style()
+        zone = self.world.zone_polygon
+        ground_all = self.planner.ground_nav2_style(polygon=zone)
+        if not ground_all:
+            ground_all = self.planner.ground_patrol(polygon=zone)
         drone_all = self.planner.drone_lawnmower(altitude_m=6.0)
         n_spiders = max(len(self.spiderbots), 1)
         n_drones = max(len(self.drones), 1)
+        victim_wps = [Waypoint(v.x, v.y, 0.0) for v in self.world.victims]
         for i, sb in enumerate(self.spiderbots):
-            sb.waypoints = [ground_all[j] for j in range(i, len(ground_all), n_spiders)]
+            chunk = [ground_all[j] for j in range(i, len(ground_all), n_spiders)]
+            combined = chunk + victim_wps if victim_wps else chunk
+            sb.waypoints = reorder_waypoints_nearest(combined, sb.rover.state.x, sb.rover.state.y)
         for i, dr in enumerate(self.drones):
-            dr.waypoints = [drone_all[j] for j in range(i, len(drone_all), n_drones)]
+            chunk = [drone_all[j] for j in range(i, len(drone_all), n_drones)]
+            dr.waypoints = reorder_waypoints_nearest(chunk, dr.drone.state.x, dr.drone.state.y)
 
     def apply_zone(self, zone_polygon: list[tuple[float, float]], ground_subcell: list[tuple[float, float]] | None = None) -> None:
         self.world.zone_polygon = zone_polygon
@@ -149,14 +166,24 @@ class MobileMissionController:
             if len(self.world.ground_subcell) < 3:
                 self.world.ground_subcell = list(zone_polygon)
         self.planner = CoveragePlanner(self.world)
-        self._plan_paths()
+        self._sync_detection_radius()
+        cx, cy = self._polygon_centroid()
+        offsets = [(0, 0), (2.5, 0), (-2.5, 0)]
+        si = 0
         for sb in self.spiderbots:
+            ox, oy = offsets[si % len(offsets)]
+            sb.rover.state.x = cx + ox
+            sb.rover.state.y = cy + oy
             sb.rover.state.waypoint_idx = 0
             sb.rover.state.finished = False
             sb.rover.state.holding = False
+            si += 1
         for dr in self.drones:
+            dr.drone.state.x = cx
+            dr.drone.state.y = cy
             dr.drone.state.waypoint_idx = 0
             dr.drone.state.finished = False
+        self._plan_paths()
 
     @classmethod
     def from_config(cls, config_path: str | None = None, **kwargs) -> MobileMissionController:
@@ -173,8 +200,21 @@ class MobileMissionController:
         now = now or time.time()
         for sb in self.spiderbots:
             self._step_spider(sb, dt, now)
+            if self.detector is not None:
+                st = sb.rover.state
+                self.detector.scan(
+                    sb.spec.node_id,
+                    st.x,
+                    st.y,
+                    st.linear_mps,
+                    st.holding,
+                    dt,
+                )
         for dr in self.drones:
             self._step_drone_unit(dr, dt)
+        if self.detector is not None:
+            self._detected_victims = self.detector.confirmed_ids()
+            self.stats.confirmed_detections = len(self._detected_victims)
         self._record_coverage()
         any_holding = any(sb.rover.state.holding for sb in self.spiderbots)
         all_done = (
@@ -216,29 +256,32 @@ class MobileMissionController:
             pos[dr.spec.node_id] = (dr.drone.state.x, dr.drone.state.y)
         return pos
 
+    def get_sim_targets(self) -> list[dict]:
+        if self.detector is None:
+            return []
+        return self.detector.targets()
+
     def _step_spider(self, sb: SpiderbotUnit, dt: float, now: float) -> None:
         rover = sb.rover
         if rover.state.finished:
             return
         if rover.state.holding:
+            rover.state.linear_mps = 0.0
             if now >= rover.state.hold_until:
                 rover.state.holding = False
                 rover.state.waypoint_idx += 1
-                self._hold_target_sec = random.uniform(5.0, 8.0)
+                self._hold_target_sec = random.uniform(2.5, 4.0)
             return
         if rover.state.waypoint_idx >= len(sb.waypoints):
             rover.state.finished = True
             return
         target = sb.waypoints[rover.state.waypoint_idx]
         rover.step_toward(target, dt)
-        if math.hypot(target.x - rover.state.x, target.y - rover.state.y) < 0.3:
+        arrival = max(0.8, min(2.0, self.world.area_size_m * 0.03))
+        if math.hypot(target.x - rover.state.x, target.y - rover.state.y) < arrival:
             if self.fake_csi.presence_only(rover.state.x, rover.state.y):
                 rover.state.holding = True
                 rover.state.hold_until = now + self._hold_target_sec
-                victim, _ = self.world.nearest_victim(rover.state.x, rover.state.y)
-                if victim:
-                    self._detected_victims.add(victim.id)
-                    self.stats.confirmed_detections = len(self._detected_victims)
             else:
                 rover.state.waypoint_idx += 1
 

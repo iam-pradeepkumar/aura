@@ -18,7 +18,7 @@ class Waypoint:
 
 
 class CoveragePlanner:
-    def __init__(self, world: DisasterWorld, lane_spacing_m: float = 4.0):
+    def __init__(self, world: DisasterWorld, lane_spacing_m: float | None = None):
         self.world = world
         self.lane_spacing = lane_spacing_m
 
@@ -27,46 +27,70 @@ class CoveragePlanner:
         ys = [p[1] for p in polygon]
         return min(xs), min(ys), max(xs), max(ys)
 
+    def _adaptive_spacing(self, polygon: list[tuple[float, float]]) -> tuple[float, float]:
+        xmin, ymin, xmax, ymax = self._bbox(polygon)
+        w = max(xmax - xmin, 1.0)
+        h = max(ymax - ymin, 1.0)
+        lane = self.lane_spacing if self.lane_spacing is not None else max(2.0, min(5.0, w / 6.0))
+        step = max(1.5, min(4.0, min(w, h) / 8.0))
+        return lane, step
+
     def drone_lawnmower(self, altitude_m: float = 6.0) -> list[Waypoint]:
-        xmin, ymin, xmax, ymax = self._bbox(self.world.zone_polygon)
+        poly = self.world.zone_polygon
+        xmin, ymin, xmax, ymax = self._bbox(poly)
+        lane, _ = self._adaptive_spacing(poly)
+        margin = max(0.8, min(2.0, min(xmax - xmin, ymax - ymin) * 0.08))
         waypoints: list[Waypoint] = []
-        y = ymin + 2.0
+        y = ymin + margin
         direction = 1
-        while y <= ymax - 1.0:
+        while y <= ymax - margin:
             if direction > 0:
-                xs = [xmin + 2.0, xmax - 2.0]
+                xs = [xmin + margin, xmax - margin]
             else:
-                xs = [xmax - 2.0, xmin + 2.0]
+                xs = [xmax - margin, xmin + margin]
             for x in xs:
                 if self.world.in_zone(x, y):
                     waypoints.append(Waypoint(x, y, altitude_m))
-            y += self.lane_spacing
+            y += lane
             direction *= -1
         return waypoints
 
-    def ground_patrol(self, step_m: float = 2.5) -> list[Waypoint]:
-        """Grid patrol inside ground sub-cell, skipping obstacle discs."""
-        xmin, ymin, xmax, ymax = self._bbox(self.world.ground_subcell)
+    def ground_patrol(
+        self,
+        step_m: float | None = None,
+        polygon: list[tuple[float, float]] | None = None,
+    ) -> list[Waypoint]:
+        """Grid patrol inside polygon, skipping obstacle discs."""
+        poly = polygon or self.world.zone_polygon
+        xmin, ymin, xmax, ymax = self._bbox(poly)
+        _, step = self._adaptive_spacing(poly)
+        if step_m is not None:
+            step = step_m
+        margin = max(0.6, min(1.8, min(xmax - xmin, ymax - ymin) * 0.06))
         waypoints: list[Waypoint] = []
-        y = ymin + 1.5
+        y = ymin + margin
         direction = 1
-        while y <= ymax - 1.0:
-            xs = np.linspace(xmin + 1.5, xmax - 1.5, max(int((xmax - xmin) / step_m), 2))
+        while y <= ymax - margin:
+            xs = np.linspace(xmin + margin, xmax - margin, max(int((xmax - xmin) / step), 2))
             if direction < 0:
                 xs = list(reversed(xs))
             for x in xs:
-                if not self.world.in_ground_subcell(x, y):
+                if not self.world.point_in_polygon(x, y, poly):
                     continue
                 if self.world.collides(x, y):
                     continue
                 waypoints.append(Waypoint(x, y, 0.0))
-            y += step_m
+            y += step
             direction *= -1
         return waypoints
 
-    def ground_nav2_style(self, step_m: float = 2.0) -> list[Waypoint]:
+    def ground_nav2_style(
+        self,
+        step_m: float | None = None,
+        polygon: list[tuple[float, float]] | None = None,
+    ) -> list[Waypoint]:
         """Obstacle-avoiding greedy path (Nav2 stand-in for sim without ROS)."""
-        raw = self.ground_patrol(step_m=step_m)
+        raw = self.ground_patrol(step_m=step_m, polygon=polygon)
         if not raw:
             return raw
         smooth: list[Waypoint] = [raw[0]]
@@ -76,7 +100,8 @@ class CoveragePlanner:
                 smooth.append(wp)
             else:
                 mid = Waypoint((last.x + wp.x) / 2, (last.y + wp.y) / 2, 0.0)
-                if not self.world.collides(mid.x, mid.y) and self.world.in_ground_subcell(mid.x, mid.y):
+                poly = polygon or self.world.zone_polygon
+                if not self.world.collides(mid.x, mid.y) and self.world.point_in_polygon(mid.x, mid.y, poly):
                     smooth.append(mid)
                 smooth.append(wp)
         return smooth
@@ -89,3 +114,21 @@ class CoveragePlanner:
             if self.world.collides(x, y):
                 return False
         return True
+
+
+def reorder_waypoints_nearest(waypoints: list[Waypoint], start_x: float, start_y: float) -> list[Waypoint]:
+    """Greedy nearest-neighbor ordering so patrol begins from the unit's spawn point."""
+    if not waypoints:
+        return []
+    remaining = list(waypoints)
+    ordered: list[Waypoint] = []
+    cx, cy = start_x, start_y
+    while remaining:
+        best_i = min(
+            range(len(remaining)),
+            key=lambda i: math.hypot(remaining[i].x - cx, remaining[i].y - cy),
+        )
+        wp = remaining.pop(best_i)
+        ordered.append(wp)
+        cx, cy = wp.x, wp.y
+    return ordered

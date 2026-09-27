@@ -522,6 +522,21 @@ html, body {
   50% { transform: scale(1.08); }
 }
 
+.placed-survivor-marker {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(245, 158, 11, 0.92);
+  border: 2px dashed #fff;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.55);
+  display: grid;
+  place-items: center;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: #1a1200;
+  font-family: var(--mono);
+}
+
 .survivor-marker {
   width: 28px;
   height: 28px;

@@ -8,6 +8,7 @@ const S = {
   selectedTarget: null,
   missionRunning: false,
   zoneGeo: [],
+  placedSurvivors: [],
   addressLabel: "",
   fitUnitsOnce: false,
 };
@@ -36,6 +37,10 @@ async function boot() {
         ? `Click ${3 - pts.length} more corner(s) on the map (double-click to finish)`
         : `${pts.length} corners — click "Close polygon" or double-click map`
     );
+  };
+  AuraMap.onSurvivorChange = (list) => {
+    S.placedSurvivors = list;
+    setBanner(`${list.length} survivor(s) placed — add more or start rescue`);
   };
   if (zone.default_geo) {
     AuraMap.flyTo(zone.default_geo.lat, zone.default_geo.lon, zone.default_geo.label);
@@ -70,8 +75,28 @@ function bindUi() {
   });
   document.getElementById("btn-clear-zone").addEventListener("click", () => {
     AuraMap.clearDraw();
+    AuraMap.clearPlacedSurvivors();
     S.zoneGeo = [];
+    S.placedSurvivors = [];
     setBanner("Zone cleared");
+  });
+  document.getElementById("btn-place-survivors").addEventListener("click", () => {
+    const zone = AuraMap.getZoneGeo();
+    if (!zone || zone.length < 3) {
+      setBanner("Close the disaster zone polygon first, then place survivors");
+      return;
+    }
+    AuraMap.setSurvivorMode(true);
+    document.getElementById("btn-place-survivors").classList.add("active");
+    document.getElementById("btn-draw").classList.remove("active");
+    setBanner("Click inside the yellow zone to place survivors (simulation targets)");
+  });
+  document.getElementById("btn-clear-survivors").addEventListener("click", () => {
+    AuraMap.clearPlacedSurvivors();
+    S.placedSurvivors = [];
+    AuraMap.setSurvivorMode(false);
+    document.getElementById("btn-place-survivors").classList.remove("active");
+    setBanner("Placed survivors cleared");
   });
   document.getElementById("btn-start").addEventListener("click", startMission);
   document.getElementById("btn-stop").addEventListener("click", stopMission);
@@ -139,6 +164,11 @@ async function startMission() {
     alert("Enable at least one spiderbot or drone in the Units tab.");
     return;
   }
+  const survivors = AuraMap.getPlacedSurvivors();
+  if (!survivors.length) {
+    alert("Place at least one survivor inside the disaster zone (Place survivors tool).");
+    return;
+  }
   const anchor = AuraMap.getAnchor();
   if (!anchor) {
     alert("Search and fly to a real-world address first.");
@@ -153,9 +183,12 @@ async function startMission() {
       units: S.roster,
       geo_anchor: { lat: anchor.lat, lon: anchor.lon, label: S.addressLabel || anchor.label },
       zone_polygon_geo: ring,
+      survivors_geo: survivors,
       gazebo: S.mode === "gazebo",
     }),
   });
+  AuraMap.setSurvivorMode(false);
+  document.getElementById("btn-place-survivors").classList.remove("active");
   S.missionRunning = true;
   S.zoneGeo = ring;
   S.fitUnitsOnce = true;

@@ -21,7 +21,13 @@ bootstrap()
 
 from aura_processor.mobile_field import create_mobile_engine
 from aura_sim_core.bridge import frame_to_bridge_message
-from aura_sim_core.geo import GeoAnchor, area_size_from_polygon, bbox_from_polygon, polygon_geo_to_local
+from aura_sim_core.geo import (
+    GeoAnchor,
+    area_size_from_polygon,
+    bbox_from_polygon,
+    polygon_geo_to_local,
+    survivors_geo_to_local,
+)
 from aura_sim_core.mission import MobileMissionController
 from aura_sim_core.units import DEFAULT_UNIT_ROSTER, parse_units
 from aura_sim_core.world import DisasterWorld, world_from_dict
@@ -126,12 +132,12 @@ def _build_zone_cfg(payload: dict) -> dict:
         area = area_size_from_polygon(local_poly)
         ref = float(defaults["area_size_m"])
         obstacles = _scale_obstacles(defaults["obstacles"], local_poly, ref)
-        victims = _place_victims(local_poly)
-        ys = [p[1] for p in local_poly]
-        mid = (min(ys) + max(ys)) / 2
-        ground_subcell = [(x, y) for x, y in local_poly if y <= mid]
-        if len(ground_subcell) < 3:
-            ground_subcell = list(local_poly)
+        survivors_geo = payload.get("survivors_geo") or []
+        if survivors_geo:
+            victims = survivors_geo_to_local(anchor_obj, survivors_geo, local_poly)
+        else:
+            victims = _place_victims(local_poly)
+        ground_subcell = list(local_poly)
         return {
             "area_size_m": area,
             "zone_polygon": [[x, y] for x, y in local_poly],
@@ -139,6 +145,7 @@ def _build_zone_cfg(payload: dict) -> dict:
             "ground_subcell": [[x, y] for x, y in ground_subcell],
             "obstacles": obstacles,
             "victims": victims,
+            "survivors_geo": survivors_geo,
             "units": units,
             "geo_anchor": geo_anchor,
             "_anchor": anchor_obj,
@@ -167,6 +174,32 @@ def _json_num(v) -> float:
         return float(v)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _merge_sim_targets(frame: dict, sim_targets: list[dict]) -> dict:
+    if not sim_targets:
+        return frame
+    by_id: dict[int, dict] = {}
+    for t in frame.get("targets", []):
+        tid = int(t.get("id", 0))
+        if tid:
+            by_id[tid] = dict(t)
+    for t in sim_targets:
+        tid = int(t.get("id", 0))
+        if not tid:
+            continue
+        prev = by_id.get(tid)
+        if prev is None or float(t.get("confidence", 0)) >= float(prev.get("confidence", 0)):
+            by_id[tid] = dict(t)
+    merged = list(by_id.values())
+    frame["targets"] = merged
+    frame["target_count"] = len([t for t in merged if float(t.get("confidence", 0)) >= 0.45])
+    frame["survivors_detected"] = frame["target_count"]
+    frame["motion_detected"] = frame.get("motion_detected", False) or frame["target_count"] > 0
+    if merged:
+        best = max(merged, key=lambda t: float(t.get("confidence", 0)))
+        frame["sensing_confidence"] = max(float(frame.get("sensing_confidence", 0)), float(best.get("confidence", 0)))
+    return frame
 
 
 def _enrich_geo(msg: dict, anchor: GeoAnchor | None) -> dict:
@@ -279,6 +312,7 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
         engine.update_node_positions(mission.node_positions())
         mission.inject_csi(engine.rx, 24)
         frame = engine.process_frame()
+        frame = _merge_sim_targets(frame, mission.get_sim_targets())
         msg = frame_to_bridge_message(
             frame,
             status,
@@ -290,6 +324,8 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
             units_roster=status.get("units", []),
         )
         msg = _enrich_geo(msg, anchor)
+        if zone_cfg.get("survivors_geo"):
+            msg["geo"]["survivors_placed"] = zone_cfg["survivors_geo"]
         with _lock:
             _latest.clear()
             _latest.update(msg)
