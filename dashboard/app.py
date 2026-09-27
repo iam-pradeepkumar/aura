@@ -28,8 +28,8 @@ if (LANDING_DIST / "assets").is_dir():
     )
 
 
-@app.get("/")
-async def landing_page() -> FileResponse | HTMLResponse:
+@app.get("/", response_model=None)
+async def landing_page():
     built = LANDING_DIST / "index.html"
     if built.is_file():
         return FileResponse(built)
