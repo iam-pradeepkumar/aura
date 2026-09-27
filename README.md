@@ -19,7 +19,7 @@ python3 dashboard/run.py
 # → http://127.0.0.1:8847/command  (simulation)
 ```
 
-The landing UI uses **Vite + React + TypeScript + Tailwind + shadcn/ui**. The 3D hero lives in `landing/src/components/ui/orbit-delivery-hero.tsx` (AURA-themed: spiderbots, drones, WiFi CSI copy). See [`landing/README.md`](landing/README.md).
+The landing UI uses **Vite + React + TypeScript + Tailwind + shadcn/ui**. The hero shows **Sketchfab 3D embeds** for the spiderbot and drone (`landing/src/components/landing/SketchfabFleet.tsx`). See [`landing/README.md`](landing/README.md).
 
 **Demo flow**
 

@@ -6,8 +6,8 @@ Modern landing page built with **Vite**, **TypeScript**, **Tailwind CSS v4**, an
 
 | Path | Purpose |
 |------|---------|
-| `src/components/ui/orbit-delivery-hero.tsx` | Interactive 3D hero (adapted from Orbit Delivery for AURA SAR) |
-| `src/components/landing/SarPlanetScene.tsx` | React Three Fiber disaster globe + spiderbot + drone |
+| `src/components/ui/orbit-delivery-hero.tsx` | Hero layout + story dialogs |
+| `src/components/landing/SketchfabFleet.tsx` | Sketchfab spiderbot + drone embeds |
 | `src/components/ui/button.tsx` | shadcn `Button` primitive |
 | `src/lib/utils.ts` | `cn()` helper for Tailwind class merging |
 | `components.json` | shadcn CLI config (`ui` → `@/components/ui`) |
