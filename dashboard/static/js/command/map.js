@@ -327,7 +327,7 @@ const AuraMap = (function () {
 
     if (!trails[id]) trails[id] = [];
     const last = trails[id][trails[id].length - 1];
-    if (!last || Math.hypot(last[0] - coord[0], last[1] - coord[1]) > 0.000008) {
+    if (!last || Math.hypot(last[0] - coord[0], last[1] - coord[1]) > 0.0000015) {
       trails[id].push(coord);
       if (trails[id].length > 120) trails[id].shift();
     }

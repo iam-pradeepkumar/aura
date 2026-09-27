@@ -37,7 +37,7 @@ class SimulationDetector:
                 track.confidence = max(0.0, track.confidence - dt * 0.02)
                 continue
             proximity = 1.0 - dist / self.presence_radius_m
-            track.confidence = min(1.0, track.confidence + dt * (0.28 + 0.32 * proximity))
+            track.confidence = min(1.0, track.confidence + dt * (0.35 + 0.45 * proximity))
             track.scanning_node = node_id
             if track.confidence >= self.confirm_threshold:
                 track.confirmed = True

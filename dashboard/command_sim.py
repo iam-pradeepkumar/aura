@@ -29,6 +29,12 @@ from aura_sim_core.geo import (
     survivors_geo_to_local,
 )
 from aura_sim_core.mission import MobileMissionController
+from aura_sim_core.sim_tuning import (
+    CSI_PACKETS_PER_TICK,
+    TICK_HZ,
+    TIME_SCALE,
+    apply_dashboard_tuning,
+)
 from aura_sim_core.units import DEFAULT_UNIT_ROSTER, parse_units
 from aura_sim_core.world import DisasterWorld, world_from_dict
 
@@ -294,6 +300,7 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
     if ground:
         ground = [(float(p[0]), float(p[1])) for p in ground]
     mission.apply_zone(polygon, ground)
+    apply_dashboard_tuning(mission)
 
     cfg_path = str(ROOT / "simulation" / "config.yaml")
     engine = create_mobile_engine(cfg_path)
@@ -306,11 +313,12 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
     for nid in engine.expected_ids:
         engine.rx.link_node(nid)
 
-    dt = 0.1
+    dt = 1.0 / TICK_HZ
+    sim_dt = dt * TIME_SCALE
     while _running and not mission.stats.completed:
-        status = mission.tick(dt)
+        status = mission.tick(sim_dt)
         engine.update_node_positions(mission.node_positions())
-        mission.inject_csi(engine.rx, 24)
+        mission.inject_csi(engine.rx, CSI_PACKETS_PER_TICK)
         frame = engine.process_frame()
         frame = _merge_sim_targets(frame, mission.get_sim_targets())
         msg = frame_to_bridge_message(
@@ -324,6 +332,7 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
             units_roster=status.get("units", []),
         )
         msg = _enrich_geo(msg, anchor)
+        msg["sim"] = {"time_scale": TIME_SCALE, "tick_hz": TICK_HZ}
         if zone_cfg.get("survivors_geo"):
             msg["geo"]["survivors_placed"] = zone_cfg["survivors_geo"]
         with _lock:

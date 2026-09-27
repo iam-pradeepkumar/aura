@@ -31,8 +31,8 @@ class CoveragePlanner:
         xmin, ymin, xmax, ymax = self._bbox(polygon)
         w = max(xmax - xmin, 1.0)
         h = max(ymax - ymin, 1.0)
-        lane = self.lane_spacing if self.lane_spacing is not None else max(2.0, min(5.0, w / 6.0))
-        step = max(1.5, min(4.0, min(w, h) / 8.0))
+        lane = self.lane_spacing if self.lane_spacing is not None else max(3.0, min(8.0, w / 4.5))
+        step = max(2.5, min(7.0, min(w, h) / 5.0))
         return lane, step
 
     def drone_lawnmower(self, altitude_m: float = 6.0) -> list[Waypoint]:

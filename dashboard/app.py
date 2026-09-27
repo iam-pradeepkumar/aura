@@ -475,7 +475,7 @@ async def ws_command(websocket: WebSocket):
             frame = await asyncio.to_thread(get_latest_frame)
             if frame:
                 await websocket.send_json(frame)
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.1)
     except WebSocketDisconnect:
         pass
 
@@ -490,7 +490,7 @@ async def ws_mobile(websocket: WebSocket):
             frame = await asyncio.to_thread(get_latest_frame)
             if frame:
                 await websocket.send_json(frame)
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.1)
     except WebSocketDisconnect:
         pass
 

@@ -6,6 +6,10 @@ Autonomous ground rover + aerial drone patrol a marked disaster zone. CSI is **f
 
 See **[GAZEBO_UBUNTU.md](GAZEBO_UBUNTU.md)** for full ROS 2 Humble + Gazebo Garden setup, dashboard flow, and troubleshooting.
 
+## NVIDIA Isaac Sim + Isaac Lab (photorealistic disaster env)
+
+See **[ISAAC_SIM.md](ISAAC_SIM.md)** for architecture and step-by-step plan to run spiderbots/drones in Isaac Sim while keeping the same AURA dashboard and CSI pipeline.
+
 ## Quick start (no Gazebo — kinematic sim)
 
 ```bash
