@@ -58,9 +58,7 @@ def main() -> None:
         print(f"  Stop the other server, or run:  python dashboard/run.py --port {alt}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"AURA Dashboard → http://127.0.0.1:{port}")
-    print(f"  Home:       http://127.0.0.1:{port}/")
-    print(f"  Simulation: http://127.0.0.1:{port}/simulation")
+    print(f"AURA Command Center → http://127.0.0.1:{port}/")
     print(f"  Alerts:     http://127.0.0.1:{port}/alerts")
     print(f"  DM Console: http://127.0.0.1:{port}/manage")
     uvicorn.run(

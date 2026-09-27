@@ -13,7 +13,7 @@ python3 gazebo_sim/standalone/run_mission.py
 
 # Dashboard live view
 python3 dashboard/run.py
-# Open http://127.0.0.1:8847/mobile → Start mission
+# Open http://127.0.0.1:8847/ → assign units, mark zone, Start Rescue
 ```
 
 ## ROS 2 + Gazebo (local machine with ROS 2 Humble + Gazebo Garden)

@@ -39,11 +39,13 @@ class MobileFieldEngine(LiveFieldEngine):
         self.rx = SyntheticReceiver()
         self._started = True
         mobile_cfg = hw.get("mobile", {})
-        self.expected_ids = [
-            int(mobile_cfg.get("rover_node_id", 1)),
-        ]
-        if mobile_cfg.get("drone_relay_enabled", False):
-            self.expected_ids.append(int(mobile_cfg.get("drone_node_id", 2)))
+        roster_ids = mobile_cfg.get("node_ids")
+        if roster_ids:
+            self.expected_ids = [int(n) for n in roster_ids]
+        else:
+            self.expected_ids = [int(mobile_cfg.get("rover_node_id", 1))]
+            if mobile_cfg.get("drone_relay_enabled", False):
+                self.expected_ids.append(int(mobile_cfg.get("drone_node_id", 2)))
         for nid in self.expected_ids:
             self.rx.link_node(nid)
         self.node_pos = self.position_store.as_dict()

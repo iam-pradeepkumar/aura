@@ -1,6 +1,6 @@
 # Mobile SAR WebSocket Bridge Schema
 
-**Endpoint:** `WS /ws/mobile` (dashboard) or standalone `ws://127.0.0.1:8766`
+**Endpoint:** `WS /ws/command` (TITAN dashboard) · legacy `WS /ws/mobile` · standalone `ws://127.0.0.1:8766`
 
 **Direction:** Server → client push (~5 Hz)
 

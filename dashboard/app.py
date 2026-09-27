@@ -1,4 +1,4 @@
-"""AURA Web Dashboard — WiMANS / dataset simulation only. Live ESP32: tools/field_live.py"""
+"""AURA Web Dashboard — TITAN Command Center + disaster alerts."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 import yaml
-from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import Body, FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -145,18 +145,28 @@ def align_results(results, video_duration_sec: float, n_frames: int) -> list[dic
 
 
 @app.get("/", response_class=HTMLResponse)
-async def landing():
-    return (STATIC_DIR / "landing.html").read_text()
+async def command_center():
+    return (STATIC_DIR / "command.html").read_text()
+
+
+@app.get("/command", response_class=HTMLResponse)
+async def command_center_alias():
+    return (STATIC_DIR / "command.html").read_text()
 
 
 @app.get("/simulation", response_class=HTMLResponse)
 async def simulation_page():
-    return (STATIC_DIR / "simulation.html").read_text()
+    return (STATIC_DIR / "command.html").read_text()
 
 
 @app.get("/mobile", response_class=HTMLResponse)
 async def mobile_page():
-    return (STATIC_DIR / "mobile.html").read_text()
+    return (STATIC_DIR / "command.html").read_text()
+
+
+@app.get("/legacy/simulation", response_class=HTMLResponse)
+async def legacy_simulation_page():
+    return (STATIC_DIR / "simulation.html").read_text()
 
 
 @app.get("/alerts", response_class=HTMLResponse)
@@ -415,22 +425,69 @@ async def get_frame(session_id: str, index: int = 0):
     }
 
 
+@app.get("/api/command/roster")
+async def command_roster():
+    from dashboard.command_sim import get_roster
+    return {"units": get_roster()}
+
+
+@app.get("/api/command/zone")
+async def command_zone():
+    from dashboard.command_sim import get_zone_defaults
+    return get_zone_defaults()
+
+
+@app.get("/api/command/status")
+async def command_status():
+    from dashboard.command_sim import get_status
+    return get_status()
+
+
+@app.post("/api/command/start")
+async def command_start(payload: dict = Body(...)):
+    from dashboard.command_sim import start_mission
+    return await asyncio.to_thread(start_mission, payload)
+
+
+@app.post("/api/command/stop")
+async def command_stop():
+    from dashboard.command_sim import stop_mission
+    stop_mission()
+    return {"status": "stopped"}
+
+
 @app.post("/api/mobile/start")
 async def start_mobile_mission():
-    from dashboard.mobile_sim import start_mobile_mission
+    from dashboard.command_sim import get_roster, get_zone_defaults, start_mission
 
-    await asyncio.to_thread(start_mobile_mission)
-    return {"status": "started", "ws": "/ws/mobile"}
+    zone = get_zone_defaults()
+    payload = {"mode": "simulation", "units": get_roster(), **zone}
+    return await asyncio.to_thread(start_mission, payload)
 
 
-@app.websocket("/ws/mobile")
-async def ws_mobile(websocket: WebSocket):
-    from dashboard.mobile_sim import get_latest_mobile_frame
+@app.websocket("/ws/command")
+async def ws_command(websocket: WebSocket):
+    from dashboard.command_sim import get_latest_frame
 
     await websocket.accept()
     try:
         while True:
-            frame = await asyncio.to_thread(get_latest_mobile_frame)
+            frame = await asyncio.to_thread(get_latest_frame)
+            if frame:
+                await websocket.send_json(frame)
+            await asyncio.sleep(0.2)
+    except WebSocketDisconnect:
+        pass
+
+
+@app.websocket("/ws/mobile")
+async def ws_mobile(websocket: WebSocket):
+    from dashboard.command_sim import get_latest_frame
+
+    await websocket.accept()
+    try:
+        while True:
+            frame = await asyncio.to_thread(get_latest_frame)
             if frame:
                 await websocket.send_json(frame)
             await asyncio.sleep(0.2)

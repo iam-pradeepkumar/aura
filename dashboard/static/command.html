@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AURA — Command &amp; Control</title>
+  <link rel="icon" href="/favicon.ico" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/titan.css?v=1" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header class="titan-header">
+      <div class="titan-brand">
+        <div class="titan-logo">A</div>
+        <div class="titan-title">
+          <h1>AURA Command &amp; Control</h1>
+          <p>Mobile CSI SAR · Spiderbots + Drones</p>
+        </div>
+      </div>
+      <div class="titan-stats">
+        <div class="stat-pill red">
+          <div class="val" id="stat-survivors">0</div>
+          <div class="lbl">Survivors</div>
+        </div>
+        <div class="stat-pill blue">
+          <div class="val" id="stat-spiders">0</div>
+          <div class="lbl">Spiderbots</div>
+        </div>
+        <div class="stat-pill green">
+          <div class="val" id="stat-drones">0</div>
+          <div class="lbl">Drones</div>
+        </div>
+      </div>
+      <div class="titan-status">
+        <span class="status-dot"></span>
+        <span id="conn-status">Connecting…</span>
+        <span style="color:#7a8fa6;margin-left:1rem;" id="clock"></span>
+      </div>
+    </header>
+
+    <div id="map-container">
+      <div id="map3d"></div>
+      <div class="map-overlay">
+        <button class="map-btn" id="btn-draw-zone">Mark disaster zone</button>
+        <button class="map-btn" id="btn-clear-zone">Clear zone</button>
+        <button class="map-btn" id="btn-use-default">Load default zone</button>
+      </div>
+      <div class="map-hint" id="map-hint">Assign units → mark zone → start rescue</div>
+    </div>
+
+    <aside class="titan-sidebar">
+      <div class="sidebar-tabs">
+        <button class="active" data-tab="mission">Mission</button>
+        <button data-tab="units">Units</button>
+        <button data-tab="details">Details</button>
+      </div>
+
+      <div id="panel-mission" class="sidebar-panel active">
+        <div class="panel-section">
+          <h3>Operation mode</h3>
+          <div class="mode-toggle">
+            <button class="mode-btn active" data-mode="simulation">Simulation</button>
+            <button class="mode-btn" data-mode="hardware">Live hardware</button>
+          </div>
+        </div>
+        <div class="panel-section">
+          <h3>Disaster zone</h3>
+          <div class="polygon-pts" id="polygon-pts">Click "Mark disaster zone" then click map corners</div>
+        </div>
+        <div class="panel-section">
+          <h3>Mission status</h3>
+          <div class="detail-row"><span class="k">Phase</span><span id="mission-phase">IDLE</span></div>
+          <div class="detail-row"><span class="k">Coverage</span><span id="mission-coverage">0%</span></div>
+          <div class="detail-row"><span class="k">Elapsed</span><span id="mission-elapsed">0s</span></div>
+        </div>
+        <button class="btn-primary" id="btn-start">▶ START RESCUE</button>
+        <button class="btn-danger" id="btn-stop" style="display:none;">■ STOP MISSION</button>
+      </div>
+
+      <div id="panel-units" class="sidebar-panel">
+        <div class="panel-section">
+          <h3>Assign spiderbots &amp; drones</h3>
+          <p style="font-size:0.75rem;color:#7a8fa6;margin-bottom:0.75rem;">Spiderbots carry CSI vitals sensors. Drones provide aerial coverage and relay.</p>
+          <div id="unit-roster"></div>
+        </div>
+      </div>
+
+      <div id="panel-details" class="sidebar-panel">
+        <div id="detail-content">
+          <p style="color:#7a8fa6;font-size:0.85rem;">Select a unit or survivor from the map or bottom panel.</p>
+        </div>
+      </div>
+    </aside>
+
+    <div class="units-bar">
+      <h3>Active units &amp; detections</h3>
+      <div class="units-scroll" id="units-scroll">
+        <div class="unit-card"><span class="name">Awaiting mission…</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/titan/scene3d.js?v=1"></script>
+  <script src="/static/js/titan/app.js?v=1"></script>
+</body>
+</html>

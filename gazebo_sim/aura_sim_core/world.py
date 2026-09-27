@@ -70,10 +70,7 @@ def _pairs(raw: list) -> list[tuple[float, float]]:
     return [(float(p[0]), float(p[1])) for p in raw]
 
 
-def load_world_config(path: str | Path | None = None) -> DisasterWorld:
-    p = Path(path or Path(__file__).resolve().parents[1] / "config" / "disaster_zone.yaml")
-    with p.open() as f:
-        cfg = yaml.safe_load(f) or {}
+def world_from_dict(cfg: dict) -> DisasterWorld:
     obs = [Obstacle(float(o[0]), float(o[1]), float(o[2])) for o in cfg.get("obstacles", [])]
     victims = [
         Victim(int(v["id"]), float(v["x"]), float(v["y"]), float(v.get("resp_bpm", 14)))
@@ -82,7 +79,14 @@ def load_world_config(path: str | Path | None = None) -> DisasterWorld:
     return DisasterWorld(
         area_size_m=float(cfg.get("area_size_m", 40.0)),
         zone_polygon=_pairs(cfg.get("zone_polygon", [])),
-        ground_subcell=_pairs(cfg.get("ground_subcell", [])),
+        ground_subcell=_pairs(cfg.get("ground_subcell", cfg.get("zone_polygon", []))),
         obstacles=obs,
         victims=victims,
     )
+
+
+def load_world_config(path: str | Path | None = None) -> DisasterWorld:
+    p = Path(path or Path(__file__).resolve().parents[1] / "config" / "disaster_zone.yaml")
+    with p.open() as f:
+        cfg = yaml.safe_load(f) or {}
+    return world_from_dict(cfg)
