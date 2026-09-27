@@ -76,6 +76,25 @@ html, body {
   min-width: 170px;
 }
 
+.brand-home {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+  pointer-events: auto;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.brand-home:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
 .brand-mark {
   width: 32px;
   height: 32px;
@@ -603,10 +622,7 @@ html, body {
 }
 
 .survivor-pin .pin-stem {
-  width: 2px;
-  height: 8px;
-  background: #ef4444;
-  margin-top: -1px;
+  display: none;
 }
 
 .survivor-pin .pin-stem.scan {
