@@ -14,15 +14,26 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-APP_VERSION = "4.0.0"
+LANDING_DIST = STATIC_DIR / "landing-dist"
+APP_VERSION = "4.1.0"
 
 app = FastAPI(title="AURA Command Center", version=APP_VERSION)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+if (LANDING_DIST / "assets").is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=LANDING_DIST / "assets"),
+        name="landing-assets",
+    )
 
-@app.get("/", response_class=HTMLResponse)
-async def landing_page() -> str:
-    return (STATIC_DIR / "landing.html").read_text()
+
+@app.get("/")
+async def landing_page() -> FileResponse | HTMLResponse:
+    built = LANDING_DIST / "index.html"
+    if built.is_file():
+        return FileResponse(built)
+    return HTMLResponse((STATIC_DIR / "landing.html").read_text())
 
 
 @app.get("/command", response_class=HTMLResponse)

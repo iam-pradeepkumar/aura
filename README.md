@@ -4,15 +4,22 @@
 
 ---
 
-## Command Center (main app)
+## Landing + Command Center
 
-Full-screen satellite map: mark a disaster zone, place survivors, start a mission, and watch units patrol with WiFi CSI homing until survivors are found.
+| Page | URL | Purpose |
+|------|-----|---------|
+| **Home** | `/` | React 3D hero, problem/solution, YouTube demo, link to simulation |
+| **Command** | `/command` | Full-screen SAR map — mark zone, place survivors, run mission |
 
 ```bash
 pip install -r requirements.txt
+cd landing && npm install && npm run build   # builds React landing into dashboard/static/landing-dist/
 python3 dashboard/run.py
-# → http://127.0.0.1:8847
+# → http://127.0.0.1:8847/  (landing)
+# → http://127.0.0.1:8847/command  (simulation)
 ```
+
+The landing UI uses **Vite + React + TypeScript + Tailwind + shadcn/ui**. The 3D hero lives in `landing/src/components/ui/orbit-delivery-hero.tsx` (AURA-themed: spiderbots, drones, WiFi CSI copy). See [`landing/README.md`](landing/README.md).
 
 **Demo flow**
 
@@ -38,6 +45,7 @@ Full guide: [`docs/DEPLOY_RENDER.md`](docs/DEPLOY_RENDER.md)
 ## Project layout
 
 ```
+├── landing/                # React landing (Vite → dashboard/static/landing-dist/)
 ├── dashboard/              # Command Center (FastAPI + static UI)
 │   ├── app.py              # API + WebSocket (Render entrypoint)
 │   ├── command_sim.py      # Mission orchestration
