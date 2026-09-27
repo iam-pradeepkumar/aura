@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Start the AURA web dashboard.
+"""Start the AURA Command Center.
 
 Usage:
   python dashboard/run.py
-  python dashboard/run.py --port 5683
-  PORT=5683 python dashboard/run.py
+  PORT=10000 python dashboard/run.py
 """
 from __future__ import annotations
 
@@ -32,17 +31,11 @@ def port_available(port: int) -> bool:
             return False
 
 
-def find_free_port(start: int = DEFAULT_PORT) -> int:
-    for p in range(start, start + 50):
-        if port_available(p):
-            return p
-    raise RuntimeError("No free port found in range")
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="AURA web dashboard")
+    parser = argparse.ArgumentParser(description="AURA Command Center")
     parser.add_argument(
-        "-p", "--port",
+        "-p",
+        "--port",
         type=int,
         default=int(os.environ.get("PORT", DEFAULT_PORT)),
         help=f"HTTP port (default: {DEFAULT_PORT})",
@@ -51,22 +44,12 @@ def main() -> None:
     args = parser.parse_args()
 
     port = args.port
-    # PaaS (Render, etc.) assigns PORT — bind without pre-check
     if not os.environ.get("PORT") and not port_available(port):
-        alt = find_free_port(port + 1)
-        print(f"ERROR: Port {port} is already in use.", file=sys.stderr)
-        print(f"  Stop the other server, or run:  python dashboard/run.py --port {alt}", file=sys.stderr)
+        print(f"ERROR: Port {port} is in use.", file=sys.stderr)
         sys.exit(1)
 
     print(f"AURA Command Center → http://127.0.0.1:{port}/")
-    print(f"  Alerts:     http://127.0.0.1:{port}/alerts")
-    print(f"  DM Console: http://127.0.0.1:{port}/manage")
-    uvicorn.run(
-        "dashboard.app:app",
-        host=args.host,
-        port=port,
-        reload=False,
-    )
+    uvicorn.run("dashboard.app:app", host=args.host, port=port, reload=False)
 
 
 if __name__ == "__main__":

@@ -9,7 +9,8 @@ Complete documentation for **AURA — Adaptive Urban Rescue & Alert Array** — 
 | I want to… | Read |
 |------------|------|
 | Get started quickly | [../README.md](../README.md) |
-| Run WiMANS simulation in browser | [SIMULATION_GUIDE.md](SIMULATION_GUIDE.md) |
+| Run SAR Command Center locally | [../README.md](../README.md) |
+| WiMANS CSI replay (CLI) | [SIMULATION_GUIDE.md](SIMULATION_GUIDE.md) |
 | Deploy ESP32 nodes in the field | **[HARDWARE_FIELD_DEPLOYMENT.md](HARDWARE_FIELD_DEPLOYMENT.md)** ← start here |
 | Deploy ESP32 nodes (reference) | [HARDWARE_SETUP.md](HARDWARE_SETUP.md) |
 | Stream live CSI from all nodes | [WIRELESS_AND_SIMULATION.md](WIRELESS_AND_SIMULATION.md) → Part 1 |
@@ -27,7 +28,8 @@ Complete documentation for **AURA — Adaptive Urban Rescue & Alert Array** — 
 # Install
 pip install -r simulation/requirements.txt dashboard/requirements.txt
 
-# Web dashboard (simulation + live hardware)
+# Command Center (map + mission sim)
+pip install -r requirements.txt
 python dashboard/run.py
 
 # Live hardware CLI

@@ -115,9 +115,9 @@ const AuraMap = (function () {
       type: "circle",
       source: "survivor-pulse",
       paint: {
-        "circle-radius": 22,
-        "circle-color": "#ef4444",
-        "circle-opacity": 0.25,
+        "circle-radius": 10,
+        "circle-color": "#f59e0b",
+        "circle-opacity": 0.18,
         "circle-blur": 0.5,
       },
     });

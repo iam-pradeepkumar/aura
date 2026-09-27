@@ -1,138 +1,101 @@
-# Deploy AURA on Render
+# Deploy AURA Command Center on Render
 
-Host the **AURA web dashboard** (home, simulation, alerts, DM console) on [Render](https://render.com) as a Python web service.
+Host the **SAR Command Center** dashboard on [Render](https://render.com). Every push to `main` triggers an automatic redeploy when the service is linked to your GitHub repo.
 
 ---
 
-## What works on Render
+## What runs on Render
 
 | Feature | Cloud | Notes |
 |---------|-------|-------|
-| Home page | Yes | Full hand-drawn UI |
-| **Try simulation** (`act_105_48`) | Yes | Bundled in `dashboard/demo_data/` |
-| Custom WiMANS upload | Yes* | *Files are ephemeral — lost on redeploy |
-| DM Console (simulate alert) | Yes | Best way to demo alerts without USGS |
-| USGS / Open-Meteo polling | Yes | If Render outbound network is up |
-| Public `/alerts` feed | Yes | |
-| WebSocket updates | Yes | |
-| Live ESP32 (`field_live.py`) | **No** | Needs local UDP + `AURA_HUB` hotspot |
-| LAN multicast alerts | **No** | Cloud cannot reach your local LAN |
+| Command map + 3D units | Yes | MapLibre + Three.js in browser |
+| Mark disaster zone | Yes | Draw polygon on satellite map |
+| Place survivors (sim) | Yes | Click to seed victim positions |
+| Start mission | Yes | Spiderbots + drones patrol in simulation |
+| WiFi CSI homing + FOUND pins | Yes | Built-in kinematic sim engine |
+| WebSocket telemetry | Yes | `/ws/command` |
+| Live ESP32 hardware | **No** | Run `tools/field_live.py` locally |
+| Gazebo / Isaac Sim | **No** | Local ROS 2 stack only |
 
 ---
 
-## Prerequisites
+## One-time setup (GitHub already connected)
 
-1. **GitHub repository** with your AURA code pushed (see sync note below if you use Cursor cloud).
-2. **Render account** — [render.com](https://render.com) (free tier works for demos).
-3. Repo must include `dashboard/demo_data/act_105_48.{mp4,mat,npy}` (~6 MB) — already in this project.
+### Option A — Blueprint (recommended)
 
----
-
-## Option A — Blueprint (fastest)
-
-This repo includes `render.yaml`. Render can create the service automatically.
-
-1. Push code to GitHub:
+1. Push this repo to GitHub:
    ```bash
    git push origin main
    ```
 
-2. Open [Render Dashboard](https://dashboard.render.com/) → **New** → **Blueprint**.
+2. [Render Dashboard](https://dashboard.render.com/) → **New** → **Blueprint**.
 
-3. Connect your GitHub account and select the **aura** repository.
+3. Select your GitHub repo → Render reads `render.yaml` → **Apply**.
 
-4. Render detects `render.yaml` → click **Apply**.
+4. Wait for the first build (~2–4 min).
 
-5. Wait for build (~3–8 min first time; installs numpy, scipy, opencv-headless).
+5. Open your service URL, e.g. `https://aura-command-center.onrender.com`.
 
-6. Open the URL Render gives you, e.g. `https://aura-dashboard.onrender.com`.
+### Option B — Manual Web Service
+
+| Field | Value |
+|-------|-------|
+| **Runtime** | Python 3 |
+| **Branch** | `main` |
+| **Build Command** | `pip install --upgrade pip && pip install -r requirements.txt` |
+| **Start Command** | `uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT` |
+| **Health Check** | `/api/health` |
+| **Auto-Deploy** | On (default when linked to GitHub) |
+
+**Environment variables:**
+
+| Key | Value |
+|-----|-------|
+| `PYTHON_VERSION` | `3.12.3` |
+| `PYTHONUNBUFFERED` | `1` |
 
 ---
 
-## Option B — Manual Web Service
+## Auto-deploy on push
 
-1. **Render Dashboard** → **New** → **Web Service**.
+Once the Render service is connected to GitHub:
 
-2. Connect GitHub → select your **aura** repo.
+1. Commit and push to `main`.
+2. Render detects the push and starts a new build automatically.
+3. When the build succeeds, traffic switches to the new version.
 
-3. Settings:
-
-   | Field | Value |
-   |-------|-------|
-   | **Name** | `aura-dashboard` |
-   | **Region** | Singapore (closest to India) or Oregon |
-   | **Branch** | `main` |
-   | **Runtime** | Python 3 |
-   | **Build Command** | `pip install --upgrade pip && pip install -r requirements.txt` |
-   | **Start Command** | `uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT` |
-   | **Plan** | Free (or Starter for always-on) |
-
-4. **Environment** → add:
-
-   | Key | Value |
-   |-----|-------|
-   | `PYTHON_VERSION` | `3.12.3` |
-   | `MPLBACKEND` | `Agg` |
-   | `PYTHONUNBUFFERED` | `1` |
-
-5. **Health Check Path** (optional): `/api/version`
-
-6. Click **Create Web Service**.
+To deploy manually: Render Dashboard → your service → **Manual Deploy** → **Deploy latest commit**.
 
 ---
 
 ## Verify after deploy
 
-1. **Health check**
-   ```bash
-   curl https://YOUR-SERVICE.onrender.com/api/version
-   ```
-   Expected: `{"processor_version":"2026.09.04-42","mode":"csi-only"}`
-
-2. **Pages**
-   - `https://YOUR-SERVICE.onrender.com/` — home
-   - `https://YOUR-SERVICE.onrender.com/simulation` — click **Try simulation**
-   - `https://YOUR-SERVICE.onrender.com/manage` — simulate hazard → broadcast
-   - `https://YOUR-SERVICE.onrender.com/alerts` — public feed
-
-3. **Simulation** — first run may take 10–20 s (cold start + CSI processing).
-
-4. **Alerts offline?** — On free tier, if USGS fails, uncheck **Live API polling** on Alerts and use **DM Console → Simulate hazard**.
-
----
-
-## Sync code from Cursor cloud to GitHub
-
-If `git pull` on your laptop shows “already up to date” but Cursor has newer commits:
-
 ```bash
-git remote add aura-cloud https://origin.cursor.com/git/pradeep-kumar-s/tmp-2f8f2732c0c42b4f.git
-git fetch aura-cloud main
-git merge aura-cloud/main
-git push origin main
+curl https://YOUR-SERVICE.onrender.com/api/health
 ```
 
-Then trigger **Manual Deploy** on Render (or wait for auto-deploy on push).
+Expected:
+
+```json
+{"status":"ok","service":"aura-command-center","version":"4.0.0","mode":"sar-command"}
+```
+
+Open `https://YOUR-SERVICE.onrender.com/` — you should see the full-screen command map.
+
+**Quick demo flow:**
+
+1. Search an address → **Locate**
+2. **Mark disaster zone** → click corners → **Close polygon**
+3. **Place survivors** → click inside the zone
+4. **Start mission** → watch spiderbots/drones patrol and mark FOUND pins
 
 ---
 
 ## Free tier notes
 
-- **Spin-down** — service sleeps after ~15 min idle; first visit takes 30–60 s to wake.
-- **Ephemeral disk** — uploaded simulation files and `alert_settings.json` reset on redeploy. Bundled `act_105_48` demo always works.
-- **750 hours/month** — enough for one always-on demo service if you stay on free plan limits.
-
-Upgrade to **Starter** ($7/mo) for always-on and faster cold starts.
-
----
-
-## Optional: webhook for Slack
-
-After deploy:
-
-1. Open `https://YOUR-SERVICE.onrender.com/manage`
-2. Paste Slack incoming webhook URL
-3. Simulate → approve → broadcast — webhook fires on approve
+- **Spin-down** — service sleeps after ~15 min idle; first visit may take 30–60 s to wake.
+- **750 hours/month** — one free web service is enough for demos.
+- Upgrade to **Starter** for always-on and faster cold starts.
 
 ---
 
@@ -140,20 +103,13 @@ After deploy:
 
 | Problem | Fix |
 |---------|-----|
-| Build fails on `opencv` | Ensure root `requirements.txt` uses `opencv-python-headless` |
-| Build fails on `mat73` | Python 3.12 + `pip install --upgrade pip` before install |
-| Simulation 400 error | Check Render logs; confirm `demo_data/` files exist in repo |
-| USGS “offline” | Normal without DNS; use DM simulate or enable Live polling when online |
+| Build fails on `scipy` | Ensure `PYTHON_VERSION` is `3.12.3`; build uses `pip install --upgrade pip` |
 | 502 on first load | Free tier waking up — wait 60 s and refresh |
-| Port error | Start command must use `$PORT`, not `8847` |
+| WebSocket disconnects | Render supports WebSockets on web services; check browser console |
+| Port error | Start command must use `$PORT`, not a fixed port |
+| Map tiles blank | Outbound HTTPS must be allowed (Esri satellite tiles) |
 
-**Logs:** Render Dashboard → your service → **Logs** tab.
-
----
-
-## Custom domain (optional)
-
-Render Dashboard → service → **Settings** → **Custom Domains** → add your domain and follow DNS instructions.
+**Logs:** Render Dashboard → service → **Logs**.
 
 ---
 
@@ -161,9 +117,9 @@ Render Dashboard → service → **Settings** → **Custom Domains** → add you
 
 | | Local `python3 dashboard/run.py` | Render |
 |--|----------------------------------|--------|
-| Port | `8847` | Render `$PORT` (HTTPS URL) |
-| ESP32 live sensing | Yes | No |
-| Try simulation | Yes | Yes |
-| DM alert demo | Yes | Yes |
+| URL | `http://127.0.0.1:8847` | `https://….onrender.com` |
+| Simulation mission | Yes | Yes |
+| Live ESP32 CSI | Yes (with hotspot) | No |
+| Gazebo ROS 2 | Yes (local) | No |
 
-For hackathons/judges: share the Render URL for simulation + alert demo; use laptop + ESP32 only for live CSI hardware demo.
+For hackathons: share the Render URL for the SAR command demo; use a laptop for live hardware or Gazebo.

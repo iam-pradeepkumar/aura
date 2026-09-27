@@ -1,18 +1,19 @@
-# Render Blueprint — AURA Dashboard
+# Render Blueprint — AURA Command Center
+# Connect repo → New → Blueprint → auto-deploy on every push to main
 # https://render.com/docs/blueprint-spec
 services:
   - type: web
-    name: aura-dashboard
+    name: aura-command-center
     runtime: python
     plan: free
     region: singapore
+    branch: main
+    autoDeploy: true
     buildCommand: pip install --upgrade pip && pip install -r requirements.txt
     startCommand: uvicorn dashboard.app:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/version
+    healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.3"
-      - key: MPLBACKEND
-        value: Agg
       - key: PYTHONUNBUFFERED
         value: "1"
