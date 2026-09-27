@@ -245,7 +245,7 @@ export default function LandingPage({ commandHref = "/command" }: LandingPagePro
       </section>
 
       <footer className="relative z-10 border-t border-border/80 px-[5%] py-8 text-center text-xs text-muted md:px-8">
-        AURA — Autonomous Urban Rescue Architecture
+        AURA — Adaptive Urban Rescue Array
       </footer>
     </div>
   );
