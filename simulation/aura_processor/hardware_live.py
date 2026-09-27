@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import yaml
 
-from . import AURAPipeline
+from .pipeline import AURAPipeline
 from .hardware_accuracy import (
     SceneCalibrator,
     estimate_sensing_confidence,

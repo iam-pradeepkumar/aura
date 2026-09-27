@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.8)
+project(aura_world)
+find_package(ament_cmake REQUIRED)
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../../worlds DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/../../../config DESTINATION share/${PROJECT_NAME})
+ament_package()

@@ -14,7 +14,17 @@ tx_position: [5.0, -2.0]
 wifi_channel: 0
 
 # Live hardware — disaster rescue / field deployment (accuracy-first)
+# hardware.mode: static (fixed corner ESP32 nodes) | mobile (Gazebo SAR robots)
 hardware:
+  mode: static
+  mobile:
+    rover_node_id: 1
+    drone_node_id: 2
+    drone_relay_enabled: false
+    vitals_stationary_sec: 3.0
+    linear_still_mps: 0.05
+    angular_still_rps: 0.08
+    zone_config: gazebo_sim/config/disaster_zone.yaml
   sensing_engine: v2
   sensing_v2:
     gain_compensation: true

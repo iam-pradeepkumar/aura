@@ -1,0 +1,58 @@
+# SAR disaster zone — polygon in meters (world frame, Z up ignored)
+area_size_m: 40.0
+
+zone_polygon:
+  - [2.0, 2.0]
+  - [38.0, 2.0]
+  - [38.0, 38.0]
+  - [2.0, 38.0]
+
+# Ground robot sub-cell (lower half — drone covers full zone)
+ground_subcell:
+  - [4.0, 4.0]
+  - [36.0, 4.0]
+  - [36.0, 20.0]
+  - [4.0, 20.0]
+
+# Rubble obstacles: [x, y, radius_m]
+obstacles:
+  - [10.0, 12.0, 1.2]
+  - [15.0, 8.0, 0.9]
+  - [22.0, 14.0, 1.5]
+  - [28.0, 10.0, 1.0]
+  - [12.0, 18.0, 0.8]
+  - [18.0, 16.0, 1.1]
+  - [25.0, 6.0, 0.7]
+  - [30.0, 18.0, 1.3]
+  - [8.0, 6.0, 0.6]
+  - [20.0, 11.0, 0.9]
+  - [33.0, 14.0, 1.0]
+  - [14.0, 5.0, 0.8]
+
+# Hidden victims — unknown to robots (visual markers in Gazebo only)
+victims:
+  - id: 1
+    x: 16.5
+    y: 9.5
+    resp_bpm: 14.0
+  - id: 2
+    x: 27.0
+    y: 15.5
+    resp_bpm: 11.0
+  - id: 3
+    x: 11.0
+    y: 17.0
+    resp_bpm: 18.0
+
+mission:
+  drone_altitude_m: 6.0
+  drone_speed_mps: 2.5
+  rover_speed_mps: 0.6
+  rover_hold_sec_min: 5.0
+  rover_hold_sec_max: 8.0
+  vitals_stationary_sec: 3.0
+  linear_still_mps: 0.05
+  angular_still_rps: 0.08
+  presence_radius_m: 4.5
+  csi_packets_per_tick: 24
+  tick_hz: 10.0

@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>aura_mobile_bridge</name>
+  <version>0.1.0</version>
+  <description>WebSocket/JSON bridge for AURA mobile sensing</description>
+  <maintainer email="aura@local">AURA</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

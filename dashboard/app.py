@@ -154,6 +154,11 @@ async def simulation_page():
     return (STATIC_DIR / "simulation.html").read_text()
 
 
+@app.get("/mobile", response_class=HTMLResponse)
+async def mobile_page():
+    return (STATIC_DIR / "mobile.html").read_text()
+
+
 @app.get("/alerts", response_class=HTMLResponse)
 async def alerts_page():
     return (STATIC_DIR / "alerts.html").read_text()
@@ -408,6 +413,29 @@ async def get_frame(session_id: str, index: int = 0):
         "node_positions": session.node_positions,
         "area_size_m": session.area_size_m,
     }
+
+
+@app.post("/api/mobile/start")
+async def start_mobile_mission():
+    from dashboard.mobile_sim import start_mobile_mission
+
+    await asyncio.to_thread(start_mobile_mission)
+    return {"status": "started", "ws": "/ws/mobile"}
+
+
+@app.websocket("/ws/mobile")
+async def ws_mobile(websocket: WebSocket):
+    from dashboard.mobile_sim import get_latest_mobile_frame
+
+    await websocket.accept()
+    try:
+        while True:
+            frame = await asyncio.to_thread(get_latest_mobile_frame)
+            if frame:
+                await websocket.send_json(frame)
+            await asyncio.sleep(0.2)
+    except WebSocketDisconnect:
+        pass
 
 
 @app.websocket("/ws/simulation/{session_id}")

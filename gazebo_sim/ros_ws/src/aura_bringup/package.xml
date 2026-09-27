@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>aura_bringup</name>
+  <version>0.1.0</version>
+  <description>AURA mobile SAR simulation launch files</description>
+  <maintainer email="aura@local">AURA</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <exec_depend>aura_mobile_bridge</exec_depend>
+  <exec_depend>aura_robot_behavior</exec_depend>
+  <exec_depend>aura_coverage_planner</exec_depend>
+  <exec_depend>aura_fake_csi</exec_depend>
+  <exec_depend>aura_world</exec_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

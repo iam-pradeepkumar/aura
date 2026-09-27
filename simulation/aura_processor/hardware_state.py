@@ -7,6 +7,7 @@ import numpy as np
 from .hardware_localize import refine_detection_xy
 from .hardware_motion import esp32_motion_score, update_baseline
 from .hardware_sensing import process_hardware_window
+from .mobile_positions import NodePositionStore
 from .pipeline import AURAPipeline
 from .sensing_v2.motion import MotionDebounceFSM, motion_score_v2, update_motion_baseline
 from .sensing_v2.adapter import process_hardware_window_v2
@@ -41,6 +42,8 @@ class NodePipelineState:
         indoor_mode: bool = False,
         sensing_engine: str = "v1",
         v2_config: dict | None = None,
+        position_store: NodePositionStore | None = None,
+        mobile_mode: bool = False,
     ):
         self.node_id = node_id
         self.pipeline = pipeline
@@ -62,13 +65,21 @@ class NodePipelineState:
         self._motion_fsm = MotionDebounceFSM(
             active_hold_frames=int(self._v2_config.get("motion_debounce_frames", 3)),
         )
-        self._sensor_xy = pipeline.node_positions.get(node_id, pipeline.sensor_xy)
+        self._position_store = position_store
+        self._mobile_mode = mobile_mode
+        self._sensor_xy = self._resolve_sensor_xy()
         self.pipeline._hw_motion_scale = motion_threshold_scale
         self.pipeline._hw_motion_min = motion_min
         self.pipeline._hw_allow_sector_fallback = False
         self.pipeline._session_targets = []
 
+    def _resolve_sensor_xy(self) -> tuple[float, float]:
+        if self._position_store is not None:
+            return self._position_store.get(self.node_id, self.pipeline.sensor_xy)
+        return self.pipeline.node_positions.get(self.node_id, self.pipeline.sensor_xy)
+
     def process(self, csi: np.ndarray, timestamps_ms: np.ndarray, rssi: np.ndarray | None = None):
+        self._sensor_xy = self._resolve_sensor_xy()
         n = len(csi)
         if n < self.min_packets:
             return None
