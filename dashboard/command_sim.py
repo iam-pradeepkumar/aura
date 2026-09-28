@@ -27,6 +27,7 @@ from aura_sim_core.geo import (
     area_size_from_polygon,
     bbox_from_polygon,
     polygon_geo_to_local,
+    survivors_geo_lookup,
     survivors_geo_to_local,
 )
 from aura_sim_core.mission import MobileMissionController
@@ -224,8 +225,10 @@ def _build_zone_cfg(payload: dict) -> dict:
         clat = sum(lats) / len(lats)
         clon = sum(lngs) / len(lngs)
         label = str((geo_anchor or {}).get("label", ""))
-        anchor_obj = GeoAnchor(clat, clon, label)
-        if geo_anchor is None:
+        if geo_anchor and geo_anchor.get("lat") is not None and geo_anchor.get("lon") is not None:
+            anchor_obj = GeoAnchor(float(geo_anchor["lat"]), float(geo_anchor["lon"]), label)
+        else:
+            anchor_obj = GeoAnchor(clat, clon, label)
             geo_anchor = {"lat": clat, "lon": clon, "label": label}
         local_poly = polygon_geo_to_local(anchor_obj, ring_geo)
         area = area_size_from_polygon(local_poly)
@@ -490,7 +493,9 @@ def start_mission(session_id: str, payload: dict) -> dict:
 def _simulation_loop(session: MissionSession, zone_cfg: dict, units: list[dict]) -> None:
     anchor = zone_cfg.get("_anchor")
     victims = zone_cfg.get("victims") or []
-    victim_geo = _victim_geo_lookup(victims)
+    survivors_geo = zone_cfg.get("survivors_geo") or []
+    victim_geo = survivors_geo_lookup(survivors_geo)
+    victim_geo.update(_victim_geo_lookup(victims))
     victim_local = _victim_local_lookup(victims)
     mission = MobileMissionController.from_mission_dict(zone_cfg)
     polygon = [(float(p[0]), float(p[1])) for p in zone_cfg["zone_polygon"]]
@@ -540,8 +545,10 @@ def _simulation_loop(session: MissionSession, zone_cfg: dict, units: list[dict])
         msg["wifi"] = {"signals": mission.get_wifi_signals()}
         msg = _enrich_geo(msg, anchor, victim_geo)
         msg["session_id"] = session.session_id
-        if zone_cfg.get("survivors_geo"):
-            msg["geo"]["survivors_placed"] = zone_cfg["survivors_geo"]
+        msg["geo"]["survivors_placed"] = survivors_geo
+        msg["geo"]["survivor_coords"] = {
+            str(k): {"lat": v[0], "lon": v[1]} for k, v in victim_geo.items()
+        }
         with session.lock:
             session.latest.clear()
             session.latest.update(msg)

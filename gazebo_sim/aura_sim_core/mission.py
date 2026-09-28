@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .coverage import CoveragePlanner, Waypoint, reorder_waypoints_nearest
+from .coverage import CoveragePlanner, Waypoint, rotate_patrol_to_nearest
 from .detection import SimulationDetector
 from .fake_csi import FakeCsiGenerator
 from .wifi_sensor import WiFiSensor
@@ -146,12 +146,11 @@ class MobileMissionController:
         )
 
     def _patrol_step_m(self) -> float:
-        from .sim_tuning import CLOUD_MODE, MAX_PLANNING_AREA_M, USE_FAST_PATH_PLANNING
-
-        area = self.world.area_size_m
-        if USE_FAST_PATH_PLANNING or area > MAX_PLANNING_AREA_M:
-            return max(4.0, min(10.0, area / 22.0))
-        return max(2.5, min(6.0, area / 14.0))
+        xmin, ymin, xmax, ymax = self.planner._bbox(self.world.zone_polygon)
+        w = max(xmax - xmin, 1.0)
+        h = max(ymax - ymin, 1.0)
+        span = min(w, h)
+        return max(2.5, min(8.0, span / 14.0))
 
     def _lane_bounds(self, polygon: list[tuple[float, float]], lane: int, n_lanes: int) -> tuple[float, float]:
         xmin, ymin, xmax, ymax = self.planner._bbox(polygon)
@@ -171,7 +170,7 @@ class MobileMissionController:
             lane_wps = [wp for wp in ground_all if lx0 <= wp.x <= lx1]
             if len(lane_wps) < 3:
                 lane_wps = [ground_all[j] for j in range(i, len(ground_all), n_spiders)]
-            sb.waypoints = reorder_waypoints_nearest(lane_wps, sb.rover.state.x, sb.rover.state.y)
+            sb.waypoints = rotate_patrol_to_nearest(lane_wps, sb.rover.state.x, sb.rover.state.y)
             sb.rover.state.waypoint_idx = 0
             sb.rover.state.finished = False
         drone_lawn = self.planner.drone_lawnmower(altitude_m=8.0)
@@ -179,9 +178,10 @@ class MobileMissionController:
             if n_drones > 1:
                 lx0, lx1 = self._lane_bounds(zone, i % n_drones, n_drones)
                 lane = [wp for wp in drone_lawn if lx0 <= wp.x <= lx1]
-                dr.waypoints = lane if len(lane) >= 2 else [drone_lawn[j] for j in range(i, len(drone_lawn), n_drones)]
+                lane = lane if len(lane) >= 2 else [drone_lawn[j] for j in range(i, len(drone_lawn), n_drones)]
+                dr.waypoints = rotate_patrol_to_nearest(lane, dr.drone.state.x, dr.drone.state.y)
             else:
-                dr.waypoints = drone_lawn
+                dr.waypoints = rotate_patrol_to_nearest(drone_lawn, dr.drone.state.x, dr.drone.state.y)
             dr.patrol_mode = "patrol"
             dr.drone.state.finished = False
             dr.drone.state.waypoint_idx = 0

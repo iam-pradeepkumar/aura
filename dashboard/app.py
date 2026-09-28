@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LANDING_DIST = STATIC_DIR / "landing-dist"
-APP_VERSION = "4.3.0"
+APP_VERSION = "4.4.0"
 
 app = FastAPI(title="AURA Command Center", version=APP_VERSION)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

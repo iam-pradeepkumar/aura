@@ -145,3 +145,14 @@ def reorder_waypoints_nearest(waypoints: list[Waypoint], start_x: float, start_y
         ordered.append(wp)
         cx, cy = wp.x, wp.y
     return ordered
+
+
+def rotate_patrol_to_nearest(waypoints: list[Waypoint], start_x: float, start_y: float) -> list[Waypoint]:
+    """Keep lawnmower order but start from the nearest waypoint (full-area sweep)."""
+    if not waypoints:
+        return []
+    best_i = min(
+        range(len(waypoints)),
+        key=lambda i: math.hypot(waypoints[i].x - start_x, waypoints[i].y - start_y),
+    )
+    return list(waypoints[best_i:]) + list(waypoints[:best_i])

@@ -22,6 +22,7 @@ const AuraMap = (function () {
   let zoneFitted = false;
   let missionActive = false;
   const placedSurvivorCoords = {};
+  const missionSurvivorCoords = {};
   const STYLE = "https://tiles.openfreemap.org/styles/liberty";
 
   /** Keep HTML markers glued to map coordinates when the view is pitched. */
@@ -287,7 +288,7 @@ const AuraMap = (function () {
     const id = placedSurvivors.length + 1;
     const entry = { id, lat: coord[1], lon: coord[0] };
     placedSurvivors.push(entry);
-    placedSurvivorCoords[id] = { lat: entry.lat, lon: entry.lon };
+    placedSurvivorCoords[String(id)] = { lat: entry.lat, lon: entry.lon };
     const el = document.createElement("div");
     el.className = "placed-survivor-marker";
     el.innerHTML = `<span>${id}</span>`;
@@ -334,6 +335,17 @@ const AuraMap = (function () {
         map.doubleClickZoom.enable();
       }
     }
+  }
+
+  function setMissionSurvivors(list) {
+    Object.keys(missionSurvivorCoords).forEach((k) => delete missionSurvivorCoords[k]);
+    (list || []).forEach((s) => {
+      missionSurvivorCoords[String(s.id)] = { lat: s.lat, lon: s.lon };
+    });
+  }
+
+  function clearMissionSurvivors() {
+    Object.keys(missionSurvivorCoords).forEach((k) => delete missionSurvivorCoords[k]);
   }
 
   function clearMissionVisuals() {
@@ -465,11 +477,13 @@ const AuraMap = (function () {
 
   function _resolveSurvivorCoord(t) {
     const id = String(t.id);
-    const placed = placedSurvivorCoords[id] || placedSurvivors.find((p) => String(p.id) === id);
+    const placed = missionSurvivorCoords[id]
+      || placedSurvivorCoords[id]
+      || placedSurvivors.find((p) => String(p.id) === id);
     const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
     const isConfirmed = t.confirmed || prob >= 55 || t.suggested_triage === "START";
-    if (placed && isConfirmed) {
-      return { lat: placed.lat, lon: placed.lon, confirmed: true };
+    if (placed) {
+      return { lat: placed.lat, lon: placed.lon, confirmed: isConfirmed };
     }
     if (t.lat != null && t.lon != null) {
       return { lat: t.lat, lon: t.lon, confirmed: isConfirmed };
@@ -522,8 +536,8 @@ const AuraMap = (function () {
         const el = document.createElement("div");
         el.className = isConfirmed ? "survivor-pin confirmed" : "survivor-pin scanning";
         el.innerHTML = isConfirmed
-          ? `<div class="pin-dot">${id}</div><div class="pin-stem"></div>`
-          : `<div class="pin-dot scan">${prob}%</div><div class="pin-stem scan"></div>`;
+          ? `<div class="pin-dot">${id}</div>`
+          : `<div class="pin-dot scan">${prob}%</div>`;
         el.title = isConfirmed ? `Survivor #${id} found — ${prob}%` : `Scanning — ${prob}%`;
         survivorMarkers[id] = makeMarker(el, coord, "bottom")
           .setPopup(new maplibregl.Popup({ offset: 12, closeButton: false, anchor: "bottom" }).setHTML(popupHtml));
@@ -532,7 +546,7 @@ const AuraMap = (function () {
         const el = survivorMarkers[id].getElement();
         if (isConfirmed) {
           el.className = "survivor-pin confirmed";
-          el.innerHTML = `<div class="pin-dot">${id}</div><div class="pin-stem"></div>`;
+          el.innerHTML = `<div class="pin-dot">${id}</div>`;
           el.title = `Survivor #${id} found — ${prob}%`;
         }
       }
@@ -593,6 +607,8 @@ const AuraMap = (function () {
     setDrawMode,
     clearDraw,
     clearMissionVisuals,
+    clearMissionSurvivors,
+    setMissionSurvivors,
     setMissionActive,
     closePolygon,
     getZoneGeo,

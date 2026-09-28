@@ -12,6 +12,8 @@ const S = {
   addressLabel: "",
   fitUnitsOnce: false,
   missionCompleteShown: false,
+  missionSurvivors: [],
+  ignoreTelemetry: false,
 };
 
 function getSessionId() {
@@ -210,6 +212,9 @@ async function startMission() {
   document.getElementById("btn-place-survivors").classList.remove("active");
   S.missionRunning = true;
   S.missionCompleteShown = false;
+  S.ignoreTelemetry = false;
+  S.missionSurvivors = survivors.map((s) => ({ id: Number(s.id), lat: s.lat, lon: s.lon }));
+  AuraMap.setMissionSurvivors(S.missionSurvivors);
   S.zoneGeo = ring;
   S.fitUnitsOnce = true;
   document.getElementById("mission-complete")?.classList.add("hidden");
@@ -222,19 +227,24 @@ async function startMission() {
 }
 
 function resolveTargetCoords(t) {
-  const placed = S.placedSurvivors.find((p) => String(p.id) === String(t.id));
-  const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
-  const confirmed = t.confirmed || prob >= 55 || t.suggested_triage === "START";
-  if (placed && confirmed) return { ...t, lat: placed.lat, lon: placed.lon, confirmed: true };
+  const placed = S.missionSurvivors.find((p) => String(p.id) === String(t.id))
+    || S.placedSurvivors.find((p) => String(p.id) === String(t.id));
+  if (placed) {
+    const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
+    const confirmed = t.confirmed || prob >= 55 || t.suggested_triage === "START";
+    return { ...t, lat: placed.lat, lon: placed.lon, confirmed };
+  }
   return t;
 }
 
 async function resetForNewMission(clearZone) {
+  S.ignoreTelemetry = true;
   if (S.missionRunning) {
     await api(`/api/command/stop?session_id=${encodeURIComponent(SESSION_ID)}`, { method: "POST" });
   }
   S.missionRunning = false;
   S.missionCompleteShown = false;
+  S.missionSurvivors = [];
   S.fitUnitsOnce = false;
   document.getElementById("btn-start").disabled = false;
   document.getElementById("btn-stop").style.display = "none";
@@ -242,11 +252,13 @@ async function resetForNewMission(clearZone) {
   document.getElementById("mission-complete")?.classList.add("hidden");
   AuraMap.setMissionActive(false);
   AuraMap.clearMissionVisuals();
+  AuraMap.clearMissionSurvivors();
   if (clearZone) {
     AuraMap.clearDraw();
     S.zoneGeo = [];
+  } else {
+    AuraMap.clearPlacedSurvivors();
   }
-  AuraMap.clearPlacedSurvivors();
   S.placedSurvivors = [];
   AuraMap.setSurvivorMode(false);
   AuraMap.setDrawMode(false);
@@ -254,6 +266,7 @@ async function resetForNewMission(clearZone) {
   document.getElementById("btn-draw")?.classList.remove("active");
   document.getElementById("fleet-scroll").innerHTML = '<div class="card"><span class="name">Standby — configure mission above</span></div>';
   setBanner(clearZone ? "Zone cleared — search address and mark a new disaster area" : "Ready for next mission — mark zone, place survivors, start rescue");
+  setTimeout(() => { S.ignoreTelemetry = false; }, 400);
 }
 
 async function stopMission() {
@@ -313,19 +326,23 @@ function connectWs() {
 
 function renderTelemetry(msg) {
   if (msg.session_id && msg.session_id !== SESSION_ID) return;
-  const now = performance.now();
-  if (now - lastTelemetryRender < TELEMETRY_RENDER_MS) return;
-  lastTelemetryRender = now;
+  if (S.ignoreTelemetry) return;
 
   const data = msg.data || {};
   const mission = msg.mission || {};
-  const units = msg.units_roster || mission.units || [];
-  const targets = (data.targets || []).map(resolveTargetCoords);
 
   if (S.missionRunning && (mission.phase === "complete" || mission.all_survivors_found)) {
     handleMissionComplete(msg);
     return;
   }
+  if (!S.missionRunning) return;
+
+  const now = performance.now();
+  if (now - lastTelemetryRender < TELEMETRY_RENDER_MS) return;
+  lastTelemetryRender = now;
+
+  const units = msg.units_roster || mission.units || [];
+  const targets = (data.targets || []).map(resolveTargetCoords);
 
   document.getElementById("stat-survivors").textContent = data.survivors_detected ?? data.target_count ?? 0;
   document.getElementById("stat-spiders").textContent = units.filter((u) => u.type === "spiderbot").length;

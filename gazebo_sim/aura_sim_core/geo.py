@@ -55,32 +55,41 @@ def area_size_from_polygon(ring: list) -> float:
 def survivors_geo_to_local(
     anchor: GeoAnchor,
     survivors_geo: list,
-    local_poly: list[tuple[float, float]],
+    local_poly: list[tuple[float, float]] | None = None,
 ) -> list[dict]:
-    """Convert admin-placed lat/lon survivors into local meter victims inside the zone."""
+    """Convert user-placed lat/lon survivors into local meter victims (trust map placement)."""
     out: list[dict] = []
     for i, raw in enumerate(survivors_geo):
         if isinstance(raw, (list, tuple)) and len(raw) >= 2:
             lon, lat = float(raw[0]), float(raw[1])
+            vid = i + 1
         else:
             lat = float(raw.get("lat"))
             lon = float(raw.get("lon"))
+            vid = int(raw.get("id", i + 1))
         x, y = anchor.to_local(lat, lon)
-        inside = False
-        n = len(local_poly)
-        for j in range(n):
-            x1, y1 = local_poly[j]
-            x2, y2 = local_poly[(j + 1) % n]
-            if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1 + 1e-12) + x1):
-                inside = not inside
-        if not inside:
-            continue
         out.append({
-            "id": int(raw.get("id", i + 1)) if not isinstance(raw, (list, tuple)) else i + 1,
+            "id": vid,
             "x": x,
             "y": y,
             "resp_bpm": float(raw.get("resp_bpm", 12 + (i % 5))) if not isinstance(raw, (list, tuple)) else float(12 + (i % 5)),
             "lat": lat,
             "lon": lon,
         })
+    return out
+
+
+def survivors_geo_lookup(survivors_geo: list | None) -> dict[int, tuple[float, float]]:
+    """Authoritative lat/lon for each placed survivor from the client payload."""
+    out: dict[int, tuple[float, float]] = {}
+    for i, raw in enumerate(survivors_geo or []):
+        if isinstance(raw, (list, tuple)) and len(raw) >= 2:
+            lon, lat = float(raw[0]), float(raw[1])
+            vid = i + 1
+        else:
+            lat = float(raw.get("lat"))
+            lon = float(raw.get("lon"))
+            vid = int(raw.get("id", i + 1))
+        if vid:
+            out[vid] = (lat, lon)
     return out
