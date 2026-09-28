@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 LANDING_DIST = STATIC_DIR / "landing-dist"
-APP_VERSION = "4.1.0"
+APP_VERSION = "4.2.0"
 
 app = FastAPI(title="AURA Command Center", version=APP_VERSION)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -95,37 +95,54 @@ async def command_disaster_scape(payload: dict = Body(...)) -> dict:
 
 
 @app.get("/api/command/status")
-async def command_status() -> dict:
+async def command_status(session_id: str = "") -> dict:
     from dashboard.command_sim import get_status
 
-    return get_status()
+    if not session_id.strip():
+        return {"mission_status": "idle", "running": False}
+    return get_status(session_id.strip())
 
 
 @app.post("/api/command/start")
 async def command_start(payload: dict = Body(...)) -> dict:
     from dashboard.command_sim import start_mission
 
-    return await asyncio.to_thread(start_mission, payload)
+    session_id = str(payload.get("session_id", "")).strip()
+    if not session_id:
+        raise HTTPException(status_code=400, detail="session_id required")
+    return await asyncio.to_thread(start_mission, session_id, payload)
 
 
 @app.post("/api/command/stop")
-async def command_stop() -> dict:
+async def command_stop(session_id: str = "") -> dict:
     from dashboard.command_sim import stop_mission
 
-    stop_mission()
-    return {"status": "stopped"}
+    if not session_id.strip():
+        raise HTTPException(status_code=400, detail="session_id required")
+    stop_mission(session_id.strip())
+    return {"status": "stopped", "session_id": session_id.strip()}
 
 
 @app.websocket("/ws/command")
-async def ws_command(websocket: WebSocket) -> None:
-    from dashboard.command_sim import get_latest_frame
+async def ws_command(websocket: WebSocket, session_id: str = "") -> None:
+    from dashboard.command_sim import MissionManager, get_latest_frame
+    from aura_sim_core.sim_tuning import WS_PUSH_HZ
 
+    sid = session_id.strip()
+    if not sid:
+        await websocket.close(code=4400, reason="session_id required")
+        return
+
+    MissionManager.register_ws(sid)
     await websocket.accept()
+    interval = 1.0 / WS_PUSH_HZ
     try:
         while True:
-            frame = await asyncio.to_thread(get_latest_frame)
+            frame = await asyncio.to_thread(get_latest_frame, sid)
             if frame:
                 await websocket.send_json(frame)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(interval)
     except WebSocketDisconnect:
         pass
+    finally:
+        MissionManager.unregister_ws(sid)

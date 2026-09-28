@@ -6,6 +6,7 @@ import random
 import sys
 import threading
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -30,7 +31,9 @@ from aura_sim_core.geo import (
 )
 from aura_sim_core.mission import MobileMissionController
 from aura_sim_core.sim_tuning import (
+    CLOUD_MODE,
     CSI_PACKETS_PER_TICK,
+    ENGINE_FRAME_EVERY,
     TICK_HZ,
     TIME_SCALE,
     apply_dashboard_tuning,
@@ -38,12 +41,87 @@ from aura_sim_core.sim_tuning import (
 from aura_sim_core.units import DEFAULT_UNIT_ROSTER, parse_units
 from aura_sim_core.world import DisasterWorld, world_from_dict
 
-_lock = threading.Lock()
-_latest: dict = {}
-_running = False
-_thread: threading.Thread | None = None
-_mission_config: dict = {}
-_mission_status: str = "idle"
+SESSION_IDLE_SEC = 600.0
+
+
+@dataclass
+class MissionSession:
+    session_id: str
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    latest: dict = field(default_factory=dict)
+    running: bool = False
+    thread: threading.Thread | None = None
+    mission_config: dict = field(default_factory=dict)
+    mission_status: str = "idle"
+    last_active: float = field(default_factory=time.time)
+    ws_clients: int = 0
+
+    def touch(self) -> None:
+        self.last_active = time.time()
+
+    def status_dict(self) -> dict:
+        with self.lock:
+            return {
+                "session_id": self.session_id,
+                "mission_status": self.mission_status,
+                "running": self.running,
+                "config": dict(self.mission_config),
+                "latest": dict(self.latest),
+            }
+
+
+class MissionManager:
+    _sessions: dict[str, MissionSession] = {}
+    _lock = threading.Lock()
+
+    @classmethod
+    def get(cls, session_id: str) -> MissionSession | None:
+        with cls._lock:
+            return cls._sessions.get(session_id)
+
+    @classmethod
+    def get_or_create(cls, session_id: str) -> MissionSession:
+        with cls._lock:
+            session = cls._sessions.get(session_id)
+            if session is None:
+                session = MissionSession(session_id=session_id)
+                cls._sessions[session_id] = session
+            session.touch()
+            cls._cleanup_idle()
+            return session
+
+    @classmethod
+    def remove(cls, session_id: str) -> None:
+        with cls._lock:
+            cls._sessions.pop(session_id, None)
+
+    @classmethod
+    def register_ws(cls, session_id: str) -> MissionSession:
+        session = cls.get_or_create(session_id)
+        with session.lock:
+            session.ws_clients += 1
+            session.touch()
+        return session
+
+    @classmethod
+    def unregister_ws(cls, session_id: str) -> None:
+        session = cls.get(session_id)
+        if session is None:
+            return
+        with session.lock:
+            session.ws_clients = max(0, session.ws_clients - 1)
+            session.touch()
+
+    @classmethod
+    def _cleanup_idle(cls) -> None:
+        now = time.time()
+        stale = [
+            sid
+            for sid, s in cls._sessions.items()
+            if not s.running and s.ws_clients <= 0 and (now - s.last_active) > SESSION_IDLE_SEC
+        ]
+        for sid in stale:
+            cls._sessions.pop(sid, None)
 
 
 def get_roster() -> list[dict]:
@@ -70,20 +148,35 @@ def get_zone_defaults() -> dict:
     }
 
 
-def get_status() -> dict:
-    with _lock:
+def get_status(session_id: str) -> dict:
+    session = MissionManager.get(session_id)
+    if session is None:
         return {
-            "mission_status": _mission_status,
-            "running": _running,
-            "config": dict(_mission_config),
-            "latest": dict(_latest),
+            "session_id": session_id,
+            "mission_status": "idle",
+            "running": False,
+            "config": {},
+            "latest": {},
         }
+    return session.status_dict()
 
 
-def stop_mission() -> None:
-    global _running, _mission_status
-    _running = False
-    _mission_status = "idle"
+def stop_mission(session_id: str) -> None:
+    session = MissionManager.get(session_id)
+    if session is None:
+        return
+    session.running = False
+    session.mission_status = "idle"
+    session.touch()
+
+
+def get_latest_frame(session_id: str) -> dict:
+    session = MissionManager.get(session_id)
+    if session is None:
+        return {}
+    session.touch()
+    with session.lock:
+        return dict(session.latest)
 
 
 def _point_in_polygon(x: float, y: float, poly: list[tuple[float, float]]) -> bool:
@@ -287,11 +380,38 @@ def _write_mission_yaml(zone_cfg: dict) -> Path:
     return out
 
 
-def start_mission(payload: dict) -> dict:
-    global _running, _thread, _mission_config, _mission_status
+def _light_frame_from_sim(mission: MobileMissionController) -> dict:
+    sim_targets = mission.get_sim_targets()
+    confirmed = [t for t in sim_targets if t.get("confirmed")]
+    node_positions = {
+        int(k): [float(v[0]), float(v[1])]
+        for k, v in mission.node_positions().items()
+    }
+    best_conf = max((float(t.get("confidence", 0)) for t in sim_targets), default=0.0)
+    return {
+        "timestamp": time.time(),
+        "area_size_m": mission.world.area_size_m,
+        "targets": sim_targets,
+        "target_count": len(confirmed) if confirmed else len(sim_targets),
+        "survivors_detected": len(confirmed),
+        "motion_detected": bool(sim_targets),
+        "sensing_confidence": best_conf,
+        "node_positions": node_positions,
+        "mode": "mobile",
+    }
 
-    if _running:
-        return {"status": "already_running", "ws": "/ws/command"}
+
+def start_mission(session_id: str, payload: dict) -> dict:
+    if not session_id:
+        return {"status": "error", "message": "session_id required"}
+
+    session = MissionManager.get_or_create(session_id)
+    if session.running:
+        return {
+            "status": "already_running",
+            "session_id": session_id,
+            "ws": f"/ws/command?session_id={session_id}",
+        }
 
     mode = str(payload.get("mode", "simulation"))
     zone_cfg = _build_zone_cfg(payload)
@@ -299,41 +419,49 @@ def start_mission(payload: dict) -> dict:
         mode = "simulation"
         zone_cfg["gazebo"] = True
 
-    _mission_config = {
+    session.mission_config = {
         "mode": mode,
         "units": zone_cfg["units"],
         "geo_anchor": zone_cfg.get("geo_anchor"),
         "zone_polygon_geo": zone_cfg.get("zone_polygon_geo"),
         "gazebo": zone_cfg.get("gazebo", False),
     }
-    _write_mission_yaml(zone_cfg)
-    _running = True
-    _mission_status = "running"
+    if not CLOUD_MODE:
+        _write_mission_yaml(zone_cfg)
+    session.running = True
+    session.mission_status = "running"
+    session.touch()
 
     def loop() -> None:
-        global _running, _mission_status
         try:
             if mode == "hardware":
-                _hardware_loop(zone_cfg, zone_cfg["units"])
+                _hardware_loop(session, zone_cfg, zone_cfg["units"])
             else:
-                _simulation_loop(zone_cfg, zone_cfg["units"])
+                _simulation_loop(session, zone_cfg, zone_cfg["units"])
         except Exception as exc:
-            with _lock:
-                _mission_status = "error"
-                _latest.clear()
-                _latest.update({"type": "error", "message": str(exc)})
+            with session.lock:
+                session.mission_status = "error"
+                session.latest.clear()
+                session.latest.update({"type": "error", "message": str(exc)})
         finally:
-            _running = False
-            if _mission_status == "running":
-                _mission_status = "complete"
+            session.running = False
+            if session.mission_status == "running":
+                session.mission_status = "complete"
+            session.touch()
 
-    _thread = threading.Thread(target=loop, daemon=True)
-    _thread.start()
-    return {"status": "started", "ws": "/ws/command", "mode": mode, "gazebo": zone_cfg.get("gazebo")}
+    session.thread = threading.Thread(target=loop, daemon=True, name=f"mission-{session_id[:8]}")
+    session.thread.start()
+    return {
+        "status": "started",
+        "session_id": session_id,
+        "ws": f"/ws/command?session_id={session_id}",
+        "mode": mode,
+        "gazebo": zone_cfg.get("gazebo"),
+        "cloud_mode": CLOUD_MODE,
+    }
 
 
-def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
-    global _mission_status
+def _simulation_loop(session: MissionSession, zone_cfg: dict, units: list[dict]) -> None:
     anchor = zone_cfg.get("_anchor")
     victim_geo = _victim_geo_lookup(zone_cfg.get("victims"))
     mission = MobileMissionController.from_mission_dict(zone_cfg)
@@ -357,11 +485,17 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
 
     dt = 1.0 / TICK_HZ
     sim_dt = dt * TIME_SCALE
-    while _running and not mission.stats.completed:
+    tick_num = 0
+    while session.running and not mission.stats.completed:
         status = mission.tick(sim_dt)
         engine.update_node_positions(mission.node_positions())
-        mission.inject_csi(engine.rx, CSI_PACKETS_PER_TICK)
-        frame = engine.process_frame()
+
+        if ENGINE_FRAME_EVERY > 1 and tick_num % ENGINE_FRAME_EVERY != 0:
+            frame = _light_frame_from_sim(mission)
+        else:
+            mission.inject_csi(engine.rx, CSI_PACKETS_PER_TICK)
+            frame = engine.process_frame()
+
         frame = _merge_sim_targets(frame, mission.get_sim_targets(), victim_geo)
         msg = frame_to_bridge_message(
             frame,
@@ -374,21 +508,23 @@ def _simulation_loop(zone_cfg: dict, units: list[dict]) -> None:
             units_roster=status.get("units", []),
         )
         msg = _enrich_geo(msg, anchor, victim_geo)
-        msg["sim"] = {"time_scale": TIME_SCALE, "tick_hz": TICK_HZ}
+        msg["sim"] = {"time_scale": TIME_SCALE, "tick_hz": TICK_HZ, "cloud_mode": CLOUD_MODE}
         msg["wifi"] = {"signals": mission.get_wifi_signals()}
         msg = _enrich_geo(msg, anchor, victim_geo)
+        msg["session_id"] = session.session_id
         if zone_cfg.get("survivors_geo"):
             msg["geo"]["survivors_placed"] = zone_cfg["survivors_geo"]
-        with _lock:
-            _latest.clear()
-            _latest.update(msg)
+        with session.lock:
+            session.latest.clear()
+            session.latest.update(msg)
+        tick_num += 1
         time.sleep(dt)
 
     if mission.stats.completed:
-        _mission_status = "complete"
+        session.mission_status = "complete"
 
 
-def _hardware_loop(zone_cfg: dict, units: list[dict]) -> None:
+def _hardware_loop(session: MissionSession, zone_cfg: dict, units: list[dict]) -> None:
     from aura_processor.hardware_live import LiveFieldEngine, load_field_config
 
     anchor = zone_cfg.get("_anchor")
@@ -398,7 +534,7 @@ def _hardware_loop(zone_cfg: dict, units: list[dict]) -> None:
     engine = LiveFieldEngine(config=cfg)
     engine.start()
     dt = 0.1
-    while _running:
+    while session.running:
         frame = engine.process_frame()
         status = {
             "phase": "live",
@@ -429,13 +565,9 @@ def _hardware_loop(zone_cfg: dict, units: list[dict]) -> None:
             units_roster=status.get("units", []),
         )
         msg = _enrich_geo(msg, anchor)
-        with _lock:
-            _latest.clear()
-            _latest.update(msg)
+        msg["session_id"] = session.session_id
+        with session.lock:
+            session.latest.clear()
+            session.latest.update(msg)
         time.sleep(dt)
     engine.stop()
-
-
-def get_latest_frame() -> dict:
-    with _lock:
-        return dict(_latest)

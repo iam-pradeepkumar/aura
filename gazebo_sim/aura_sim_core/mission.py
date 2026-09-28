@@ -146,10 +146,16 @@ class MobileMissionController:
         )
 
     def _plan_paths(self) -> None:
+        from .sim_tuning import CLOUD_MODE, MAX_PLANNING_AREA_M, USE_FAST_PATH_PLANNING
+
         zone = self.world.zone_polygon
-        ground_all = self.planner.ground_nav2_style(polygon=zone)
-        if not ground_all:
-            ground_all = self.planner.ground_patrol(polygon=zone)
+        if USE_FAST_PATH_PLANNING or self.world.area_size_m > MAX_PLANNING_AREA_M:
+            step = max(6.0, self.world.area_size_m / 14.0)
+            ground_all = self.planner.ground_patrol(step_m=step, polygon=zone)
+        else:
+            ground_all = self.planner.ground_nav2_style(polygon=zone)
+            if not ground_all:
+                ground_all = self.planner.ground_patrol(polygon=zone)
         n_spiders = max(len(self.spiderbots), 1)
         n_drones = max(len(self.drones), 1)
         victim_wps = [Waypoint(v.x, v.y, 0.0) for v in self.world.victims]

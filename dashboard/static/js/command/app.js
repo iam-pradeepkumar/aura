@@ -13,7 +13,20 @@ const S = {
   fitUnitsOnce: false,
 };
 
+function getSessionId() {
+  const key = "aura_session_id";
+  let id = localStorage.getItem(key);
+  if (!id) {
+    id = (crypto.randomUUID && crypto.randomUUID()) || `sess-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(key, id);
+  }
+  return id;
+}
+
+const SESSION_ID = getSessionId();
 let ws = null;
+let lastTelemetryRender = 0;
+const TELEMETRY_RENDER_MS = 120;
 const coverageHistory = {};
 
 async function api(path, opts = {}) {
@@ -188,6 +201,7 @@ async function startMission() {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
+      session_id: SESSION_ID,
       mode: S.mode,
       units: S.roster,
       geo_anchor: geoAnchor,
@@ -209,7 +223,7 @@ async function startMission() {
 }
 
 async function stopMission() {
-  await api("/api/command/stop", { method: "POST" });
+  await api(`/api/command/stop?session_id=${encodeURIComponent(SESSION_ID)}`, { method: "POST" });
   S.missionRunning = false;
   document.getElementById("btn-start").disabled = false;
   document.getElementById("btn-stop").style.display = "none";
@@ -219,7 +233,7 @@ async function stopMission() {
 
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws/command`);
+  ws = new WebSocket(`${proto}://${location.host}/ws/command?session_id=${encodeURIComponent(SESSION_ID)}`);
   ws.onopen = () => {
     document.getElementById("conn-label").textContent = "Live";
   };
@@ -238,6 +252,11 @@ function connectWs() {
 }
 
 function renderTelemetry(msg) {
+  if (msg.session_id && msg.session_id !== SESSION_ID) return;
+  const now = performance.now();
+  if (now - lastTelemetryRender < TELEMETRY_RENDER_MS) return;
+  lastTelemetryRender = now;
+
   const data = msg.data || {};
   const mission = msg.mission || {};
   const units = msg.units_roster || mission.units || [];
