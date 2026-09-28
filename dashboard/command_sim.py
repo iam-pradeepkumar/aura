@@ -285,13 +285,40 @@ def _victim_geo_lookup(victims: list[dict] | None) -> dict[int, tuple[float, flo
     return out
 
 
+def _victim_local_lookup(victims: list[dict] | None) -> dict[int, tuple[float, float]]:
+    out: dict[int, tuple[float, float]] = {}
+    for v in victims or []:
+        vid = int(v.get("id", 0))
+        if vid:
+            out[vid] = (float(v.get("x", 0)), float(v.get("y", 0)))
+    return out
+
+
+def _pin_target_to_victim(
+    target: dict,
+    tid: int,
+    victim_local: dict[int, tuple[float, float]],
+    victim_geo: dict[int, tuple[float, float]] | None,
+) -> dict:
+    t = dict(target)
+    if tid in victim_local:
+        t["x_m"] = victim_local[tid][0]
+        t["y_m"] = victim_local[tid][1]
+    if victim_geo and tid in victim_geo:
+        t["lat"] = victim_geo[tid][0]
+        t["lon"] = victim_geo[tid][1]
+    return t
+
+
 def _merge_sim_targets(
     frame: dict,
     sim_targets: list[dict],
     victim_geo: dict[int, tuple[float, float]] | None = None,
+    victim_local: dict[int, tuple[float, float]] | None = None,
 ) -> dict:
-    if not sim_targets:
+    if not sim_targets and not frame.get("targets"):
         return frame
+    victim_local = victim_local or {}
     sim_by_id = {int(t.get("id", 0)): dict(t) for t in sim_targets if int(t.get("id", 0))}
     by_id: dict[int, dict] = {}
     for t in frame.get("targets", []):
@@ -300,19 +327,18 @@ def _merge_sim_targets(
             by_id[tid] = dict(t)
     for tid, sim in sim_by_id.items():
         prev = by_id.get(tid)
-        if prev is None or float(sim.get("confidence", 0)) >= float(prev.get("confidence", 0)):
-            merged = dict(sim)
-            merged["x_m"] = sim.get("x_m")
-            merged["y_m"] = sim.get("y_m")
-            by_id[tid] = merged
+        merged = dict(sim)
+        if prev is not None:
+            merged["confidence"] = max(float(prev.get("confidence", 0)), float(sim.get("confidence", 0)))
+            merged["confirmed"] = bool(prev.get("confirmed") or sim.get("confirmed"))
+        merged = _pin_target_to_victim(merged, tid, victim_local, victim_geo)
+        by_id[tid] = merged
     merged = []
-    for t in by_id.values():
+    for tid, t in by_id.items():
         conf = float(t.get("confidence", 0))
         t["probability_pct"] = round(conf * 100, 1)
         t["vitals_confidence_pct"] = round(float(t.get("resp_confidence", conf)) * 100, 1)
-        tid = int(t.get("id", 0))
-        if victim_geo and tid in victim_geo and (t.get("confirmed") or conf >= 0.55):
-            t["lat"], t["lon"] = victim_geo[tid]
+        t = _pin_target_to_victim(t, tid, victim_local, victim_geo)
         merged.append(t)
     confirmed = [t for t in merged if t.get("confirmed")]
     frame["targets"] = merged
@@ -350,7 +376,7 @@ def _enrich_geo(
         u["lon"] = round(lon, 6)
     for t in msg.get("data", {}).get("targets", []):
         tid = int(t.get("id", 0))
-        if victim_geo and tid in victim_geo and (t.get("confirmed") or float(t.get("confidence", 0)) >= 0.55):
+        if victim_geo and tid in victim_geo:
             t["lat"] = round(victim_geo[tid][0], 6)
             t["lon"] = round(victim_geo[tid][1], 6)
         else:
@@ -463,7 +489,9 @@ def start_mission(session_id: str, payload: dict) -> dict:
 
 def _simulation_loop(session: MissionSession, zone_cfg: dict, units: list[dict]) -> None:
     anchor = zone_cfg.get("_anchor")
-    victim_geo = _victim_geo_lookup(zone_cfg.get("victims"))
+    victims = zone_cfg.get("victims") or []
+    victim_geo = _victim_geo_lookup(victims)
+    victim_local = _victim_local_lookup(victims)
     mission = MobileMissionController.from_mission_dict(zone_cfg)
     polygon = [(float(p[0]), float(p[1])) for p in zone_cfg["zone_polygon"]]
     ground = zone_cfg.get("ground_subcell")
@@ -496,7 +524,7 @@ def _simulation_loop(session: MissionSession, zone_cfg: dict, units: list[dict])
             mission.inject_csi(engine.rx, CSI_PACKETS_PER_TICK)
             frame = engine.process_frame()
 
-        frame = _merge_sim_targets(frame, mission.get_sim_targets(), victim_geo)
+        frame = _merge_sim_targets(frame, mission.get_sim_targets(), victim_geo, victim_local)
         msg = frame_to_bridge_message(
             frame,
             status,

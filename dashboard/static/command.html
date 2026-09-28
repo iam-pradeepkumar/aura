@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/command.css?v=10" />
+  <link rel="stylesheet" href="/static/css/command.css?v=11" />
   <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 </head>
@@ -72,10 +72,15 @@
           <button class="btn btn-alert" id="btn-stop" type="button" style="width:100%;margin-top:0.5rem;display:none;">STOP MISSION</button>
         </div>
         <p style="font-size:0.68rem;color:var(--muted);margin-top:0.75rem;line-height:1.45;">
-          Place survivors inside the zone, then start. Units patrol the full area on WiFi CSI.
-          When a survivor signal is detected, spiderbots and drones home in and mark FOUND pins.
-          Drones sweep corners then complete — they do not keep searching after coverage.
+          Place survivors inside the zone, then start. Units sweep the full disaster area in lanes
+          until every survivor is confirmed. When all are found, the mission stops automatically.
         </p>
+        <div id="mission-complete" class="mission-complete hidden">
+          <div class="section-title" style="color:var(--ok);">Mission complete</div>
+          <p id="complete-summary" style="font-size:0.82rem;line-height:1.5;margin:0.5rem 0 0.75rem;"></p>
+          <div id="complete-survivors" style="font-size:0.75rem;margin-bottom:0.75rem;"></div>
+          <button class="btn btn-primary" id="btn-new-mission" type="button" style="width:100%;">Start new mission</button>
+        </div>
       </div>
 
       <div id="panel-units" class="panel">
@@ -99,8 +104,8 @@
     </section>
   </div>
 
-  <script src="/static/js/command/scene3d.js?v=10"></script>
-  <script src="/static/js/command/map.js?v=10"></script>
-  <script src="/static/js/command/app.js?v=10"></script>
+  <script src="/static/js/command/scene3d.js?v=11"></script>
+  <script src="/static/js/command/map.js?v=11"></script>
+  <script src="/static/js/command/app.js?v=11"></script>
 </body>
 </html>

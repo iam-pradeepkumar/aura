@@ -11,6 +11,7 @@ const S = {
   placedSurvivors: [],
   addressLabel: "",
   fitUnitsOnce: false,
+  missionCompleteShown: false,
 };
 
 function getSessionId() {
@@ -86,13 +87,8 @@ function bindUi() {
       setBanner("Need at least 3 points before closing zone");
     }
   });
-  document.getElementById("btn-clear-zone").addEventListener("click", () => {
-    AuraMap.clearDraw();
-    AuraMap.clearPlacedSurvivors();
-    S.zoneGeo = [];
-    S.placedSurvivors = [];
-    setBanner("Zone cleared");
-  });
+  document.getElementById("btn-clear-zone").addEventListener("click", () => resetForNewMission(true));
+  document.getElementById("btn-new-mission")?.addEventListener("click", () => resetForNewMission(false));
   document.getElementById("btn-place-survivors").addEventListener("click", () => {
     const zone = AuraMap.getZoneGeo();
     if (!zone || zone.length < 3) {
@@ -213,22 +209,86 @@ async function startMission() {
   AuraMap.setSurvivorMode(false);
   document.getElementById("btn-place-survivors").classList.remove("active");
   S.missionRunning = true;
+  S.missionCompleteShown = false;
   S.zoneGeo = ring;
   S.fitUnitsOnce = true;
+  document.getElementById("mission-complete")?.classList.add("hidden");
   document.getElementById("btn-stop").style.display = "block";
   document.getElementById("mission-phase").textContent = "RUNNING";
+  AuraMap.setMissionActive(true);
   AuraMap.fitToZone(ring);
   AuraMap.resize();
-  setBanner("Rescue active — units patrol on CSI; HOMING when a survivor WiFi signal is detected");
+  setBanner("Rescue active — units sweep the zone in lanes until all survivors are confirmed");
 }
 
-async function stopMission() {
-  await api(`/api/command/stop?session_id=${encodeURIComponent(SESSION_ID)}`, { method: "POST" });
+function resolveTargetCoords(t) {
+  const placed = S.placedSurvivors.find((p) => String(p.id) === String(t.id));
+  const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
+  const confirmed = t.confirmed || prob >= 55 || t.suggested_triage === "START";
+  if (placed && confirmed) return { ...t, lat: placed.lat, lon: placed.lon, confirmed: true };
+  return t;
+}
+
+async function resetForNewMission(clearZone) {
+  if (S.missionRunning) {
+    await api(`/api/command/stop?session_id=${encodeURIComponent(SESSION_ID)}`, { method: "POST" });
+  }
   S.missionRunning = false;
+  S.missionCompleteShown = false;
+  S.fitUnitsOnce = false;
   document.getElementById("btn-start").disabled = false;
   document.getElementById("btn-stop").style.display = "none";
   document.getElementById("mission-phase").textContent = "IDLE";
+  document.getElementById("mission-complete")?.classList.add("hidden");
+  AuraMap.setMissionActive(false);
+  AuraMap.clearMissionVisuals();
+  if (clearZone) {
+    AuraMap.clearDraw();
+    S.zoneGeo = [];
+  }
+  AuraMap.clearPlacedSurvivors();
+  S.placedSurvivors = [];
+  AuraMap.setSurvivorMode(false);
+  AuraMap.setDrawMode(false);
+  document.getElementById("btn-place-survivors")?.classList.remove("active");
+  document.getElementById("btn-draw")?.classList.remove("active");
+  document.getElementById("fleet-scroll").innerHTML = '<div class="card"><span class="name">Standby — configure mission above</span></div>';
+  setBanner(clearZone ? "Zone cleared — search address and mark a new disaster area" : "Ready for next mission — mark zone, place survivors, start rescue");
+}
+
+async function stopMission() {
+  await resetForNewMission(false);
   setBanner("Mission stopped");
+}
+
+function handleMissionComplete(msg) {
+  if (S.missionCompleteShown) return;
+  S.missionCompleteShown = true;
+  S.missionRunning = false;
+  AuraMap.setMissionActive(false);
+  const mission = msg.mission || {};
+  const data = msg.data || {};
+  const targets = (data.targets || []).map(resolveTargetCoords);
+  const confirmed = targets.filter((t) => t.confirmed || (t.probability_pct ?? 0) >= 55);
+  document.getElementById("btn-start").disabled = false;
+  document.getElementById("btn-stop").style.display = "none";
+  document.getElementById("mission-phase").textContent = "COMPLETE";
+  const box = document.getElementById("mission-complete");
+  const summary = document.getElementById("complete-summary");
+  const list = document.getElementById("complete-survivors");
+  if (summary) {
+    summary.textContent = `All ${confirmed.length} survivor(s) confirmed in ${mission.elapsed_sec ?? 0}s with ${mission.coverage_pct ?? 0}% area coverage.`;
+  }
+  if (list) {
+    list.innerHTML = confirmed.map((t) => {
+      const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
+      return `<div class="row"><span class="k">#${t.id}</span><span>${t.lat?.toFixed(5)}, ${t.lon?.toFixed(5)} · ${prob}% · Resp ${t.respiration_bpm ? Math.round(t.respiration_bpm) : "—"} BPM</span></div>`;
+    }).join("") || "<div>No survivor details available.</div>";
+  }
+  box?.classList.remove("hidden");
+  switchTab("mission");
+  setBanner("Mission complete — all survivors found. Review details or start a new mission.");
+  api(`/api/command/stop?session_id=${encodeURIComponent(SESSION_ID)}`, { method: "POST" });
 }
 
 function connectWs() {
@@ -260,7 +320,12 @@ function renderTelemetry(msg) {
   const data = msg.data || {};
   const mission = msg.mission || {};
   const units = msg.units_roster || mission.units || [];
-  const targets = data.targets || [];
+  const targets = (data.targets || []).map(resolveTargetCoords);
+
+  if (S.missionRunning && (mission.phase === "complete" || mission.all_survivors_found)) {
+    handleMissionComplete(msg);
+    return;
+  }
 
   document.getElementById("stat-survivors").textContent = data.survivors_detected ?? data.target_count ?? 0;
   document.getElementById("stat-spiders").textContent = units.filter((u) => u.type === "spiderbot").length;
@@ -314,7 +379,7 @@ function renderFleet(units, targets) {
     </div>
   `).join("");
   const seen = new Set();
-  targets.forEach((t) => {
+  targets.map(resolveTargetCoords).forEach((t) => {
     const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
     const confirmed = t.confirmed || prob >= 55;
     seen.add(String(t.id));

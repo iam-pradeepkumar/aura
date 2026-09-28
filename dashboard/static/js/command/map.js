@@ -19,6 +19,9 @@ const AuraMap = (function () {
   const vertexMarkers = [];
   const trails = {};
   let clickTimer = null;
+  let zoneFitted = false;
+  let missionActive = false;
+  const placedSurvivorCoords = {};
   const STYLE = "https://tiles.openfreemap.org/styles/liberty";
 
   /** Keep HTML markers glued to map coordinates when the view is pitched. */
@@ -224,7 +227,7 @@ const AuraMap = (function () {
     }
   }
 
-  function _setZone(ring) {
+  function _setZone(ring, fit = false) {
     if (!mapReady || !ring || ring.length < 3) return;
     closedZone = ring.slice();
     const closed = [...ring, ring[0]];
@@ -239,7 +242,7 @@ const AuraMap = (function () {
         geometry: { type: "Polygon", coordinates: [closed] },
       }],
     });
-    fitToZone(ring);
+    if (fit && !missionActive) fitToZone(ring);
   }
 
   function fitToZone(ring) {
@@ -284,6 +287,7 @@ const AuraMap = (function () {
     const id = placedSurvivors.length + 1;
     const entry = { id, lat: coord[1], lon: coord[0] };
     placedSurvivors.push(entry);
+    placedSurvivorCoords[id] = { lat: entry.lat, lon: entry.lon };
     const el = document.createElement("div");
     el.className = "placed-survivor-marker";
     el.innerHTML = `<span>${id}</span>`;
@@ -303,6 +307,7 @@ const AuraMap = (function () {
     Object.values(placedSurvivorMarkers).forEach((m) => m.remove());
     Object.keys(placedSurvivorMarkers).forEach((k) => delete placedSurvivorMarkers[k]);
     placedSurvivors = [];
+    Object.keys(placedSurvivorCoords).forEach((k) => delete placedSurvivorCoords[k]);
     if (onSurvivorChange) onSurvivorChange([]);
   }
 
@@ -331,28 +336,48 @@ const AuraMap = (function () {
     }
   }
 
-  function clearDraw() {
-    drawPts = [];
-    closedZone = [];
-    _clearVertices();
-    if (mapReady) {
-      map.getSource("draw-line")?.setData(emptyLine());
-      map.getSource("zone-fill")?.setData(emptyFC());
-      map.getSource("zone-line")?.setData(emptyLine());
-      map.getSource("trails")?.setData(emptyFC());
-    }
+  function clearMissionVisuals() {
     Object.values(unitMarkers).forEach((m) => m.remove());
     Object.values(survivorMarkers).forEach((m) => m.remove());
     Object.keys(unitMarkers).forEach((k) => delete unitMarkers[k]);
     Object.keys(survivorMarkers).forEach((k) => delete survivorMarkers[k]);
+    Object.keys(confirmedSurvivorStore).forEach((k) => delete confirmedSurvivorStore[k]);
     Object.keys(trails).forEach((k) => delete trails[k]);
+    missionActive = false;
+    zoneFitted = false;
+    if (mapReady) {
+      map.getSource("trails")?.setData(emptyFC());
+      map.getSource("units-dots")?.setData(emptyFC());
+      map.getSource("wifi-beams")?.setData(emptyFC());
+      map.getSource("wifi-zones")?.setData(emptyFC());
+      map.getSource("survivor-pulse")?.setData(emptyFC());
+      map.getSource("confirmed-survivors")?.setData(emptyFC());
+    }
+  }
+
+  function clearDraw() {
+    drawPts = [];
+    closedZone = [];
+    _clearVertices();
+    clearMissionVisuals();
+    clearPlacedSurvivors();
+    if (mapReady) {
+      map.getSource("draw-line")?.setData(emptyLine());
+      map.getSource("zone-fill")?.setData(emptyFC());
+      map.getSource("zone-line")?.setData(emptyLine());
+    }
     if (onZoneChange) onZoneChange([]);
+  }
+
+  function setMissionActive(active) {
+    missionActive = !!active;
+    if (!active) zoneFitted = false;
   }
 
   function closePolygon() {
     if (drawPts.length < 3) return null;
     const ring = drawPts.slice();
-    _setZone(ring);
+    _setZone(ring, true);
     drawPts = [];
     _clearVertices();
     setDrawMode(false);
@@ -380,19 +405,16 @@ const AuraMap = (function () {
     }
 
     const status = (u.status || "PATROL").toLowerCase();
-    const label = u.type === "drone" ? "DR" : "SP";
     if (!unitMarkers[id]) {
       const el = document.createElement("div");
       el.className = `unit-marker ${u.type === "drone" ? "drone" : "spider"} ${status}`;
-      el.innerHTML = `<div class="icon">${label}</div><div class="lbl">${u.name || id}</div><div class="status-chip">${u.status || "PATROL"}</div>`;
-      unitMarkers[id] = makeMarker(el, coord, "center");
+      el.innerHTML = `<div class="status-chip">${u.status || "PATROL"}</div><div class="unit-dot"></div>`;
+      unitMarkers[id] = makeMarker(el, coord, "bottom");
     } else {
       unitMarkers[id].setLngLat(coord);
       const root = unitMarkers[id].getElement();
       root.className = `unit-marker ${u.type === "drone" ? "drone" : "spider"} ${status}`;
-      const lbl = root.querySelector(".lbl");
       const chip = root.querySelector(".status-chip");
-      if (lbl) lbl.textContent = u.name || id;
       if (chip) chip.textContent = u.status || "PATROL";
     }
   }
@@ -441,14 +463,31 @@ const AuraMap = (function () {
     );
   }
 
+  function _resolveSurvivorCoord(t) {
+    const id = String(t.id);
+    const placed = placedSurvivorCoords[id] || placedSurvivors.find((p) => String(p.id) === id);
+    const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
+    const isConfirmed = t.confirmed || prob >= 55 || t.suggested_triage === "START";
+    if (placed && isConfirmed) {
+      return { lat: placed.lat, lon: placed.lon, confirmed: true };
+    }
+    if (t.lat != null && t.lon != null) {
+      return { lat: t.lat, lon: t.lon, confirmed: isConfirmed };
+    }
+    return null;
+  }
+
   function updateSurvivors(targets) {
     if (!mapReady) return;
     (targets || []).forEach((t) => {
-      if (t.lat == null || t.lon == null) return;
+      const resolved = _resolveSurvivorCoord(t);
+      if (!resolved) return;
       const id = String(t.id);
       const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
-      const isConfirmed = t.confirmed || prob >= 55 || t.suggested_triage === "START";
-      if (isConfirmed) confirmedSurvivorStore[id] = { ...t, confirmed: true };
+      const isConfirmed = resolved.confirmed;
+      if (isConfirmed) {
+        confirmedSurvivorStore[id] = { ...t, lat: resolved.lat, lon: resolved.lon, confirmed: true };
+      }
     });
 
     const all = Object.values(confirmedSurvivorStore);
@@ -459,9 +498,11 @@ const AuraMap = (function () {
 
     const confirmedFeatures = [];
     all.forEach((t) => {
-      if (t.lat == null || t.lon == null) return;
+      const resolved = _resolveSurvivorCoord(t);
+      if (!resolved) return;
       const id = String(t.id);
-      const coord = [t.lon, t.lat];
+      const coord = [resolved.lon, resolved.lat];
+      t = { ...t, lat: resolved.lat, lon: resolved.lon };
       const prob = t.probability_pct ?? Math.round((t.confidence || 0) * 100);
       const isConfirmed = t.confirmed || confirmedSurvivorStore[id];
 
@@ -484,7 +525,7 @@ const AuraMap = (function () {
           ? `<div class="pin-dot">${id}</div><div class="pin-stem"></div>`
           : `<div class="pin-dot scan">${prob}%</div><div class="pin-stem scan"></div>`;
         el.title = isConfirmed ? `Survivor #${id} found — ${prob}%` : `Scanning — ${prob}%`;
-        survivorMarkers[id] = makeMarker(el, coord, "center")
+        survivorMarkers[id] = makeMarker(el, coord, "bottom")
           .setPopup(new maplibregl.Popup({ offset: 12, closeButton: false, anchor: "bottom" }).setHTML(popupHtml));
       } else {
         survivorMarkers[id].setLngLat(coord);
@@ -534,7 +575,11 @@ const AuraMap = (function () {
 
   function showMissionZone(msg) {
     const ring = msg?.geo?.zone_polygon_geo || msg?.zone?.polygon_geo;
-    if (ring && ring.length >= 3) _setZone(ring);
+    if (ring && ring.length >= 3) {
+      const shouldFit = !missionActive && !zoneFitted;
+      _setZone(ring, shouldFit);
+      if (shouldFit) zoneFitted = true;
+    }
   }
 
   function resize() {
@@ -547,6 +592,8 @@ const AuraMap = (function () {
     getAnchor,
     setDrawMode,
     clearDraw,
+    clearMissionVisuals,
+    setMissionActive,
     closePolygon,
     getZoneGeo,
     setSurvivorMode,
